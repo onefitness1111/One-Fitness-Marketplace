@@ -3,7 +3,7 @@
 class CommMessage {
   const CommMessage({
     required this.id,
-    required this.who, // "client" | "trainer"
+    required this.who, // "client" | "trainer" | "auto"
     required this.text,
     required this.at, // pre-formatted display timestamp
     this.trainerId,
@@ -28,6 +28,9 @@ class CommMessage {
   /// `messages` table. Null for legacy entries that still live in
   /// `client_records.data->'comms'`, whose time is recovered from [id].
   final DateTime? createdAt;
+
+  /// Posted by the database, not typed by the client or the coach.
+  bool get isAutomatic => who == "auto";
 
   /// Real chronological timestamp for day-grouping/sort order in the chat
   /// UI. [id] is always a microsecond-epoch stamp for a message this app

@@ -68,7 +68,10 @@ String encodeChannels(Set<ChatChannel> channels) {
 ///   "both"      → all three ("both" meant emailed AND texted, and every
 ///                 message was in the thread regardless)
 ///   "sms"       → written by sms-inbound/twilio-inbound for a reply that
-///                 arrived as a text
+///                 arrived as a text. The automatic reply for that text goes
+///                 back by SMS, not as another row in the thread.
+///   "auto"      → the in-app automatic note. It is not a delivery channel;
+///                 the bubble treats who = "auto" as a system line.
 ///
 /// Anything unrecognised — including null, for rows stored before the
 /// column existed — comes back empty, which the badge renders as nothing

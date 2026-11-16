@@ -5,6 +5,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/auto_reply_note.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/utils/chat_channels.dart";
@@ -445,6 +446,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (lastDay == null || day != lastDay) {
         items.add(_DaySeparator(label: _dayLabel(day)));
         lastDay = day;
+      }
+      if (c.isAutomatic) {
+        items.add(AutoReplyNote(text: c.text, sentAt: c.sentAt));
+        continue;
       }
       items.add(_Bubble(
         message: c,

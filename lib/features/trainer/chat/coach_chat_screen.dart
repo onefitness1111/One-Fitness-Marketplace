@@ -9,6 +9,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
+import "../../../core/widgets/auto_reply_note.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
@@ -578,7 +579,9 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         items.add(_DaySeparator(label: _dayLabel(day)));
         lastDay = day;
       }
-      items.add(_Bubble(message: c, isPending: _pendingIds.contains(c.id)));
+      items.add(c.isAutomatic
+          ? AutoReplyNote(text: c.text, sentAt: c.sentAt)
+          : _Bubble(message: c, isPending: _pendingIds.contains(c.id)));
     }
     return items;
   }
