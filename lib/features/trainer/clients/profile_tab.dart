@@ -63,12 +63,14 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
   bool _cancelBusy = false;
   late final _freezeStart = TextEditingController(text: isoToday());
   final _freezeEnd = TextEditingController();
+  final _freezeReason = TextEditingController();
   String? _freezeErr;
 
   @override
   void dispose() {
     _freezeStart.dispose();
     _freezeEnd.dispose();
+    _freezeReason.dispose();
     super.dispose();
   }
 
@@ -364,6 +366,14 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                                 ),
                               ),
                             ),
+                          if (info.bookingRestricted)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Text(
+                                "Restricted from booking${info.bookingRestrictedReason != null ? ' · ${info.bookingRestrictedReason}' : ''}",
+                                style: TextStyle(fontSize: 11, color: AppColors.warning, fontWeight: FontWeight.w700),
+                              ),
+                            ),
                           if (info.membershipPaused)
                             Padding(
                               padding: const EdgeInsets.only(top: 3),
@@ -399,7 +409,9 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                       full: true,
                       onPressed: _freezeBusy
                           ? null
-                          : () => _unfreeze(info, update),
+                          : () => ref.read(trainerAuthProvider) == "owner"
+                              ? _unfreeze(info, update)
+                              : _requestUnfreeze(info),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -449,6 +461,18 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                               ),
                             ],
                           ),
+                          if (ref.watch(trainerAuthProvider) != "owner") ...[
+                            const SizedBox(height: 10),
+                            FieldLabeled(
+                              label: "Reason",
+                              child: AppField(controller: _freezeReason, placeholder: "Why they asked to freeze"),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              "This goes to the owner. After they approve it, the freeze starts 48 hours later, or on the from-date if that is later.",
+                              style: TextStyle(fontSize: 12, color: AppColors.mute),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           Row(
                             children: [
@@ -689,6 +713,17 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
             ],
           ),
           const SizedBox(height: 8),
+          if (ref.watch(trainerAuthProvider) != "owner") ...[
+            const SizedBox(height: 8),
+            _CoachAskRow(
+              busy: _freezeBusy,
+              restricted: info.bookingRestricted,
+              onRestrict: () => _ask(info, "restrict_client", "Restrict ${info.name}", "Why should booking be paused?"),
+              onLift: () => _ask(info, "lift_restriction", "Lift the restriction", "Why should they be able to book again?"),
+              onBalance: () => _askBalance(info),
+              onDelete: () => _ask(info, "delete_client", "Ask to delete ${info.name}", "Why should this account be deleted?"),
+            ),
+          ],
           BtnGold(
             full: true,
             onPressed: () => setState(() => _purchasing = true),
@@ -709,6 +744,31 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               onPressed: () => setState(() => _paymentDetails = true),
               icon: const Icon(LucideIcons.creditCard, size: 14),
               label: const Text("Payment details (add or remove card)"),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _freezeBusy
+                  ? null
+                  : () async {
+                      if (info.bookingRestricted) {
+                        await SupabaseService.setClientRestriction(clientId: info.id, restricted: false);
+                        update((c) => c.copyWith(bookingRestricted: false, clearBookingRestrictedReason: true));
+                      } else {
+                        await SupabaseService.setClientRestriction(
+                          clientId: info.id,
+                          restricted: true,
+                          reason: "Set by the owner",
+                        );
+                        update((c) => c.copyWith(bookingRestricted: true, bookingRestrictedReason: "Set by the owner"));
+                      }
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(info.bookingRestricted ? "Restriction lifted." : "Booking restricted.")),
+                        );
+                      }
+                    },
+              icon: const Icon(LucideIcons.shieldAlert, size: 14),
+              label: Text(info.bookingRestricted ? "Lift booking restriction" : "Restrict booking"),
             ),
             const SizedBox(height: 18),
             Container(height: 1, color: AppColors.line),
@@ -794,6 +854,97 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     final price = "\$${(cents / 100).toStringAsFixed(2)}";
     final suffix = plan.kind == PlanKind.membership ? "/mo" : "";
     return "${plan.name} — $price$suffix";
+  }
+
+  Future<void> _ask(ClientInfo info, String kind, String title, String prompt) async {
+    final reason = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        content: TextField(
+          controller: reason,
+          maxLines: 3,
+          decoration: InputDecoration(hintText: prompt),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, reason.text.trim()), child: const Text("Send")),
+        ],
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => reason.dispose());
+    if (text == null || !mounted) return;
+    if (text.isEmpty && kind != "lift_restriction") {
+      setState(() => _freezeErr = "Add a reason so the owner can decide.");
+      return;
+    }
+    await _send(info, kind, text.isEmpty ? "Lift the booking restriction." : text, const {});
+  }
+
+  Future<void> _askBalance(ClientInfo info) async {
+    final amount = TextEditingController();
+    final note = TextEditingController();
+    final saved = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text("Ask to change the balance", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: amount,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+              decoration: const InputDecoration(prefixText: "\$ ", labelText: "New balance (minus if they owe)"),
+            ),
+            const SizedBox(height: 8),
+            TextField(controller: note, decoration: const InputDecoration(labelText: "Reason")),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () {
+              final v = double.tryParse(amount.text.trim());
+              if (v == null || note.text.trim().isEmpty) return;
+              Navigator.pop(ctx, (v * 100).round());
+            },
+            child: const Text("Send"),
+          ),
+        ],
+      ),
+    );
+    final why = note.text.trim();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      amount.dispose();
+      note.dispose();
+    });
+    if (saved == null || !mounted) return;
+    await _send(info, "adjust_balance", why, {"cents": saved});
+  }
+
+  Future<void> _requestUnfreeze(ClientInfo info) =>
+      _send(info, "unfreeze_membership", "End this freeze.", const {});
+
+  Future<void> _send(ClientInfo info, String kind, String reason, Map<String, dynamic> payload) async {
+    setState(() {
+      _freezeBusy = true;
+      _freezeErr = null;
+    });
+    try {
+      await SupabaseService.submitCoachRequest(kind: kind, clientId: info.id, reason: reason, payload: payload);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Sent to the owner. Nothing changes until they approve it.")),
+      );
+      setState(() => _freezing = false);
+    } catch (e) {
+      if (mounted) setState(() => _freezeErr = e.toString().replaceFirst("Exception: ", ""));
+    } finally {
+      if (mounted) setState(() => _freezeBusy = false);
+    }
   }
 
   Future<void> _unfreeze(
@@ -947,7 +1098,29 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         ? isoToday()
         : _freezeStart.text.trim();
     final end = _freezeEnd.text.trim();
+    final isOwner = ref.read(trainerAuthProvider) == "owner";
+    if (!isOwner && _freezeReason.text.trim().isEmpty) {
+      setState(() {
+        _freezeBusy = false;
+        _freezeErr = "Add a reason so the owner can decide.";
+      });
+      return;
+    }
     try {
+      if (!isOwner) {
+        await SupabaseService.submitCoachRequest(
+          kind: "freeze_membership",
+          clientId: info.id,
+          reason: _freezeReason.text.trim(),
+          payload: {"from": start, "to": end},
+        );
+        if (!mounted) return;
+        setState(() => _freezing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Freeze sent to the owner. It starts 48 hours after they approve it.")),
+        );
+        return;
+      }
       await SupabaseService.freezeMembership(info.id, start, end);
       update(
         (c) => c.copyWith(
@@ -1638,6 +1811,53 @@ class _CancelModeOption extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Coach actions that used to happen immediately and now wait for the owner.
+class _CoachAskRow extends StatelessWidget {
+  const _CoachAskRow({
+    required this.busy,
+    required this.restricted,
+    required this.onRestrict,
+    required this.onLift,
+    required this.onBalance,
+    required this.onDelete,
+  });
+
+  final bool busy;
+  final bool restricted;
+  final VoidCallback onRestrict;
+  final VoidCallback onLift;
+  final VoidCallback onBalance;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text("ASK THE OWNER", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
+        const SizedBox(height: 6),
+        Text(
+          "These wait in Requests until the owner approves them.",
+          style: TextStyle(fontSize: 12, color: AppColors.mute),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (!restricted)
+              OutlinedButton(onPressed: busy ? null : onRestrict, child: const Text("Restrict booking"))
+            else
+              OutlinedButton(onPressed: busy ? null : onLift, child: const Text("Ask to lift restriction")),
+            OutlinedButton(onPressed: busy ? null : onBalance, child: const Text("Ask to change balance")),
+            OutlinedButton(onPressed: busy ? null : onDelete, child: const Text("Ask to delete")),
+          ],
+        ),
+      ],
     );
   }
 }

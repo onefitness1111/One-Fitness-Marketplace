@@ -13,6 +13,7 @@ import "../../../core/widgets/address_fields.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/availability_block.dart";
 import "../staff/availability_block_editor.dart";
+import "coach_apply_screen.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
@@ -111,6 +112,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
   late bool _codeVerified = widget.debugSkipCodeGate;
   String? _codeError;
   bool _verifyingCode = false;
+  bool _applying = false;
 
   @override
   void dispose() {
@@ -356,6 +358,9 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
     if (_readingTerms) {
       return TermsScreen(onBack: () => setState(() => _readingTerms = false));
     }
+    if (_applying) {
+      return CoachApplyScreen(onBack: () => setState(() => _applying = false));
+    }
     if (!_codeVerified) {
       return PopScope(
         canPop: false,
@@ -420,6 +425,18 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  "Don't have a code?",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                BtnGhost(
+                  full: true,
+                  onPressed: () => setState(() => _applying = true),
+                  child: const Text("Apply now"),
                 ),
               ],
             ),

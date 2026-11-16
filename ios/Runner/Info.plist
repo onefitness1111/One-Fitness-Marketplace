@@ -54,6 +54,8 @@
 		     if any linked API lacks its purpose string. -->
 		<key>NSCameraUsageDescription</key>
 		<string>ONE Fitness uses your camera to take profile and progress photos.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>ONE Fitness uses the microphone so a coach applicant can record a 20-second coaching answer. The clip is optional.</string>
 		<!-- Used when the client taps to find their nearest gym on the
 		     booking screen. Only read while the app is open, only on that
 		     tap, and never stored or sent anywhere — the distance is worked

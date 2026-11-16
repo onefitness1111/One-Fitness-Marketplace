@@ -146,8 +146,13 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                     slot: widget.slot,
                     discipline: first.discipline,
                     priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(first.sessionType),
+                    isOwner: isOwner,
                   );
                   if (out == null || !mounted) return;
+                  if (out.status == "requested") {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message ?? "Sent to the owner.")));
+                    return;
+                  }
                   if (!out.booked) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
                     return;

@@ -25,7 +25,17 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
   required String discipline,
   String? locationName,
   required int? priceCents, // null = single sessions are off for this type
+  required bool isOwner,
 }) async {
+  var used = 0;
+  if (!isOwner) {
+    try {
+      used = await SupabaseService.coachFreeAddsUsed();
+    } catch (_) {
+      used = 0;
+    }
+  }
+  final needsApproval = !isOwner && used >= 1;
   final choice = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -34,11 +44,12 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
       content: Text(
         "Nothing they hold covers this ${sessionTypeLabel(sessionType)} session. "
         "${priceCents != null ? "Charge them the single-session price to their card on file, or book it free." : "Single sessions are turned off for this type, so you can book it free."} "
+        "${needsApproval ? "The one free add for this week is already used, so another free add waits for the owner." : "A free add does not count toward coach pay."} "
         "They need a card on their profile either way.",
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-        TextButton(onPressed: () => Navigator.pop(ctx, "free"), child: const Text("Book free")),
+        TextButton(onPressed: () => Navigator.pop(ctx, "free"), child: Text(needsApproval ? "Ask the owner" : "Book free")),
         if (priceCents != null)
           TextButton(
             onPressed: () => Navigator.pop(ctx, "charge"),
@@ -48,6 +59,30 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
     ),
   );
   if (choice == null) return null;
+  if (choice == "free" && needsApproval) {
+    try {
+      await SupabaseService.submitCoachRequest(
+        kind: "extra_free_session",
+        clientId: clientId,
+        reason: "Extra free session this week",
+        payload: {
+          "clientId": clientId,
+          "trainerId": trainerId,
+          "date": date,
+          "slot": slot,
+          "sessionType": sessionType,
+          "discipline": discipline,
+          "locationName": locationName ?? "",
+        },
+      );
+      return const SingleSessionOutcome(
+        status: "requested",
+        message: "Sent to the owner. Nothing is booked until they approve it.",
+      );
+    } catch (e) {
+      return SingleSessionOutcome(status: "error", message: e.toString().replaceFirst("Exception: ", ""));
+    }
+  }
   try {
     return await SupabaseService.staffSingleSession(
       clientId: clientId,

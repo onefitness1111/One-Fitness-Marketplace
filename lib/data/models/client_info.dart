@@ -40,6 +40,8 @@ class ClientInfo {
     this.bookingLocation,
     this.emergencyContactName,
     this.emergencyContactPhone,
+    this.bookingRestricted = false,
+    this.bookingRestrictedReason,
   });
 
   final String id;
@@ -172,6 +174,10 @@ class ClientInfo {
   final String? emergencyContactName;
   final String? emergencyContactPhone;
 
+  /// The owner (or an approved coach request) has stopped this client booking.
+  final bool bookingRestricted;
+  final String? bookingRestrictedReason;
+
   ClientInfo copyWith({
     String? name,
     String? email,
@@ -208,6 +214,9 @@ class ClientInfo {
     String? bookingLocation,
     String? emergencyContactName,
     String? emergencyContactPhone,
+    bool? bookingRestricted,
+    String? bookingRestrictedReason,
+    bool clearBookingRestrictedReason = false,
     List<ClientPlanEnrollment>? plans,
   }) =>
       ClientInfo(
@@ -244,6 +253,10 @@ class ClientInfo {
         bookingLocation: bookingLocation ?? this.bookingLocation,
         emergencyContactName: emergencyContactName ?? this.emergencyContactName,
         emergencyContactPhone: emergencyContactPhone ?? this.emergencyContactPhone,
+        bookingRestricted: bookingRestricted ?? this.bookingRestricted,
+        bookingRestrictedReason: clearBookingRestrictedReason
+            ? null
+            : (bookingRestrictedReason ?? this.bookingRestrictedReason),
       );
 }
 

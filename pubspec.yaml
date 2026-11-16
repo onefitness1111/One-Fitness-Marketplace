@@ -66,6 +66,8 @@ dependencies:
   # floor, so it plays a real sound rather than relying on the system
   # notification tone, which the OS silences while the app is in front.
   audioplayers: ^6.1.0
+  # Apply now: a coach can record up to 20 seconds answering the coaching prompt.
+  record: ^5.2.1
   # Exercise demo clips. Streamed from a public storage bucket rather than
   # bundled, so the catalogue stays small; video_player is the first-party
   # plugin and wraps ExoPlayer/AVPlayer, which handle progressive download

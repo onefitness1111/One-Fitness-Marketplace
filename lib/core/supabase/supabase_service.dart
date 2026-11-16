@@ -482,7 +482,7 @@ class SupabaseService {
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
-      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, emergency_contact_phone";
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, emergency_contact_phone, booking_restricted, booking_restricted_reason";
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =
@@ -1719,6 +1719,102 @@ class SupabaseService {
   /// originally-scheduled end date.
   static Future<void> unfreezeMembership(String clientId) =>
       _invokeFunction("unfreeze-membership", {"clientId": clientId});
+
+  /// How many free session-adds the signed-in coach has used this week.
+  static Future<int> coachFreeAddsUsed() async {
+    final res = await client.rpc("coach_free_adds_used");
+    if (res is int) return res;
+    if (res is num) return res.toInt();
+    return int.tryParse(res?.toString() ?? "") ?? 0;
+  }
+
+  static Future<void> submitCoachRequest({
+    required String kind,
+    required String clientId,
+    required String reason,
+    Map<String, dynamic> payload = const {},
+  }) =>
+      _invokeFunction("submit-coach-request", {
+        "kind": kind,
+        "clientId": clientId,
+        "reason": reason,
+        "payload": payload,
+      });
+
+  static Future<Map<String, dynamic>> decideCoachRequest({
+    required String id,
+    required bool approve,
+    String note = "",
+  }) =>
+      _invokeFunction("decide-coach-request", {
+        "id": id,
+        "approve": approve,
+        "note": note,
+      });
+
+  static Future<void> applyDueRequests() => _invokeFunction("apply-due-requests", {});
+
+  static Future<void> setClientRestriction({
+    required String clientId,
+    required bool restricted,
+    String reason = "",
+  }) async {
+    await client.rpc("owner_set_client_restriction", params: {
+      "p_client": clientId,
+      "p_restricted": restricted,
+      "p_reason": reason,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> loadCoachRequests() async {
+    final rows = await client.from("coach_requests").select().order("created_at", ascending: false);
+    return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+  }
+
+  static Future<List<Map<String, dynamic>>> loadCoachApplications() async {
+    final rows = await client.from("coach_applications").select().order("created_at", ascending: false);
+    return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+  }
+
+  static Future<Map<String, dynamic>> startCoachApplication({
+    required String email,
+    required List<Map<String, String>> files,
+  }) =>
+      _invokeFunction("start-coach-application", {"email": email, "files": files});
+
+  static Future<void> finishCoachApplication(Map<String, dynamic> body) =>
+      _invokeFunction("finish-coach-application", body);
+
+  static Future<Map<String, dynamic>> decideCoachApplication({
+    required String id,
+    required bool approve,
+    String note = "",
+  }) =>
+      _invokeFunction("decide-coach-application", {
+        "id": id,
+        "approve": approve,
+        "note": note,
+      });
+
+  /// Puts bytes on a signed upload link from start-coach-application.
+  static Future<void> uploadToSignedUrl({
+    required String signedUrl,
+    required List<int> bytes,
+    required String contentType,
+  }) async {
+    final parsed = Uri.parse(signedUrl);
+    final uri = parsed.hasScheme
+        ? parsed
+        : Uri.parse("${client.storage.url}${signedUrl.startsWith("/") ? signedUrl : "/$signedUrl"}");
+    final res = await http.put(
+      uri,
+      headers: {"Content-Type": contentType, "x-upsert": "true"},
+      body: bytes,
+    );
+    if (res.statusCode >= 300) {
+      throw Exception("Couldn't upload a file (${res.statusCode}).");
+    }
+  }
 
   /// Mirrors sendPasswordReset in supabaseData.js — Supabase Auth emails a
   /// reset link; there's no in-app "change password" for an existing
@@ -4677,6 +4773,8 @@ class SupabaseService {
       billingAnchorDay: _asInt(c["billing_anchor_day"]),
       bookingLocation: c["booking_location"] as String?,
       emergencyContactName: c["emergency_contact_name"] as String?,
+      bookingRestricted: c["booking_restricted"] as bool? ?? false,
+      bookingRestrictedReason: c["booking_restricted_reason"] as String?,
       emergencyContactPhone: c["emergency_contact_phone"] as String?,
     );
   }
@@ -4976,6 +5074,7 @@ class SupabaseService {
       overrideReason: row["override_reason"] as String?,
       planId: row["plan_id"] as String?,
       durationMin: _asInt(row["duration_min"]) ?? 60,
+      countsTowardPay: row["counts_toward_pay"] as bool? ?? true,
     );
   }
 

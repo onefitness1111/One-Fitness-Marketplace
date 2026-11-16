@@ -3,6 +3,7 @@
          runtime; FirebaseMessaging.requestPermission() prompts for it. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- Only requested when the client taps to find their nearest gym on
          the booking screen. Coarse is enough for a distance in miles, so
          fine location is not requested. -->

@@ -415,7 +415,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
               ),
             ),
 
-          if (clientId != null && aiDrafts.isEmpty && nutritionIntakeComplete)
+          if (isOwner && clientId != null && aiDrafts.isEmpty && nutritionIntakeComplete)
             Container(
               padding: const EdgeInsets.all(14),
               margin: const EdgeInsets.only(bottom: 16),
@@ -431,19 +431,17 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          hasAnyAiNutrition ? "Regenerate from their Nutrition Intake" : "Draft calorie & macro targets with AI",
+                          hasAnyAiNutrition ? "Regenerate from their Nutrition Intake" : "Draft calorie and macro targets",
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      const Tag(text: "AI", gold: true),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
                     hasAnyAiNutrition
                         ? "If this client has updated their Nutrition Intake answers since their targets were last set, draft a fresh set from their current answers. You'll review it here before anything on this page changes."
-                        : "This client's Nutrition Intake is complete but no AI draft has been generated yet. Draft whole-number Training/Rest Day targets, Water, Calorie Budget, and coaching notes from their intake answers — you'll review it here before anything is applied.",
+                        : "This client's Nutrition Intake is complete but no draft has been created yet. Draft whole-number Training/Rest Day targets, Water, Calorie Budget, and coaching notes from their intake answers — you'll review it here before anything is applied.",
                     style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                   ),
                   const SizedBox(height: 10),
@@ -456,11 +454,11 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                       child: Text(_generatingDraft || _regeneratingDraft
                           ? "Generating…"
                           : hasAnyAiNutrition
-                              ? "Regenerate AI Nutrition Targets"
-                              : "Generate AI Nutrition Targets"),
+                              ? "Regenerate targets"
+                              : "Draft nutrition targets"),
                     )
                   else
-                    Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                    Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
                 ],
               ),
             ),
@@ -477,13 +475,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
-                    children: [
-                      Expanded(child: Text("AI-drafted calorie & macro targets are ready", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                      SizedBox(width: 6),
-                      Tag(text: "AI Draft", gold: true),
-                    ],
-                  ),
+                  const Text("Calorie and macro targets are ready", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                   const SizedBox(height: 6),
                   Text(
                     "Training: ${p.trainingTargets.calories ?? "—"} kcal · ${p.trainingTargets.protein ?? "—"}/${p.trainingTargets.carbs ?? "—"}/${p.trainingTargets.fats ?? "—"}% P/C/F",

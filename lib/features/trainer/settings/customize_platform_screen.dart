@@ -336,22 +336,13 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   ),
                   _ChoiceRow(
                     label: "Coach client list",
-                    hint: "Scopes a coach's Clients tab and Chat inbox. Owner always sees everyone.",
+                    hint: "The Clients tab always lists every client. This only narrows a coach's Chat inbox. The owner always sees everyone.",
                     value: s.coachClientScope,
                     options: const [("own", "Own clients only"), ("all", "All clients")],
                     onChange: (v) => _set((d) => d.copyWith(coachClientScope: v)),
                   ),
-                  _ToggleRow(
-                    label: "Coach can view revenue / pay data",
-                    hint: "Unlocks a coach's own My Pay screen — their sessions and commission only, never gym-wide financials.",
-                    value: s.coachCanViewRevenue,
-                    onChange: (v) => _set((d) => d.copyWith(coachCanViewRevenue: v)),
-                  ),
-                  _ToggleRow(
-                    label: "Coach can see other coaches' scheduled sessions",
-                    hint: "Off keeps a coach's Scheduling tab locked to their own sessions, like today.",
-                    value: s.coachCanSeeOtherSchedules,
-                    onChange: (v) => _set((d) => d.copyWith(coachCanSeeOtherSchedules: v)),
+                  const HintBox(
+                    text: "Coaches always see their own My Pay (their sessions, commission, and payouts only). That cannot be turned off, and it never shows another coach's pay. A coach's schedule shows only their own sessions. They can still add a client to any session from Book session.",
                   ),
                   _ChoiceRow(
                     label: "Coaches reply in messages as",

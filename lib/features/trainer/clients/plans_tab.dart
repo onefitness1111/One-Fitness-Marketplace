@@ -554,7 +554,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12))),
 
         // ── AI workout draft ──
-        if (workoutDrafts.isEmpty)
+        if (isOwner && workoutDrafts.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             margin: const EdgeInsets.only(bottom: 16),
@@ -564,16 +564,14 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text(hasAnyAiWorkout ? "Regenerate from their Training Intake" : "Draft a workout with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                    const SizedBox(width: 6),
-                    const Tag(text: "AI", gold: true),
+                    Expanded(child: Text(hasAnyAiWorkout ? "Regenerate from their Training Intake" : "Draft a workout", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
                   hasAnyAiWorkout
                       ? "If this client has updated their Personalized Training Intake answers, draft a fresh split from their current answers. You'll review it here before anything changes."
-                      : "This client's Personalized Training Intake is complete but no AI draft has been generated yet. Draft a weekly split from their intake answers — you'll review it here before assigning it.",
+                      : "This client's Personalized Training Intake is complete but no draft has been created yet. Draft a weekly split from their intake answers — you'll review it here before assigning it.",
                   style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                 ),
                 const SizedBox(height: 10),
@@ -584,11 +582,11 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     child: Text(_generatingWorkoutDraft || _regeneratingWorkoutDraft
                         ? "Generating…"
                         : hasAnyAiWorkout
-                            ? "Regenerate AI Workout Draft"
-                            : "Draft a Workout with AI"),
+                            ? "Regenerate draft"
+                            : "Draft a workout"),
                   )
                 else
-                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                  Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
               ],
             ),
           ),
@@ -660,7 +658,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           ),
 
         // ── AI nutrition draft ──
-        if (nutritionDrafts.isEmpty)
+        if (isOwner && nutritionDrafts.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             margin: const EdgeInsets.only(bottom: 16),
@@ -668,12 +666,12 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(hasAnyAiNutrition ? "Regenerate Nutrition Targets from Intake" : "Draft Nutrition Targets with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                Text(hasAnyAiNutrition ? "Regenerate Nutrition Targets from Intake" : "Draft nutrition targets", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 const SizedBox(height: 6),
                 Text(
                   hasAnyAiNutrition
                       ? "If this client has updated their Nutrition Intake answers since their targets were last set, draft a fresh set from their current answers. You'll review it here before anything changes."
-                      : "This client's Nutrition Intake is complete but no AI draft has been generated yet. Draft whole-number Training/Rest Day targets from their intake answers — you'll review it here before anything is applied.",
+                      : "This client's Nutrition Intake is complete but no draft has been created yet. Draft whole-number Training/Rest Day targets from their intake answers — you'll review it here before anything is applied.",
                   style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                 ),
                 const SizedBox(height: 10),
@@ -684,11 +682,11 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     child: Text(_generatingNutritionDraft || _regeneratingNutritionDraft
                         ? "Generating…"
                         : hasAnyAiNutrition
-                            ? "Regenerate AI Nutrition Targets"
-                            : "Generate AI Nutrition Targets"),
+                            ? "Regenerate targets"
+                            : "Draft nutrition targets"),
                   )
                 else
-                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                  Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
               ],
             ),
           ),
@@ -702,9 +700,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text("AI-drafted calorie & macro targets are ready", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                    const SizedBox(width: 6),
-                    const Tag(text: "AI Draft", gold: true),
+                    Expanded(child: Text("Calorie and macro targets are ready", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
                   ],
                 ),
                 const SizedBox(height: 6),

@@ -21,6 +21,7 @@ import "../memberships/manage_products_screen.dart";
 import "../memberships/manage_waivers_screen.dart";
 import "../programs/program_library_page.dart";
 import "../reports/reports_hub_screen.dart";
+import "../requests/requests_screen.dart";
 import "../schedule/schedule_screen.dart";
 import "../schedule/waitlist_screen.dart";
 import "../settings/customize_platform_screen.dart";
@@ -44,12 +45,14 @@ const _bottomItemsBase = [
   _NavItem("chat", "Chat", LucideIcons.messageSquare),
   _NavItem("schedule", "Schedule", LucideIcons.calendar),
 ];
+const _requestsBottomItem = _NavItem("requests", "Requests", LucideIcons.clipboardList);
 const _staffBottomItem = _NavItem("staff", "Staff settings", LucideIcons.user);
 
 const _titles = {
   "dashboard": "Dashboard",
   "clients": "Clients",
   "schedule": "Scheduling",
+  "requests": "Requests",
   "chat": "Chat",
   "teamchat": "Team Chat",
   "staff": "Staff settings",
@@ -159,7 +162,11 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
       _scaffoldKey.currentState?.closeDrawer();
     }
 
-    final bottomItems = [..._bottomItemsBase, if (isOwner) _staffBottomItem];
+    final bottomItems = [
+      ..._bottomItemsBase,
+      if (!isOwner) _requestsBottomItem,
+      if (isOwner) _staffBottomItem,
+    ];
 
     final canGoBack = ref.read(trainerModeProvider.notifier).canGoBack;
     // Watched, not read: a sub-view opening or closing must re-evaluate
@@ -262,6 +269,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       "clients" => const ClientsScreen(),
                       "chat" => const CoachChatScreen(),
                       "schedule" => const ScheduleScreen(),
+                      "requests" => const RequestsScreen(),
                       "waitlist" => const WaitlistScreen(),
                       "exercises" => const ExercisesScreen(),
                       "equipment" => const EquipmentLibraryScreen(),
@@ -376,6 +384,7 @@ class _TrainerDrawer extends ConsumerWidget {
     final entries = isOwner
         ? [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
+            _DrawerEntry(LucideIcons.clipboardList, "Requests", "requests", true),
             _DrawerEntry(LucideIcons.messageSquare, "Chat", "chat", true),
             _DrawerEntry(
               LucideIcons.clipboardList,
@@ -431,6 +440,7 @@ class _TrainerDrawer extends ConsumerWidget {
         : [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
             _DrawerEntry(LucideIcons.users, "Clients", "clients", true),
+            _DrawerEntry(LucideIcons.clipboardList, "Requests", "requests", true),
             _DrawerEntry(LucideIcons.calendar, "Scheduling", "schedule", true),
             _DrawerEntry(LucideIcons.clock, "Waitlist", "waitlist", true),
             _DrawerEntry(LucideIcons.dumbbell, "Exercises", "exercises", true),

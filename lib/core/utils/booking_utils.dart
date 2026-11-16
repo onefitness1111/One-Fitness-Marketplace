@@ -330,6 +330,9 @@ BookingCheck canBookOffering(
   if (info.membershipPaused) {
     return const BookingCheck(ok: false, reason: "paused", msg: "Your membership is currently paused — ask your gym to resume it before booking.");
   }
+  if (info.bookingRestricted) {
+    return const BookingCheck(ok: false, reason: "restricted", msg: "Booking is paused on this account. Talk to ONE Fitness if you have a question.");
+  }
   // A pending cancellation ends the recurring membership, not the packages
   // bought alongside it — those are paid up and keep their balance. So the
   // cut-off only applies to the membership; packages are still drawn on

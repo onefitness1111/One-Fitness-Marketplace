@@ -18,6 +18,7 @@ class Booking {
     this.overrideReason,
     this.planId,
     this.durationMin = 60,
+    this.countsTowardPay = true,
   });
 
   final String id;
@@ -59,6 +60,10 @@ class Booking {
   /// Minutes the session runs. 60 unless staff set an end time when booking.
   final int durationMin;
 
+  /// False when the session was comped (a free add). It still shows on the
+  /// schedule. It does not count toward that coach's pay.
+  final bool countsTowardPay;
+
   int get endSlot => slot + durationMin;
 
   Booking copyWith({String? attendanceStatus}) => Booking(
@@ -79,5 +84,6 @@ class Booking {
         overrideReason: overrideReason,
         planId: planId,
         durationMin: durationMin,
+        countsTowardPay: countsTowardPay,
       );
 }

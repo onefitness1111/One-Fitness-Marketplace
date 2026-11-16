@@ -211,8 +211,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
             ],
           ),
           const SizedBox(height: 14),
-          if (isOwner) ...[
-            Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
+          Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
             const SizedBox(height: 6),
             InkWell(
               onTap: () => setState(() => _pickingCoach = true),
@@ -235,7 +234,6 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
               ),
             ),
             const SizedBox(height: 12),
-          ],
           Text("SESSION TYPE", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
           const SizedBox(height: 6),
           _ChoiceRow<String>(value: _sessionType, options: types.map((t) => (t, sessionTypeLabel(t))).toList(), onChanged: (v) => setState(() => _sessionType = v ?? _sessionType)),
@@ -353,9 +351,17 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                           slot: slot,
                           discipline: effectiveDiscipline,
                           priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(_sessionType),
+                          isOwner: isOwner,
                         );
                         if (out == null) {
                           setState(() => _saving = false);
+                          return;
+                        }
+                        if (out.status == "requested") {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message!)));
+                            Navigator.of(context).pop();
+                          }
                           return;
                         }
                         if (!out.booked) {

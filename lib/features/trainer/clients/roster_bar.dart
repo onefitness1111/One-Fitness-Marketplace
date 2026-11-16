@@ -6,7 +6,6 @@ import "add_client_sheet.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/flag_utils.dart";
 import "../../../core/widgets/widgets.dart";
-import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
 
@@ -40,18 +39,14 @@ class _RosterBarState extends ConsumerState<RosterBar> {
 
   @override
   Widget build(BuildContext context) {
-    final trainerAuth = ref.watch(trainerAuthProvider);
-    final isOwner = trainerAuth == "owner";
     final roster = ref.watch(trainerRosterProvider);
     final clientRecords = ref.watch(trainerClientRecordsProvider);
     final bookings = ref.watch(allBookingsProvider);
     final activeId = ref.watch(selectedClientIdProvider);
 
-    // Platform → Coaches, Access & Security controls this — owner is never
-    // scoped, and a coach only gets filtered to their own clients if the
-    // owner has explicitly set the scope to "own" (default is "all").
-    final coachClientScope = ref.watch(platformSettingsProvider).coachClientScope;
-    final scoped = (!isOwner && coachClientScope == "own") ? roster.where((c) => c.primaryTrainerId == trainerAuth).toList() : roster;
+    // Every coach reaches every client from this tab. The schedule is what
+    // stays limited to their own sessions. Chat can still be narrowed.
+    final scoped = roster;
     final q = _search.text.trim().toLowerCase();
     final visible = q.isEmpty
         ? scoped
