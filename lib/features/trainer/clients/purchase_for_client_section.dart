@@ -133,7 +133,9 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
           Padding(
             padding: EdgeInsets.only(top: 4, bottom: 14),
             child: Text(
-              "Pick a plan and, if you'd like, a coupon code. For a paid plan you'll take payment right here — hand the client your phone to enter their card. Set the price to 0 to give a plan away without charging for it.",
+              ref.watch(trainerAuthProvider) == "owner"
+                  ? "Pick a plan and, if you'd like, a coupon code. For a paid plan you'll take payment right here — hand the client your phone to enter their card. Set the price to 0 to give a plan away without charging for it."
+                  : "Pick a plan and, if you'd like, a coupon code. The price is the one set on the plan. For a paid plan you'll take payment right here — hand the client your phone to enter their card.",
               style: TextStyle(fontSize: 12, color: AppColors.mute),
             ),
           ),
@@ -186,8 +188,19 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
           ],
           if (plan != null) ...[
             const SizedBox(height: 14),
+            if (ref.watch(trainerAuthProvider) != "owner")
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  plan.priceCents > 0
+                      ? "Price: \$${(plan.priceCents / 100).toStringAsFixed(2)}${plan.kind == PlanKind.membership ? " / month" : ""}"
+                      : "This plan is free.",
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+              ),
             Row(
               children: [
+                if (ref.watch(trainerAuthProvider) == "owner")
                 Expanded(
                   child: FieldLabeled(
                     label: plan.kind == PlanKind.membership ? "Price (\$ / month)" : "Price (\$)",
@@ -198,6 +211,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                     ),
                   ),
                 ),
+                if (ref.watch(trainerAuthProvider) == "owner")
                 const SizedBox(width: 10),
                 Expanded(
                   child: FieldLabeled(
@@ -311,7 +325,8 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
       // The typed price decides this, not the plan's own: a coach can sell a
       // normally-paid plan for nothing (a comp, a make-good) and a free plan
       // for a price, and either should do the right thing.
-      final chargeCents = _priceOverrideCents ?? plan.priceCents;
+      final isOwner = ref.read(trainerAuthProvider) == "owner";
+      final chargeCents = isOwner ? (_priceOverrideCents ?? plan.priceCents) : plan.priceCents;
 
       // Giving away a plan that normally costs money is worth a second
       // look — it's one keystroke away from taking payment for it, and
@@ -390,7 +405,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         // Only sent when it differs from the plan, so an ordinary sale is
         // still priced entirely server-side. Either way the server re-checks
         // that whoever asked for it is staff.
-        priceOverrideCents: chargeCents == plan.priceCents ? null : chargeCents,
+        priceOverrideCents: isOwner && chargeCents != plan.priceCents ? chargeCents : null,
         accessExpiresAt: _expiryIso,
       );
       if (result.cancelled) return;
@@ -404,6 +419,19 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         );
         widget.onBack();
       }
+      // The client is told every time they are charged. Best-effort: a
+      // missed notice must not look like the payment failed.
+      SupabaseService.sendPushNotification(
+        profileId: widget.info.id,
+        title: "Payment received",
+        body: "Your card was charged for ${plan.name}.",
+        sms: true,
+      ).catchError((_) {});
+      SupabaseService.sendEmail(
+        profileId: widget.info.id,
+        subject: "Payment received — ${plan.name}",
+        text: "Hi ${widget.info.name},\n\nYour card was charged for ${plan.name} at ONE Fitness.\n\n— ONE Fitness",
+      ).catchError((_) {});
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceFirst("Exception: ", ""));
     } finally {

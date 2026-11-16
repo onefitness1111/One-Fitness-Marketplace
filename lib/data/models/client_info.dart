@@ -38,6 +38,8 @@ class ClientInfo {
     this.pushOptIn = true,
     this.billingAnchorDay,
     this.bookingLocation,
+    this.emergencyContactName,
+    this.emergencyContactPhone,
   });
 
   final String id;
@@ -166,6 +168,10 @@ class ClientInfo {
   /// default); [kAnyLocation] means "Any location".
   final String? bookingLocation;
 
+  /// Visible to coaches and the owner. This is not the client's own phone.
+  final String? emergencyContactName;
+  final String? emergencyContactPhone;
+
   ClientInfo copyWith({
     String? name,
     String? email,
@@ -200,6 +206,8 @@ class ClientInfo {
     bool? pushOptIn,
     int? billingAnchorDay,
     String? bookingLocation,
+    String? emergencyContactName,
+    String? emergencyContactPhone,
     List<ClientPlanEnrollment>? plans,
   }) =>
       ClientInfo(
@@ -234,6 +242,8 @@ class ClientInfo {
         pushOptIn: pushOptIn ?? this.pushOptIn,
         billingAnchorDay: billingAnchorDay ?? this.billingAnchorDay,
         bookingLocation: bookingLocation ?? this.bookingLocation,
+        emergencyContactName: emergencyContactName ?? this.emergencyContactName,
+        emergencyContactPhone: emergencyContactPhone ?? this.emergencyContactPhone,
       );
 }
 

@@ -52,9 +52,9 @@ class _PasswordActionsState extends ConsumerState<PasswordActions> {
   }
 
   Future<void> _sendReset() async {
-    final email = widget.email.trim();
-    if (email.isEmpty) {
-      _say("This account has no email address, so a reset link can't be sent.", error: true);
+    final id = widget.profileId;
+    if (id == null) {
+      _say("Save this profile first, then you can send a reset link.", error: true);
       return;
     }
     setState(() {
@@ -62,8 +62,8 @@ class _PasswordActionsState extends ConsumerState<PasswordActions> {
       _message = null;
     });
     try {
-      await SupabaseService.sendPasswordReset(email);
-      _say("Reset link sent to $email.");
+      await SupabaseService.sendPasswordResetFor(id);
+      _say("Reset link sent to the email on their account.");
     } catch (e) {
       // Was `catch (_)` with a fixed "check your connection" line, so a
       // rate limit, a rejected address and an unconfigured email provider

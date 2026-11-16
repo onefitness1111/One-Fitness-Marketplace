@@ -99,10 +99,13 @@ class SupabaseService {
     if (user == null) return null;
     final row = await client
         .from("profiles")
-        .select()
+        .select(_profileColumns)
         .eq("id", user.id)
         .maybeSingle();
-    return row;
+    if (row == null) return null;
+    final profile = Map<String, dynamic>.from(row);
+    await _attachContacts([profile]);
+    return profile;
   }
 
   static Future<void> signIn(String email, String password) async {
@@ -270,13 +273,9 @@ class SupabaseService {
     });
   }
 
-  /// Real coach self-signup — mirrors signUpCoach in supabaseData.js.
-  /// `reviewed_by_owner: false` for self-signup (an owner adding a coach
-  /// directly would pass true, but that flow isn't built here — see
-  /// coaches_overview_screen.dart's own "mocked" note). Spending the
-  /// approval code is best-effort — same as the source: the account
-  /// already exists by the time this RPC runs regardless of its outcome,
-  /// so a race here shouldn't fail an otherwise-successful signup.
+  /// Real coach self-signup. The approval code is checked and spent on the
+  /// server (`grant_coach_with_code`). A wrong code removes the login that
+  /// was just created so it is not left behind as a client.
   static Future<String> signUpCoach({
     required String email,
     required String password,
@@ -299,11 +298,21 @@ class SupabaseService {
     final res = await client.auth.signUp(
       email: email,
       password: password,
-      data: {"requested_role": "coach", "name": name, "phone": phone ?? ""},
+      // The server always creates a client. grant_coach_with_code is what
+      // turns this account into a coach, and only after the code checks out.
+      data: {"requested_role": "client", "name": name, "phone": phone ?? ""},
     );
     final userId = res.user?.id;
     if (userId == null)
       throw Exception("Sign-up failed — no account was created.");
+    try {
+      await client.rpc("grant_coach_with_code", params: {"entered_code": approvalCode});
+    } catch (e) {
+      try {
+        await deleteMyAccount();
+      } catch (_) {}
+      throw Exception(e.toString().replaceFirst("Exception: ", ""));
+    }
     try {
       await client.from("trainers").insert({
         "profile_id": userId,
@@ -348,15 +357,6 @@ class SupabaseService {
     };
     if (profilePatch.isNotEmpty) {
       await client.from("profiles").update(profilePatch).eq("id", userId);
-    }
-    try {
-      await client.rpc(
-        "mark_coach_code_used",
-        params: {"entered_code": approvalCode},
-      );
-    } catch (e) {
-      // ignore: avoid_print
-      print("[SupabaseService] mark_coach_code_used failed: $e");
     }
     return userId;
   }
@@ -406,7 +406,7 @@ class SupabaseService {
       body: jsonEncode({
         "email": email,
         "password": password,
-        "data": {"requested_role": "coach", "name": name, "phone": phone ?? ""},
+        "data": {"requested_role": "client", "name": name, "phone": phone ?? ""},
       }),
     );
     final signUpBody =
@@ -424,6 +424,9 @@ class SupabaseService {
         signUpBody["id"] as String?;
     if (userId == null)
       throw Exception("Sign-up failed — no account was created.");
+    // The new login is a client until the owner promotes it. Pay fields on
+    // the trainers row are accepted because this call runs as the owner.
+    await client.rpc("owner_promote_coach", params: {"p_user": userId});
     try {
       await client.from("trainers").insert({
         "profile_id": userId,
@@ -470,52 +473,138 @@ class SupabaseService {
 
   // ── Read ──────────────────────────────────────────────────────────
 
+  /// Columns a signed-in member may read on any profile. Email, phone, and
+  /// the calendar token are filled in afterwards, and only for the caller
+  /// or the owner.
+  static const _profileColumns =
+      "id, role, name, first_name, last_name, photo_url, created_at, push_opt_in, accepted_terms_at, accepted_terms_version, over_18_confirmed_at, banned_at, ban_reason, deleted_at";
+
+  /// Client columns a coach may see. Card, bank, Stripe, and balance fields
+  /// are not in this list.
+  static const _clientColumns =
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, emergency_contact_phone";
+
+  /// Trainer columns anyone signed in may see. Pay rates are not included.
+  static const _trainerColumns =
+      "profile_id, disciplines, session_types, slot_interval, availability, programmer_availability, locations, bio, before_afters, avail_lock_until, signup_at, reviewed_by_owner, updated_at, coach_code, unavailability, title";
+
+  static Future<List<dynamic>> _rpcList(String name, Map<String, dynamic> params) async {
+    try {
+      final rows = await client.rpc(name, params: params);
+      return rows is List ? rows : const [];
+    } catch (e) {
+      // ignore: avoid_print
+      print("[SupabaseService] $name unavailable: $e");
+      return const [];
+    }
+  }
+
+  static Future<void> _attachContacts(List<Map<String, dynamic>> profiles) async {
+    if (profiles.isEmpty) return;
+    final ids = [for (final p in profiles) p["id"]].whereType<String>().toList();
+    final rows = await _rpcList("profile_contact_for", {"p_ids": ids});
+    final byId = <String, Map<String, dynamic>>{
+      for (final raw in rows)
+        if (raw is Map && raw["id"] is String) raw["id"] as String: raw.cast<String, dynamic>(),
+    };
+    for (final p in profiles) {
+      final extra = byId[p["id"]];
+      if (extra == null) continue;
+      p["email"] = extra["email"];
+      p["phone"] = extra["phone"];
+    }
+  }
+
+  static Future<void> _attachBilling(List<Map<String, dynamic>> clients) async {
+    if (clients.isEmpty) return;
+    final ids = [for (final c in clients) c["profile_id"]].whereType<String>().toList();
+    final rows = await _rpcList("client_billing_for", {"p_ids": ids});
+    final byId = <String, Map<String, dynamic>>{
+      for (final raw in rows)
+        if (raw is Map && raw["profile_id"] is String)
+          raw["profile_id"] as String: raw.cast<String, dynamic>(),
+    };
+    for (final c in clients) {
+      final extra = byId[c["profile_id"]];
+      if (extra == null) continue;
+      c.addAll(extra);
+    }
+  }
+
+  static Future<void> _attachPay(List<Map<String, dynamic>> trainers) async {
+    if (trainers.isEmpty) return;
+    final ids = [for (final t in trainers) t["profile_id"]].whereType<String>().toList();
+    final rows = await _rpcList("trainer_pay_for", {"p_ids": ids});
+    final byId = <String, Map<String, dynamic>>{
+      for (final raw in rows)
+        if (raw is Map && raw["profile_id"] is String)
+          raw["profile_id"] as String: raw.cast<String, dynamic>(),
+    };
+    for (final t in trainers) {
+      final extra = byId[t["profile_id"]];
+      if (extra == null) continue;
+      t.addAll(extra);
+    }
+  }
+
   /// A single client's own ClientInfo — used right after sign-in, so the
   /// client doesn't need the whole-gym roster fetched first just to find
   /// their own row in it.
   static Future<ClientInfo?> loadClientById(String id) async {
     final profile = await client
         .from("profiles")
-        .select()
+        .select(_profileColumns)
         .eq("id", id)
         .maybeSingle();
     if (profile == null) return null;
+    final profileRow = Map<String, dynamic>.from(profile);
+    await _attachContacts([profileRow]);
     final c = await client
         .from("clients")
-        .select()
+        .select(_clientColumns)
         .eq("profile_id", id)
         .maybeSingle();
-    return _clientInfoFromRow(profile, c ?? const {});
+    final clientRow = Map<String, dynamic>.from(c ?? const {});
+    if (c != null) await _attachBilling([clientRow]);
+    return _clientInfoFromRow(profileRow, clientRow);
   }
 
   static Future<List<ClientInfo>> loadRoster() async {
     final profiles = await client
         .from("profiles")
-        .select()
+        .select(_profileColumns)
         .eq("role", "client");
     if (profiles.isEmpty) return [];
-    final ids = profiles.map((p) => p["id"] as String).toList();
+    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
+    await _attachContacts(profileRows);
+    final ids = profileRows.map((p) => p["id"] as String).toList();
     final clients = await client
         .from("clients")
-        .select()
+        .select(_clientColumns)
         .inFilter("profile_id", ids);
-    final byId = {for (final c in clients) c["profile_id"] as String: c};
+    final clientRows = [for (final c in clients) Map<String, dynamic>.from(c as Map)];
+    await _attachBilling(clientRows);
+    final byId = {for (final c in clientRows) c["profile_id"] as String: c};
     return _safeMap(
-      profiles,
+      profileRows,
       (p) => _clientInfoFromRow(p, byId[p["id"]] ?? const {}),
     );
   }
 
   static Future<List<Trainer>> loadTrainers() async {
-    final profiles = await client.from("profiles").select().eq("role", "coach");
+    final profiles = await client.from("profiles").select(_profileColumns).eq("role", "coach");
     if (profiles.isEmpty) return [];
-    final ids = profiles.map((p) => p["id"] as String).toList();
+    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
+    await _attachContacts(profileRows);
+    final ids = profileRows.map((p) => p["id"] as String).toList();
     final trainers = await client
         .from("trainers")
-        .select()
+        .select(_trainerColumns)
         .inFilter("profile_id", ids);
-    final byId = {for (final t in trainers) t["profile_id"] as String: t};
-    final withRow = profiles.where((p) => byId.containsKey(p["id"]));
+    final trainerRows = [for (final t in trainers) Map<String, dynamic>.from(t as Map)];
+    await _attachPay(trainerRows);
+    final byId = {for (final t in trainerRows) t["profile_id"] as String: t};
+    final withRow = profileRows.where((p) => byId.containsKey(p["id"]));
     return _safeMap(withRow, (p) => _trainerFromRow(p, byId[p["id"]]!));
   }
 
@@ -1637,6 +1726,28 @@ class SupabaseService {
   /// signUpClient/signUpCoach).
   static Future<void> sendPasswordReset(String email) =>
       client.auth.resetPasswordForEmail(email);
+
+  /// Staff sends a reset link. The address stays on the server, so a coach
+  /// can do this for a client without being shown the email.
+  static Future<void> sendPasswordResetFor(String profileId) =>
+      _invokeFunction("send-password-reset", {"profileId": profileId});
+
+  /// A fixed notice the client is allowed to trigger (booking, welcome, a
+  /// chat alert to their coach). The server writes the wording.
+  static Future<void> clientNotify(String kind, Map<String, dynamic> fields) async {
+    try {
+      await _invokeFunction("client-notify", {"kind": kind, ...fields});
+    } catch (e) {
+      // ignore: avoid_print
+      print("[SupabaseService] client-notify $kind failed: $e");
+    }
+  }
+
+  /// Whether an approval code is usable, without returning the code itself.
+  static Future<String> coachCodeStatus(String code) async {
+    final res = await client.rpc("coach_code_status", params: {"entered_code": code});
+    return res?.toString() ?? "invalid";
+  }
 
   /// A coach editing their own profile. `locations` is a list on the real
   /// schema (see `_locationNameFrom`'s doc comment on `bookings.location`
@@ -2770,12 +2881,9 @@ class SupabaseService {
   /// A client's account balance in cents: negative = they owe the gym,
   /// positive = credit.
   static Future<int> loadBalanceCents(String clientId) async {
-    final row = await client
-        .from("clients")
-        .select("balance_cents, has_outstanding_balance")
-        .eq("profile_id", clientId)
-        .maybeSingle();
-    return (row?["balance_cents"] as num?)?.toInt() ?? 0;
+    final rows = await _rpcList("client_billing_for", {"p_ids": [clientId]});
+    if (rows.isEmpty || rows.first is! Map) return 0;
+    return (rows.first["balance_cents"] as num?)?.toInt() ?? 0;
   }
 
   /// Staff: set a client's balance to an exact amount (cents).
@@ -3099,16 +3207,18 @@ class SupabaseService {
   static Future<void> waiveCharge(String chargeId) =>
       _invokeFunction("waive-charge", {"chargeId": chargeId});
 
-  /// Real email, sent server-side via the send-email Edge Function (SMTP —
-  /// see supabase/EMAIL_SETUP.md). Any authenticated caller may invoke this
-  /// (Comms.jsx/CoachChat.jsx's "Email"/"Both" channel is available to both
-  /// clients and coaches) — there's no role restriction to enforce here.
+  /// Real email from the gym mailbox. The server only sends it for the owner
+  /// or a coach, and only to a member. Pass [profileId] so the address is
+  /// looked up on the server. [to] is optional and must match that member
+  /// when it is sent.
   static Future<void> sendEmail({
-    required String to,
+    String? profileId,
+    String? to,
     required String subject,
     required String text,
   }) => _invokeFunction("send-email", {
-    "to": to,
+    if (profileId != null && profileId.isNotEmpty) "profileId": profileId,
+    if (to != null && to.isNotEmpty) "to": to,
     "subject": subject,
     "text": text,
   });
@@ -3146,9 +3256,15 @@ class SupabaseService {
   }
 
   /// Everyone who can be messaged in Team Chat: coaches and the owner.
+  /// Email and phone are filled in only for the caller and the owner.
   static Future<List<Map<String, dynamic>>> loadStaffDirectory() async {
-    final rows = await client.from("profiles").select("id, name, email, phone, role").inFilter("role", ["coach", "owner"]);
-    return rows.map((r) => r.cast<String, dynamic>()).toList();
+    final rows = await client
+        .from("profiles")
+        .select("id, name, role, photo_url")
+        .inFilter("role", ["coach", "owner"]);
+    final people = [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+    await _attachContacts(people);
+    return people;
   }
 
   /// Staff messages the signed-in person may see (RLS narrows it), oldest first.
@@ -3172,8 +3288,18 @@ class SupabaseService {
   /// Real SMS via the send-sms Edge Function (Twilio) — the "SMS" chat
   /// channel. Throws with a readable message when Twilio isn't configured,
   /// so the sender learns the text didn't go rather than assuming it did.
-  static Future<void> sendSms({required String to, required String text}) =>
-      _invokeFunction("send-sms", {"to": to, "text": text});
+  /// Text a member. The server looks the number up from [profileId]. A client
+  /// cannot call this. [to] is optional and must match that member.
+  static Future<void> sendSms({
+    required String profileId,
+    String? to,
+    required String text,
+  }) =>
+      _invokeFunction("send-sms", {
+        "profileId": profileId,
+        if (to != null && to.isNotEmpty) "to": to,
+        "text": text,
+      });
 
   /// What would happen if staff cancelled this client's membership —
   /// whether the paid-for period can be run out, and when it ends. Asked
@@ -3468,10 +3594,8 @@ class SupabaseService {
   static Future<void> registerDeviceToken(String token, String platform) =>
       _invokeFunction("register-device-token", {"token": token, "platform": platform});
 
-  /// Notifications spec — push counterpart to [sendEmail], for events that
-  /// happen inside a live app session (booking confirmation, reschedule,
-  /// cancellation, a new coach DM, low session balance). Same "any
-  /// authenticated caller" posture as sendEmail — see send-push/index.ts.
+  /// Push from the owner or a coach to a member. See send-push/index.ts.
+  /// Clients use [clientNotify] for their own booking and chat alerts.
   /// Silently a no-op end-to-end until the recipient has a registered
   /// device token, which won't exist until Firebase is configured.
   ///
@@ -4552,6 +4676,8 @@ class SupabaseService {
       pushOptIn: profile["push_opt_in"] as bool? ?? true,
       billingAnchorDay: _asInt(c["billing_anchor_day"]),
       bookingLocation: c["booking_location"] as String?,
+      emergencyContactName: c["emergency_contact_name"] as String?,
+      emergencyContactPhone: c["emergency_contact_phone"] as String?,
     );
   }
 
@@ -4578,8 +4704,9 @@ class SupabaseService {
 
   /// The billing address saved on a client's profile, or null when none yet.
   static Future<BillingAddress?> loadBillingAddress(String clientId) async {
-    final row = await client.from("clients").select("billing_address").eq("profile_id", clientId).maybeSingle();
-    return BillingAddress.fromJson(row?["billing_address"]);
+    final rows = await _rpcList("client_billing_for", {"p_ids": [clientId]});
+    if (rows.isEmpty || rows.first is! Map) return null;
+    return BillingAddress.fromJson(rows.first["billing_address"]);
   }
 
   /// Saves (or replaces) the billing address on a client's profile.

@@ -10,7 +10,6 @@ import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
-import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
@@ -182,15 +181,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send({
     required Trainer selectedCoach,
     required ClientInfo info,
-    required PlatformSettings settings,
-    required Set<ChatChannel> inputChannels,
   }) async {
-    var channels = inputChannels;
+    // Clients write in the app. Email and SMS are not offered from here.
+    const channels = {ChatChannel.inapp};
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
-    final toBusiness = selectedCoach.id == "business";
-    if (toBusiness) channels = {...channels}..remove(ChatChannel.sms);
-    if (channels.isEmpty) channels = {ChatChannel.inapp};
     // Optimistic bubble, with a temporary local id. The real row — and its
     // real id — comes back from the server, which is also where the content
     // filter and the block rules are applied.
@@ -251,58 +246,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // not a profile id — there's no single device to push to, and the
     // message is in the thread for whoever reads it. (sendMessage already
     // drops the same sentinel rather than writing it as a trainer_id.)
-    if (channels.contains(ChatChannel.inapp) && selectedCoach.id != "business") {
-      notifyPush(
-        profileId: selectedCoach.id,
-        title: "New message from ${info.name}",
-        body: text,
-      );
-    }
-    String? emailTo = selectedCoach.email;
-    if (toBusiness && channels.contains(ChatChannel.email)) {
-      // The business contact is the owner's inbox.
-      try {
-        final staff = await SupabaseService.loadStaffDirectory();
-        for (final p in staff) {
-          if (p["role"] == "owner" && ((p["email"] as String?) ?? "").isNotEmpty) {
-            emailTo = p["email"] as String;
-            break;
-          }
-        }
-      } catch (_) {}
-    }
-    if (channels.contains(ChatChannel.email) && emailTo != null) {
-      SupabaseService.sendEmail(
-        to: emailTo,
-        subject: "New message from ${info.name} — ${settings.businessName}",
-        text: text,
-      ).catchError((Object e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't send the email: ${e.toString().replaceFirst("Exception: ", "")}")),
-          );
-        }
+    // Clients message in the app. A push tells the coach or the owner; email
+    // and SMS are sent by staff, not from a client account.
+    if (selectedCoach.id != "business") {
+      SupabaseService.clientNotify("chat-to-staff", {
+        "profileId": selectedCoach.id,
+        "body": text,
       });
-    }
-    if (channels.contains(ChatChannel.sms) && !toBusiness) {
-      final phone = (selectedCoach.phone ?? "").trim();
-      if (phone.isEmpty) {
-        // The recipient's missing number, not the sender's. The message is
-        // already in their thread, so this is a note, not a failure.
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("${selectedCoach.name} has no phone number on file — sent in the app instead.")),
-          );
-        }
-      } else {
-        SupabaseService.sendSms(to: phone, text: "${info.name}: $text").catchError((Object e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Couldn't send the SMS: ${e.toString().replaceFirst("Exception: ", "")}")),
-            );
-          }
-        });
-      }
     }
   }
 
@@ -430,7 +380,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _Composer(
           controller: _msgController,
           recipientName: selectedCoach.displayTitle,
-          onSend: () => _send(selectedCoach: selectedCoach, info: info, settings: settings, inputChannels: _channels),
+          onSend: () => _send(selectedCoach: selectedCoach, info: info),
         ),
       ],
       ),
@@ -586,30 +536,16 @@ class _RecipientSetupState extends State<_RecipientSetup> {
           ],
           _businessCard(),
           const SizedBox(height: 20),
-          Text("Send via — pick any", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+          Text("Send via", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              for (final ch in chatChannelOrder.where((c) => !(_recipientId == "business" && c == ChatChannel.sms))) ...[
-                if (ch != chatChannelOrder.first) const SizedBox(width: 8),
-                _SegOption(
-                  label: chatChannelLabels[ch]!,
-                  selected: _channels.contains(ch),
-                  multi: true,
-                  onTap: () => setState(() => _channels = toggleChannel(_channels, ch)),
-                ),
-              ],
-            ],
+          _SegOption(
+            label: "In app",
+            selected: true,
+            onTap: () {},
           ),
           const SizedBox(height: 8),
           Text(
-            _recipientId == "business"
-                ? "SMS isn't available for $kMarketplaceName — in app or email only."
-                : !_channels.contains(ChatChannel.sms)
-                ? "No phone number needed."
-                : widget.needsPhone
-                    ? "SMS needs a phone number — we'll ask for yours once."
-                    : "Texts go to the number on your profile.",
+            "Your message stays in the app and alerts your coach. Email and texts are sent by ONE Fitness, not from a client account.",
             style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
           ),
           const SizedBox(height: 20),

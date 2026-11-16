@@ -12,7 +12,6 @@ import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/merge_token_utils.dart";
-import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/onboarding_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/blocked_time.dart";
@@ -228,13 +227,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         ref.read(clientBookingsProvider.notifier).addBooking(saved);
         SupabaseService.sendBookingConfirmation([saved.id]);
       }
-      final info = ref.read(clientInfoProvider);
-      notifyPush(
-        profileId: info.id,
-        title: "Booking confirmed",
-        body: "You're booked for ${niceDate(_date)} at ${fmtSlot(slot)}.",
-        sms: true,
-      );
+      SupabaseService.clientNotify("booking-confirmed", {
+        "when": "${niceDate(_date)} at ${fmtSlot(slot)}",
+      });
       _showError("You're booked — ${niceDate(_date)} at ${fmtSlot(slot)}. A receipt is on its way to your email.");
       _loadCredits();
       return;
@@ -777,22 +772,16 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           ref.read(clientBookingsProvider.notifier).reschedule(saved, rescheduling.id);
           allBookings.cancelBooking(rescheduling.id);
         }
-        notifyPush(
-          profileId: info.id,
-          title: "Session rescheduled",
-          body: "Your session is now ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
-          sms: true,
-        );
+        SupabaseService.clientNotify("rescheduled", {
+          "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
+        });
       } else {
         ref.read(clientBookingsProvider.notifier).addBooking(saved);
         // One confirmation email for this booking.
         SupabaseService.sendBookingConfirmation([saved.id]);
-        notifyPush(
-          profileId: info.id,
-          title: "Booking confirmed",
-          body: "You're booked for ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
-          sms: true,
-        );
+        SupabaseService.clientNotify("booking-confirmed", {
+          "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
+        });
       }
       // The coach is told now, while there's still time to chase the forms
       // before the session. Only for a client who holds a plan — see
@@ -800,12 +789,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (info.heldPlanIds.isNotEmpty) {
         final missing = incompleteIntakeTitles(ref.read(clientRecordProvider));
         if (missing.isNotEmpty) {
-          notifyCoachIncompleteIntake(
-            trainerId: saved.trainerId,
-            clientName: info.name,
-            missingTitles: missing,
-            sessionDate: niceDate(_date),
-          );
+          SupabaseService.clientNotify("intake-gap", {
+            "trainerId": saved.trainerId,
+            "missingTitles": missing,
+            "sessionDate": niceDate(_date),
+          });
         }
       }
       // Notifications spec — "Low session balance": fires once, right at
@@ -816,12 +804,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (plan != null) {
         final remaining = effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, ref.read(clientBookingsProvider));
         if (remaining == 1 || remaining == 2) {
-          notifyPush(
-            profileId: info.id,
-            title: "Low session balance",
-            body: "You have $remaining session${remaining == 1 ? '' : 's'} left this period.",
-            sms: true,
-          );
+          SupabaseService.clientNotify("low-sessions", {"remaining": remaining});
         }
       }
       setState(() {

@@ -9,7 +9,6 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/onboarding_utils.dart";
-import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/merge_token_utils.dart";
@@ -414,12 +413,11 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     if (first != null && info.heldPlanIds.isNotEmpty) {
       final missing = incompleteIntakeTitles(ref.read(clientRecordProvider));
       if (missing.isNotEmpty) {
-        notifyCoachIncompleteIntake(
-          trainerId: first.trainerId,
-          clientName: info.name,
-          missingTitles: missing,
-          sessionDate: niceDate(first.date),
-        );
+        SupabaseService.clientNotify("intake-gap", {
+          "trainerId": first.trainerId,
+          "missingTitles": missing,
+          "sessionDate": niceDate(first.date),
+        });
       }
     }
     if (!mounted) return;

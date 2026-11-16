@@ -380,9 +380,9 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     } finally {
       if (mounted) setState(() => _pendingIds.remove(tempId));
     }
-    if (channels.contains(ChatChannel.email) && client.email != null) {
+    if (channels.contains(ChatChannel.email)) {
       SupabaseService.sendEmail(
-        to: client.email!,
+        profileId: client.id,
         subject: "New message from $from — ${settings.businessName}",
         text: text,
       ).catchError((Object e) {
@@ -394,27 +394,14 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       });
     }
     if (channels.contains(ChatChannel.sms)) {
-      final phone = (client.phone ?? "").trim();
-      if (phone.isEmpty) {
-        // A client is no longer asked for a number to use chat, so this is
-        // now the normal case rather than an oversight. The message is
-        // already in their thread, so it's a note, not a failure.
+      // The number stays on the server. A coach is not shown it.
+      SupabaseService.sendSms(profileId: client.id, text: "$from: $text").catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("${client.name} has no phone number on file — sent in the app instead.")),
+            SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
           );
         }
-      } else {
-        // The client can reply to this text; twilio-inbound writes the reply
-        // into this same thread.
-        SupabaseService.sendSms(to: phone, text: "$from: $text").catchError((Object e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Couldn't send the SMS: ${e.toString().replaceFirst("Exception: ", "")}")),
-            );
-          }
-        });
-      }
+      });
     }
   }
 

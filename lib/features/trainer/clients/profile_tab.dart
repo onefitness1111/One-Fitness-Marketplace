@@ -109,13 +109,16 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         onBack: () => setState(() => _editing = false),
         child: _EditSection(
           info: info,
+          showContact: ref.watch(trainerAuthProvider) == "owner",
           onCancel: () => setState(() => _editing = false),
           onSave: (name, email, phone, city, state) async {
+            final isOwner = ref.read(trainerAuthProvider) == "owner";
             await SupabaseService.updateClientRow(
               info.id,
               name: name,
-              email: email,
-              phone: phone,
+              // A coach must not change or clear a client's email or phone.
+              email: isOwner ? email : null,
+              phone: isOwner ? phone : null,
               city: city,
               state: state,
             );
@@ -614,11 +617,12 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
             ),
             const SizedBox(height: 10),
           ],
-          _ContactRow(
-            icon: LucideIcons.mail,
-            label: "Email",
-            value: info.email,
-          ),
+          if (ref.watch(trainerAuthProvider) == "owner")
+            _ContactRow(
+              icon: LucideIcons.mail,
+              label: "Email",
+              value: info.email,
+            ),
           _ContactRow(
             icon: LucideIcons.cake,
             label: "Birthday",
@@ -626,10 +630,16 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                 ? "${_niceDate(info.birthday!)} (age ${_ageFrom(info.birthday!)})"
                 : null,
           ),
+          if (ref.watch(trainerAuthProvider) == "owner")
+            _ContactRow(
+              icon: LucideIcons.phone,
+              label: "Phone",
+              value: info.phone,
+            ),
           _ContactRow(
-            icon: LucideIcons.phone,
-            label: "Phone",
-            value: info.phone,
+            icon: LucideIcons.heartPulse,
+            label: "Emergency contact",
+            value: _emergencyLine(info),
           ),
           _ContactRow(
             icon: LucideIcons.mapPin,
@@ -660,20 +670,22 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: BtnGhost(
-                  onPressed: () => setState(() => _charging = true),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(LucideIcons.creditCard, size: 14),
-                      SizedBox(width: 6),
-                      Text("Add charge"),
-                    ],
+              if (ref.watch(trainerAuthProvider) == "owner") ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: BtnGhost(
+                    onPressed: () => setState(() => _charging = true),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.creditCard, size: 14),
+                        SizedBox(width: 6),
+                        Text("Add charge"),
+                      ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -690,19 +702,20 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ),
           ),
-          const SizedBox(height: 8),
-          BalanceCard(key: ValueKey("balance-${info.id}"), clientId: info.id, editable: true),
-          OutlinedButton.icon(
-            onPressed: () => setState(() => _paymentDetails = true),
-            icon: const Icon(LucideIcons.creditCard, size: 14),
-            label: const Text("Payment details (add or remove card)"),
-          ),
-          const SizedBox(height: 18),
-          Container(height: 1, color: AppColors.line),
-          const SizedBox(height: 14),
-          Center(
-            child: TextButton(
-              onPressed: () => _deleteClient(info),
+          if (ref.watch(trainerAuthProvider) == "owner") ...[
+            const SizedBox(height: 8),
+            BalanceCard(key: ValueKey("balance-${info.id}"), clientId: info.id, editable: true),
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _paymentDetails = true),
+              icon: const Icon(LucideIcons.creditCard, size: 14),
+              label: const Text("Payment details (add or remove card)"),
+            ),
+            const SizedBox(height: 18),
+            Container(height: 1, color: AppColors.line),
+            const SizedBox(height: 14),
+            Center(
+              child: TextButton(
+                onPressed: () => _deleteClient(info),
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.errorText,
               ),
@@ -716,6 +729,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ),
             ),
           ),
+          ],
         ],
       ),
     );
@@ -1073,6 +1087,15 @@ class _IntakeStatusSummary extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _emergencyLine(ClientInfo info) {
+  final parts = [
+    if ((info.emergencyContactName ?? "").trim().isNotEmpty) info.emergencyContactName!.trim(),
+    if ((info.emergencyContactPhone ?? "").trim().isNotEmpty) info.emergencyContactPhone!.trim(),
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join(" · ");
 }
 
 class _ContactRow extends StatelessWidget {
@@ -1444,8 +1467,10 @@ class _EditSection extends StatefulWidget {
     required this.info,
     required this.onCancel,
     required this.onSave,
+    this.showContact = true,
   });
   final ClientInfo info;
+  final bool showContact;
   final VoidCallback onCancel;
   final Future<void> Function(
     String name,
@@ -1480,7 +1505,7 @@ class _EditSectionState extends State<_EditSection> {
   }
 
   Future<void> _submit() async {
-    final gymErr = gymNumberError(context, _phone.text.trim());
+    final gymErr = widget.showContact ? gymNumberError(context, _phone.text.trim()) : null;
     if (gymErr != null) {
       setState(() => _err = gymErr);
       return;
@@ -1520,22 +1545,24 @@ class _EditSectionState extends State<_EditSection> {
             child: AppField(kind: FieldKind.name, controller: _name),
           ),
           const SizedBox(height: 10),
-          FieldLabeled(
-            label: "Email",
-            child: AppField(
-              controller: _email,
-              keyboardType: TextInputType.emailAddress,
+          if (widget.showContact) ...[
+            FieldLabeled(
+              label: "Email",
+              child: AppField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          FieldLabeled(
-            label: "Phone",
-            child: AppField(
-              controller: _phone,
-              keyboardType: TextInputType.phone,
+            const SizedBox(height: 10),
+            FieldLabeled(
+              label: "Phone",
+              child: AppField(
+                controller: _phone,
+                keyboardType: TextInputType.phone,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
+            const SizedBox(height: 10),
+          ],
           CityStateFields(city: _city, state: _state, helper: null),
           if (_err != null)
             Padding(

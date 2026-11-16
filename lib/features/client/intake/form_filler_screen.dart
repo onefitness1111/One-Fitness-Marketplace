@@ -165,7 +165,7 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
       // most real clients already have a coach-built plan on file, and
       // that shouldn't block their first AI target draft from generating).
       final isOwner = ref.read(trainerAuthProvider) == "owner";
-      final allowedToGenerate = widget.who == "client" || isOwner;
+      final allowedToGenerate = isOwner;
       if (widget.assessmentKey == "nutritional" && allowedToGenerate && !widget.client.savedNutritionPrograms.any((p) => p.source == "ai")) {
         SupabaseService.generateAiNutritionProgram(widget.profileId).catchError((_) => <String, dynamic>{});
       }

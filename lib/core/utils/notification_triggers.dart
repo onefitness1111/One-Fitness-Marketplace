@@ -19,6 +19,7 @@ Future<void> notifyPlanAssigned({
   if (toEmail.isEmpty) return;
   try {
     await SupabaseService.sendEmail(
+      profileId: profileId,
       to: toEmail,
       subject: "Your new $label plan is ready",
       text: "Hi $toName,\n\nYour coach just assigned you a new $label plan. Open the ONE Fitness app to check it out.\n\n— ONE Fitness",
@@ -124,6 +125,7 @@ Future<void> notifySessionMilestoneIfCrossed({
   if (toEmail.isNotEmpty) {
     try {
       await SupabaseService.sendEmail(
+        profileId: profileId,
         to: toEmail,
         subject: "You just hit $totalCheckedIn sessions!",
         text: "Hi $toName,\n\nCongratulations — you've completed $totalCheckedIn sessions at ONE Fitness. Keep up the great work!\n\n— ONE Fitness",
@@ -151,6 +153,7 @@ Future<void> notifyCoachComment({
   if (toEmail.isEmpty) return;
   try {
     await SupabaseService.sendEmail(
+      profileId: profileId,
       to: toEmail,
       subject: "Your coach left you a comment",
       text: "Hi $toName,\n\nYour coach just left a comment on one of your $kind entries. Open the ONE Fitness app to see it.\n\n— ONE Fitness",
@@ -188,15 +191,7 @@ Future<void> notifyGoalReachedIfCrossed({
       .whereType<double>()
       .any((w) => (w - goalWeight).abs() <= 0.5);
   if (alreadyThereBefore) return;
-  if (profileId != null) {
-    notifyPush(profileId: profileId, title: "Goal reached! 🎉", body: "Your latest measurement shows you've reached your goal weight. Amazing work!", sms: true);
-  }
-  if (toEmail.isEmpty) return;
-  try {
-    await SupabaseService.sendEmail(
-      to: toEmail,
-      subject: "You reached your goal weight!",
-      text: "Hi $toName,\n\nCongratulations — your latest measurement shows you've reached your goal weight. Amazing work!\n\n— ONE Fitness",
-    );
-  } catch (_) {}
+  // The client is the one logging the measurement. The server writes the
+  // notice and sends it only to that client.
+  await SupabaseService.clientNotify("goal-reached", {});
 }

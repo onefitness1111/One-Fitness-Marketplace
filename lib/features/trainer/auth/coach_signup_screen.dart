@@ -7,7 +7,6 @@ import "../../../data/providers/trainer_providers.dart";
 import "../../../core/legal/terms_screen.dart";
 import "../../../core/legal/terms_text.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/photo_picker_utils.dart";
 import "../../../core/widgets/address_fields.dart";
@@ -170,22 +169,20 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
       _verifyingCode = true;
     });
     try {
-      final approval = await SupabaseService.loadCoachApprovalCode();
-      final realCode = approval?["code"] as String?;
-      final expiresAt = approval?["expires_at"] as String?;
-      final usedAt = approval?["used_at"] as String?;
-      if (realCode == null || code != realCode) {
-        throw Exception(
-          "That code is invalid or has expired. Contact ONE Fitness for a current code.",
-        );
-      }
-      if (usedAt != null) {
-        throw Exception("That approval code has already been used.");
-      }
-      if (expiresAt != null && isoToday().compareTo(expiresAt) > 0) {
-        throw Exception(
-          "That approval code has expired — ask the owner for a new one.",
-        );
+      final status = await SupabaseService.coachCodeStatus(code);
+      switch (status) {
+        case "ok":
+          break;
+        case "used":
+          throw Exception("That approval code has already been used.");
+        case "expired":
+          throw Exception("That approval code has expired — ask the owner for a new one.");
+        case "limited":
+          throw Exception("Too many tries. Wait an hour, or ask the owner for a new code.");
+        default:
+          throw Exception(
+            "That code is invalid or has expired. Contact ONE Fitness for a current code.",
+          );
       }
       if (!mounted) return;
       setState(() {

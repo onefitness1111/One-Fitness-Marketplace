@@ -163,12 +163,7 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
       // false, so doing nothing correctly leaves them opted out.
       if (_smsConsent) {
         await SupabaseService.updateSmsOptIn(userId, true);
-        notifyPush(
-          profileId: userId,
-          title: "Welcome to ONE Fitness",
-          body: "Your account is set up. You'll get booking confirmations, reminders and waitlist offers here. Reply STOP to opt out.",
-          sms: true,
-        );
+        SupabaseService.clientNotify("welcome", {});
       }
       // Fire-and-forget, deliberately not awaited: the welcome email must
       // never be a reason signup takes longer or appears to fail.

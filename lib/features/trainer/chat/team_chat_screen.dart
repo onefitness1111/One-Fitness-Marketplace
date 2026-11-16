@@ -150,14 +150,15 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
             ];
       for (final t in targets) {
         notifyPush(profileId: t["id"] as String, title: "Message from $myName", body: body);
-        final email = (t["email"] as String?) ?? "";
-        if (chosen.contains(ChatChannel.email) && email.isNotEmpty) {
-          SupabaseService.sendEmail(to: email, subject: "Message from $myName — ONE Fitness", text: body)
-              .catchError((Object e) {});
+        if (chosen.contains(ChatChannel.email)) {
+          SupabaseService.sendEmail(
+            profileId: t["id"] as String,
+            subject: "Message from $myName — ONE Fitness",
+            text: body,
+          ).catchError((Object e) {});
         }
-        final phone = ((t["phone"] as String?) ?? "").trim();
-        if (!toMarket && chosen.contains(ChatChannel.sms) && phone.isNotEmpty) {
-          SupabaseService.sendSms(to: phone, text: "$myName: $body").catchError((Object e) {});
+        if (!toMarket && chosen.contains(ChatChannel.sms)) {
+          SupabaseService.sendSms(profileId: t["id"] as String, text: "$myName: $body").catchError((Object e) {});
         }
       }
       await _load(quiet: true);
