@@ -1,0 +1,270 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/challenge_utils.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/challenge.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "challenge_detail_screen.dart";
+
+/// Mirrors ClientChallengesPage.jsx: joined/available challenge lists that
+/// drill into ChallengeDetailScreen.
+class ChallengesScreen extends ConsumerStatefulWidget {
+  const ChallengesScreen({super.key});
+
+  @override
+  ConsumerState<ChallengesScreen> createState() => _ChallengesScreenState();
+}
+
+class _ChallengesScreenState extends ConsumerState<ChallengesScreen> {
+  String? _viewId;
+
+  @override
+  Widget build(BuildContext context) {
+    final challenges = ref.watch(challengesProvider);
+    final info = ref.watch(clientInfoProvider);
+
+    if (_viewId != null) {
+      final matches = challenges.where((c) => c.id == _viewId);
+      if (matches.isNotEmpty) {
+        return LocalBackScope(
+          isOpen: true,
+          onBack: () => setState(() => _viewId = null),
+          child: ChallengeDetailScreen(
+            challenge: matches.first,
+            onBack: () => setState(() => _viewId = null),
+          ),
+        );
+      }
+    }
+
+    final now = isoToday();
+    // A challenge scoped to a coach is only for that coach's clients. One
+    // this client already joined stays visible regardless — being moved
+    // to another coach shouldn't hide a leaderboard they're on.
+    bool forMe(Challenge c) => c.trainerId == null || c.trainerId == info.primaryTrainerId || isClientRegistered(c, info.id);
+    final joined = challenges
+        .where((c) => isClientRegistered(c, info.id))
+        .toList();
+    final available = challenges
+        .where(
+          (c) =>
+              forMe(c) && !isClientRegistered(c, info.id) && c.endDate.compareTo(now) >= 0,
+        )
+        .toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel("Challenges"),
+          if (joined.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                "YOU'RE IN",
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+            ...joined.map(
+              (c) => _ChallengeCard(
+                challenge: c,
+                showJoin: false,
+                onTap: () => setState(() => _viewId = c.id),
+                onJoin: null,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (available.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                "AVAILABLE TO JOIN",
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.mute,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+            ...available.map(
+              (c) => _ChallengeCard(
+                challenge: c,
+                showJoin: true,
+                onTap: () => setState(() => _viewId = c.id),
+                onJoin: () async {
+                  final nextParticipants = [...c.participantIds, info.id];
+                  try {
+                    await SupabaseService.updateChallengeRow(
+                      c.id,
+                      participantIds: nextParticipants,
+                    );
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Couldn't join — check your connection and try again.",
+                          ),
+                        ),
+                      );
+                    }
+                    return;
+                  }
+                  ref.read(challengesProvider.notifier).join(c.id, info.id);
+                  setState(() => _viewId = c.id);
+                },
+              ),
+            ),
+          ],
+          if (challenges.isEmpty)
+            const HintBox(
+              text: "No challenges running right now. Check back soon!",
+            ),
+          if (challenges.isNotEmpty && joined.isEmpty && available.isEmpty)
+            const HintBox(text: "No challenges available to join right now."),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChallengeCard extends ConsumerWidget {
+  const _ChallengeCard({
+    required this.challenge,
+    required this.showJoin,
+    required this.onTap,
+    required this.onJoin,
+  });
+  final Challenge challenge;
+  final bool showJoin;
+  final VoidCallback onTap;
+  final VoidCallback? onJoin;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tpl = challengeDisplay(challenge, ref.watch(challengeTemplatesProvider));
+    final now = isoToday();
+    final daysLeft =
+        DateTime.parse(
+          challenge.endDate,
+        ).difference(DateTime.parse(now)).inDays +
+        1;
+    final canJoin = showJoin && canJoinChallenge(challenge, now);
+
+    return AppCard(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tpl.emoji, style: const TextStyle(fontSize: 28, height: 1)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      challenge.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        "${tpl.typeLabel} · ${challenge.participantIds.length} registered",
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.mute,
+                        ),
+                      ),
+                    ),
+                    if (daysLeft > 0)
+                      Text(
+                        "$daysLeft day${daysLeft != 1 ? 's' : ''} left",
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.mute,
+                        ),
+                      ),
+                    if (challenge.prize != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          "\u{1F381} Prize: ${challenge.prize}",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.gold,
+                          ),
+                        ),
+                      ),
+                    if (challenge.rewardPoints != null || challenge.rewardProductId != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          "\u{1F3C6} Reward: ${[
+                            if (challenge.rewardPoints != null) "${challenge.rewardPoints} rewards point${challenge.rewardPoints == 1 ? '' : 's'}",
+                            if (challenge.rewardProductId != null)
+                              ref.watch(productsProvider).where((p) => p.id == challenge.rewardProductId).map((p) => p.name).firstOrNull ?? "a product",
+                          ].join(" + ")}",
+                          style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              OutlinedButton(
+                onPressed: onTap,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.mute,
+                  side: BorderSide(color: AppColors.line),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                ),
+                child: const Text("View", style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          if (canJoin)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: onJoin,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.gold,
+                    backgroundColor: AppColors.gold.withValues(alpha: 0.1),
+                    side: BorderSide(color: AppColors.goldDim),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  child: const Text(
+                    "Join Challenge",
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}

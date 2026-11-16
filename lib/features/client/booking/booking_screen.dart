@@ -1,0 +1,2028 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/utils/late_fee_notice.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/booking_location.dart";
+import "../../../core/utils/session_places.dart";
+import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/domain_labels.dart";
+import "../../../core/utils/membership_utils.dart";
+import "../../../core/utils/merge_token_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
+import "../../../core/utils/onboarding_utils.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/blocked_time.dart";
+import "../../../data/models/booking.dart";
+import "../../../data/models/client_info.dart";
+import "../../../data/models/client_record.dart";
+import "../../../data/models/membership_plan.dart";
+import "../../../data/models/single_session_credit.dart";
+import "../../../core/payments/payment_sheet_service.dart";
+import "../../../data/models/trainer.dart";
+import "../../../data/models/waitlist_entry.dart";
+import "../../../data/models/waiver_doc.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "../drawer_screens/waiver_signing_screen.dart";
+import "../shell/client_shell_state.dart";
+import "booking_cancel_screen.dart";
+import "booking_picking_screen.dart";
+import "date_strip.dart";
+import "location_picker.dart";
+import "upcoming_session_card.dart";
+import "waitlist_offer_banner.dart";
+
+/// Mirrors BookSession.jsx, trimmed to the everyday linear flow: browse
+/// upcoming sessions, pick a session type -> discipline -> time slot,
+/// confirm, or cancel/reschedule an existing booking. Recurring multi-day
+/// booking and the waitlist are not built yet — each is its own sizeable
+/// feature.
+class BookingScreen extends ConsumerStatefulWidget {
+  const BookingScreen({super.key, required this.onGoMemberships, required this.onGoSignatures, this.initialDate, this.initialReschedule});
+
+  final VoidCallback onGoMemberships;
+  final VoidCallback onGoSignatures;
+
+  /// Set when arriving from a dashboard calendar tap on an empty future
+  /// date (see client_shell.dart's pickCalendarDate) — jumps the date strip
+  /// straight there instead of starting on today.
+  final String? initialDate;
+
+  /// Set when arriving from a "Reschedule" tap (DayDetailScreen or the
+  /// upcoming-sessions list) — pre-fills the type/discipline/date from the
+  /// booking being moved, same as tapping Reschedule from within this screen.
+  final Booking? initialReschedule;
+
+  @override
+  ConsumerState<BookingScreen> createState() => _BookingScreenState();
+}
+
+class _BookingScreenState extends ConsumerState<BookingScreen> {
+  late String _date = widget.initialReschedule?.date ?? widget.initialDate ?? isoToday();
+  String? _chosenType;
+  String? _chosenDisc;
+
+  /// Booking opens on Semi-Private › Personal Training when the client can
+  /// book it, rather than on the type/discipline questions. Cleared the
+  /// moment they tap "Change type" or "Change discipline", and restored
+  /// after each booking.
+  bool _useDefaults = true;
+  static const _defaultType = "semi-private";
+  static const _defaultDisc = "personal-training";
+  PendingPick? _picking;
+  Booking? _cancelTarget;
+  Booking? _rescheduling;
+  dynamic _denied; // BookingCheck?
+
+  /// Which held plan the pending pick will be charged to — decided by
+  /// canBookOffering when the slot was tapped, written onto the booking.
+  String? _pickPlanId;
+
+  /// "Change Location" — becomes this client's booking location from now
+  /// on (not a one-off filter). Applied locally first so the slot list
+  /// refreshes at once; the save is best-effort, and a failure only means
+  /// the choice isn't remembered next time. Profile city is left alone.
+  Future<void> _changeBookingLocation(String? name) async {
+    final value = name ?? kAnyLocation;
+    final info = ref.read(clientInfoProvider);
+    ref.read(clientInfoProvider.notifier).update((c) => c.copyWith(bookingLocation: value));
+    try {
+      await SupabaseService.updateBookingLocation(info.id, value);
+    } catch (e) {
+      // ignore: avoid_print
+      print("[BookingScreen] booking location not saved: $e");
+    }
+  }
+
+  // ── single (one-off) sessions ─────────────────────────────────────────────
+  List<SingleSessionCredit> _credits = const [];
+  bool _singleBusy = false;
+
+  Future<void> _loadCredits() async {
+    final id = ref.read(clientInfoProvider).id;
+    if (id.isEmpty) return;
+    try {
+      final c = await SupabaseService.loadSingleCredits(id);
+      if (mounted) setState(() => _credits = c);
+    } catch (_) {}
+  }
+
+  /// A paid-for single session of this type that is unused, unexpired and still
+  /// good on [date].
+  SingleSessionCredit? _usableCredit(String sessionType, String date) {
+    for (final c in _credits) {
+      if (c.usable && c.sessionType == sessionType && c.coversDate(date)) return c;
+    }
+    return null;
+  }
+
+  /// Denials a single session can cure: the client simply has nothing that
+  /// covers this session. (Lead time, conflicts and the like still apply.)
+  static bool _singleCanHelp(BookingCheck c) =>
+      const {"no-membership", "wrong-type", "budget", "membership-ending"}.contains(c.reason);
+
+  static String _price(int cents) => cents % 100 == 0 ? "\$${cents ~/ 100}" : "\$${(cents / 100).toStringAsFixed(2)}";
+
+  /// "Pay for this session" or "View Memberships & Packages".
+  Future<void> _askSingle(Trainer t, String sessionType, String discipline, int slot, int priceCents) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text("Book this session", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Text(
+                "You don't have a membership or package that covers this ${sessionTypeLabel(sessionType)} session. "
+                "Pay for just this one, or pick a plan.",
+                style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.45),
+              ),
+              const SizedBox(height: 14),
+              BtnGold(full: true, onPressed: () => Navigator.pop(ctx, "pay"), child: Text("Pay for this session (${_price(priceCents)})")),
+              const SizedBox(height: 8),
+              BtnGhost(full: true, onPressed: () => Navigator.pop(ctx, "plans"), child: const Text("View Memberships & Packages")),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == "pay") {
+      await _payForSingle(t, sessionType, discipline, slot);
+    } else if (choice == "plans") {
+      // Remember this exact session; after a purchase the client is brought
+      // straight back and it is booked for them.
+      ref.read(pendingSingleResumeProvider.notifier).set(PendingSingleResume(
+            trainerId: t.id,
+            date: _date,
+            slot: slot,
+            sessionType: sessionType,
+            discipline: discipline,
+          ));
+      widget.onGoMemberships();
+    }
+  }
+
+  /// Pay first; the seat is only taken (server-side, atomically) once the
+  /// payment has succeeded.
+  Future<void> _payForSingle(Trainer t, String sessionType, String discipline, int slot) async {
+    if (_singleBusy) return;
+    final info = ref.read(clientInfoProvider);
+    final blocked = await bookingBlockMessage(info.id);
+    if (blocked != null) {
+      _showError(blocked);
+      return;
+    }
+    final settings = ref.read(platformSettingsProvider);
+    final offering = trainerOfferingsOn(t, _date)
+        .where((o) => o.slot == slot && o.sessionType == sessionType && o.discipline == discipline)
+        .firstOrNull;
+    final loc = offering?.locationName ?? settings.defaultLocation?.name;
+    setState(() => _singleBusy = true);
+    try {
+      final (res, piId) = await PaymentSheetService.purchaseSingleSession(
+        sessionType: sessionType,
+        trainerId: t.id,
+        date: _date,
+        slot: slot,
+        discipline: discipline,
+        locationName: loc,
+        businessName: settings.businessName,
+      );
+      if (res.cancelled) return;
+      if (!res.ok || piId == null) {
+        _showError(res.error ?? "The payment didn't go through.");
+        return;
+      }
+      SingleSessionOutcome out;
+      try {
+        out = await SupabaseService.confirmSingleSession(piId);
+      } catch (_) {
+        _showError("Payment received. Your booking will appear in a moment — check Upcoming sessions.");
+        return;
+      }
+      await _afterSingle(out, t, sessionType, discipline, slot);
+    } catch (e) {
+      _showError(e.toString().replaceFirst("Exception: ", ""));
+    } finally {
+      if (mounted) setState(() => _singleBusy = false);
+    }
+  }
+
+  Future<void> _afterSingle(SingleSessionOutcome out, Trainer t, String sessionType, String discipline, int slot) async {
+    if (out.booked) {
+      final saved = await SupabaseService.loadBookingById(out.bookingId!);
+      if (saved != null) {
+        ref.read(allBookingsProvider.notifier).addBooking(saved);
+        ref.read(clientBookingsProvider.notifier).addBooking(saved);
+        SupabaseService.sendBookingConfirmation([saved.id]);
+      }
+      final info = ref.read(clientInfoProvider);
+      notifyPush(
+        profileId: info.id,
+        title: "Booking confirmed",
+        body: "You're booked for ${niceDate(_date)} at ${fmtSlot(slot)}.",
+        sms: true,
+      );
+      _showError("You're booked — ${niceDate(_date)} at ${fmtSlot(slot)}. A receipt is on its way to your email.");
+      _loadCredits();
+      return;
+    }
+    if (out.full) {
+      if (!mounted) return;
+      final join = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Session full"),
+          content: Text(
+            out.refunded
+                ? "Someone took the last spot while you were paying, so your payment was refunded in full. Join the waitlist?"
+                : "Someone took the last spot while you were paying. Join the waitlist?",
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("No thanks")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Join the waitlist")),
+          ],
+        ),
+      );
+      if (join == true) await _joinWaitlist(t, sessionType, discipline, slot);
+      return;
+    }
+    _showError(out.message ?? "Couldn't book that session.");
+  }
+
+  /// Picks up a session the client chose before going off to buy a plan, and
+  /// books it now that they hold one.
+  Future<void> _resumePending() async {
+    final p = ref.read(pendingSingleResumeProvider);
+    if (p == null || !mounted) return;
+    ref.read(pendingSingleResumeProvider.notifier).set(null);
+    final info = ref.read(clientInfoProvider);
+    final trainers = ref.read(trainersProvider);
+    final t = trainers.where((x) => x.id == p.trainerId).firstOrNull;
+    if (t == null) return;
+    final settings = ref.read(platformSettingsProvider);
+    final check = canBookOffering(
+      info,
+      p.sessionType,
+      ref.read(clientBookingsProvider),
+      p.date,
+      p.slot,
+      heldAccessPlans(info, ref.read(membershipPlansProvider)),
+      minBookingLeadHours: settings.minBookingLeadHours,
+      maxBookingHorizonDays: settings.maxBookingHorizonDays,
+    );
+    setState(() {
+      _date = p.date;
+      _chosenType = p.sessionType;
+      _chosenDisc = p.discipline;
+    });
+    if (!check.ok) {
+      _showError("That session isn't covered by your new plan — pick another time.");
+      return;
+    }
+    final offering = trainerOfferingsOn(t, p.date)
+        .where((o) => o.slot == p.slot && o.sessionType == p.sessionType && o.discipline == p.discipline)
+        .firstOrNull;
+    setState(() {
+      _picking = PendingPick(
+        trainer: t,
+        sessionType: p.sessionType,
+        discipline: p.discipline,
+        slot: p.slot,
+        locationName: offering?.locationName,
+      );
+      _pickPlanId = check.planId;
+      _bookingError = null;
+    });
+    await _confirmBooking();
+  }
+
+  bool _showAllUpcoming = false;
+  bool _busy = false;
+  String? _bookingError;
+  final Set<String> _waitlistBusyKeys = {};
+
+  /// True while booking the free first session (a physical assessment):
+  /// no membership needed, nothing deducted from any plan. Seeded from
+  /// [freeAssessmentIntentProvider] in initState so the choice survives a
+  /// trip out to sign a waiver and back.
+  bool _freeAssessment = false;
+
+  /// Keeps the shared intent in step with local state, so leaving this
+  /// screen and coming back resumes the free session rather than dropping
+  /// the client on the ordinary booking page.
+  void _setFreeAssessment(bool value) {
+    _freeAssessment = value;
+    ref.read(freeAssessmentIntentProvider.notifier).set(value);
+  }
+
+  /// The offer stands until this client has booked anything at all — their
+  /// free assessment, or a first normal session.
+  bool get _freeAssessmentAvailable => _freeOfferStands(
+        ref.watch(clientInfoProvider),
+        ref.watch(clientBookingsProvider),
+        ref.watch(clientRecordProvider),
+      );
+
+  /// The same rule, taking its inputs directly so initState can apply it
+  /// too — `ref.watch` isn't allowed there.
+  static bool _freeOfferStands(ClientInfo info, List<Booking> bookings, ClientRecord record) {
+    if (info.isStaff) return false;
+    if (bookings.any((b) => b.clientId == info.id)) return false;
+    // A client whose assessment is already recorded as done doesn't get
+    // offered it again either.
+    return !(record.intake["physical"]?.completed ?? false);
+  }
+
+  void _startFreeAssessment() => setState(() {
+        _setFreeAssessment(true);
+        _chosenType = null;
+        _chosenDisc = null;
+      });
+
+  /// Leaves the free-session flow for ordinary booking — the offer card
+  /// comes back, since nothing has been booked.
+  void _exitFreeAssessment() => setState(() {
+        _setFreeAssessment(false);
+        _chosenType = null;
+        _chosenDisc = null;
+        _useDefaults = true;
+      });
+
+  /// The waiver being signed inside the booking flow, and what to pick back
+  /// up once it's signed (the slot the client tapped, or their waitlist join).
+  WaiverDoc? _signingDoc;
+  VoidCallback? _afterSigning;
+
+  List<WaiverDoc> _outstandingDocs() {
+    final info = ref.read(clientInfoProvider);
+    return outstandingWaivers(
+      allDocs: ref.read(waiversProvider),
+      signatures: ref.read(clientRecordProvider).signatures,
+      clientPlanIds: info.heldPlanIds,
+    );
+  }
+
+  /// Shows the "Signature needed" screen; its button opens the waiver right
+  /// here, and [resume] runs once everything is signed.
+  void _needsSignature(BookingCheck check, VoidCallback resume) => setState(() {
+        _denied = check;
+        _afterSigning = resume;
+      });
+
+  void _startSigning() {
+    final docs = _outstandingDocs();
+    if (docs.isEmpty) {
+      widget.onGoSignatures();
+      return;
+    }
+    setState(() {
+      _denied = null;
+      _signingDoc = docs.first;
+    });
+  }
+
+  /// After a signature: sign the next outstanding document if there is one,
+  /// otherwise go straight back to the session the client was booking.
+  void _signingFinished() {
+    final next = _outstandingDocs();
+    if (next.isNotEmpty) {
+      setState(() => _signingDoc = next.first);
+      return;
+    }
+    final resume = _afterSigning;
+    setState(() {
+      _signingDoc = null;
+      _afterSigning = null;
+      _bookingError = null;
+    });
+    resume?.call();
+  }
+
+  void _cancelSigning() => setState(() {
+        _signingDoc = null;
+        _afterSigning = null;
+      });
+
+  String _waitlistKey(String trainerId, String date, int slot) => "$trainerId|$date|$slot";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCredits();
+    if (ref.read(pendingSingleResumeProvider) != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _resumePending());
+    }
+    final reschedule = widget.initialReschedule;
+    if (reschedule != null) {
+      _rescheduling = reschedule;
+      _chosenType = reschedule.sessionType;
+      _chosenDisc = reschedule.discipline;
+      return;
+    }
+    // Resumes the free first session after a detour — signing a waiver,
+    // most often, which lands the client back here on a fresh screen. Only
+    // if the offer still stands, so a stale intent (they booked something
+    // in the meantime) can't strand them in a flow that no longer applies.
+    if (!ref.read(freeAssessmentIntentProvider)) return;
+    final stillFree = _freeOfferStands(
+      ref.read(clientInfoProvider),
+      ref.read(clientBookingsProvider),
+      ref.read(clientRecordProvider),
+    );
+    _freeAssessment = stillFree;
+    if (!stillFree) {
+      // After the frame: writing a provider from initState throws the same
+      // "modify a provider while the widget tree was building" error.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(freeAssessmentIntentProvider.notifier).set(false);
+      });
+    }
+  }
+
+  void _showError(String msg) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  void _pickType(String? t) => setState(() {
+        _chosenType = t;
+        _chosenDisc = null;
+      });
+
+  void _startReschedule(Booking b) => setState(() {
+        _rescheduling = b;
+        _chosenType = b.sessionType;
+        _chosenDisc = b.discipline;
+        _date = b.date;
+        _picking = null;
+      });
+
+  Future<void> _confirmCancel() async {
+    if (_busy) return;
+    final b = _cancelTarget!;
+    final settingsNow = ref.read(platformSettingsProvider);
+    final isLate = cancelWindow(b, lateCancellationHours: settingsNow.lateCancellationHours) != "free";
+    final feeCents = settingsNow.lateCancellationFeeCents;
+
+    // The fee is taken from the card now rather than left as a debt the gym
+    // has to chase, so the last word before that happens says the amount
+    // plainly. The screen behind this already explains the window; this is
+    // the point of no return for money leaving an account.
+    if (isLate && feeCents > 0) {
+      final goAhead = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Cancel and pay the fee?",
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          content: Text(
+            "This is a late cancellation, so ${lateCancellationFeeLabel(feeCents: feeCents)} "
+            "will be charged to your card on file now. "
+            "Your session will be cancelled either way.",
+            style: const TextStyle(fontSize: 13, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              style: TextButton.styleFrom(foregroundColor: AppColors.mute),
+              child: const Text("Keep my session"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.errorText),
+              child: const Text("Cancel and pay",
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
+      );
+      if (goAhead != true || !mounted) return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      // The fee is worked out from the booking, so it has to be taken while
+      // the booking still exists. It can't be charged twice (one fee per
+      // booking), and a failure here never blocks the cancellation.
+      // Always asked: the server decides early vs late and sends the right email.
+      final feeRes = await takeLateCancelFee(b.id);
+      await SupabaseService.deleteBooking(b.id, archive: true);
+      ref.read(clientBookingsProvider.notifier).cancelBooking(b.id);
+      // The slot list reads the gym-wide list, so it has to drop the booking
+      // too, otherwise the cancelled session keeps showing as "Booked".
+      ref.read(allBookingsProvider.notifier).cancelBooking(b.id);
+      final res = feeRes;
+      if (res != null && mounted) {
+        if (res["charged"] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("${lateCancellationFeeLabel(feeCents: feeCents)} charged for the late cancellation."),
+          ));
+        } else if ((res["feeCents"] as num? ?? 0) > 0 && res["alreadyCharged"] != true) {
+          // Declined or no card: the session is cancelled and the whole fee
+          // now sits on the account as a negative balance.
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              "Cancelled. We couldn't charge the ${lateCancellationFeeLabel(feeCents: feeCents)} late cancellation fee, "
+              "so it's been added to your balance. You'll need to pay it before booking again.",
+            ),
+            duration: const Duration(seconds: 8),
+          ));
+        }
+      }
+      setState(() {
+        _busy = false;
+        _cancelTarget = null;
+      });
+    } catch (e) {
+      setState(() => _busy = false);
+      _showError("Couldn't cancel that session — check your connection and try again.");
+    }
+  }
+
+  void _onSlotTap(Trainer t, String sessionType, String discipline, int slot, bool mine, bool isFull) {
+    if (mine || isFull) return;
+    final info = ref.read(clientInfoProvider);
+    final bookings = ref.read(clientBookingsProvider);
+    String? chargePlanId;
+    if (_freeAssessment) {
+      // The free first session needs no plan and is charged to none — the
+      // waiver still applies, and the database still enforces capacity.
+      final waiverCheck = waiverGateCheck(info: info, record: ref.read(clientRecordProvider), waiverDocs: ref.read(waiversProvider));
+      if (waiverCheck != null) {
+        _needsSignature(waiverCheck, () => _onSlotTap(t, sessionType, discipline, slot, mine, isFull));
+        return;
+      }
+      chargePlanId = null;
+    } else if (_rescheduling == null) {
+      final held = heldAccessPlans(info, ref.read(membershipPlansProvider));
+      final settings = ref.read(platformSettingsProvider);
+      final waiverCheck = waiverGateCheck(info: info, record: ref.read(clientRecordProvider), waiverDocs: ref.read(waiversProvider));
+      if (waiverCheck != null) {
+        _needsSignature(waiverCheck, () => _onSlotTap(t, sessionType, discipline, slot, mine, isFull));
+        return;
+      }
+      final check = canBookOffering(
+        info,
+        sessionType,
+        bookings,
+        _date,
+        slot,
+        held,
+        minBookingLeadHours: settings.minBookingLeadHours,
+        maxBookingHorizonDays: settings.maxBookingHorizonDays,
+      );
+      if (!check.ok) {
+        if (!info.isStaff && _singleCanHelp(check)) {
+          // Nothing the client holds covers this session. A paid-for single
+          // session they already own is used first; otherwise they're offered
+          // paying for just this one (when the owner allows it for this type).
+          final credit = _usableCredit(sessionType, _date);
+          final price = settings.singleSessionPriceFor(sessionType);
+          if (credit != null) {
+            chargePlanId = "single:${credit.id}";
+          } else if (price != null) {
+            _askSingle(t, sessionType, discipline, slot, price);
+            return;
+          } else {
+            setState(() => _denied = check);
+            return;
+          }
+        } else {
+          setState(() => _denied = check);
+          return;
+        }
+      } else {
+        chargePlanId = check.planId;
+      }
+    } else {
+      // A reschedule moves an existing booking; it keeps whichever plan the
+      // original was charged to.
+      chargePlanId = _rescheduling!.planId;
+    }
+    // Where this session runs: the one the owner created it at (Create
+    // Session → Location), else the coach's own location.
+    final offering = trainerOfferingsOn(t, _date)
+        .where((o) => o.slot == slot && o.sessionType == sessionType && o.discipline == discipline)
+        .firstOrNull;
+    setState(() {
+      _picking = PendingPick(
+        trainer: t,
+        sessionType: sessionType,
+        discipline: discipline,
+        slot: slot,
+        locationName: offering?.locationName,
+      );
+      _pickPlanId = chargePlanId;
+      _bookingError = null;
+    });
+  }
+
+  /// Mirrors App.jsx's `joinWaitlist` — a full slot bypasses the normal
+  /// session-cap check (that's the point), but still needs a real
+  /// membership to be eligible at all, same as BookSession.jsx's own
+  /// `check.noMembership` gate.
+  Future<void> _joinWaitlist(Trainer t, String sessionType, String discipline, int slot) async {
+    final key = _waitlistKey(t.id, _date, slot);
+    if (_waitlistBusyKeys.contains(key)) return;
+    final info = ref.read(clientInfoProvider);
+    final bookings = ref.read(clientBookingsProvider);
+    final held = heldAccessPlans(info, ref.read(membershipPlansProvider));
+    final settings = ref.read(platformSettingsProvider);
+    final waiverCheck = waiverGateCheck(info: info, record: ref.read(clientRecordProvider), waiverDocs: ref.read(waiversProvider));
+    if (waiverCheck != null) {
+      _needsSignature(waiverCheck, () => _joinWaitlist(t, sessionType, discipline, slot));
+      return;
+    }
+    final check = canBookOffering(
+      info,
+      sessionType,
+      bookings,
+      _date,
+      slot,
+      held,
+      minBookingLeadHours: settings.minBookingLeadHours,
+      maxBookingHorizonDays: settings.maxBookingHorizonDays,
+    );
+    if (check.noMembership && settings.singleSessionPriceFor(sessionType) == null && _usableCredit(sessionType, _date) == null) {
+      setState(() => _denied = check);
+      return;
+    }
+    final waitlist = ref.read(waitlistProvider);
+    final already = waitlist.any((w) => w.clientId == info.id && w.trainerId == t.id && w.date == _date && w.slot == slot && w.status == "waiting");
+    if (already) return;
+    final position = waitlist.where((w) => w.trainerId == t.id && w.date == _date && w.slot == slot && w.status == "waiting").length + 1;
+    setState(() => _waitlistBusyKeys.add(key));
+    try {
+      final saved = await SupabaseService.insertWaitlistEntry(WaitlistEntry(
+        id: "",
+        clientId: info.id,
+        clientName: info.name,
+        trainerId: t.id,
+        trainerName: t.displayTitle,
+        date: _date,
+        slot: slot,
+        sessionType: sessionType,
+        discipline: discipline,
+        status: "waiting",
+        position: position,
+        addedAt: stamp(),
+      ));
+      ref.read(waitlistProvider.notifier).add(saved);
+      // Tell them it worked. Best effort — the entry is already saved, so a
+      // failed message must never look like a failed join.
+      SupabaseService.notifyWaitlistJoined(
+        date: _date,
+        slot: slot,
+        position: position,
+      ).catchError((Object e) {
+        // ignore: avoid_print
+        print("[waitlist join notify] failed: $e");
+      });
+    } catch (e) {
+      _showError("Couldn't join the waitlist — check your connection and try again.");
+    } finally {
+      if (mounted) setState(() => _waitlistBusyKeys.remove(key));
+    }
+  }
+
+  Future<void> _leaveWaitlist(WaitlistEntry w) async {
+    final key = _waitlistKey(w.trainerId, w.date, w.slot);
+    if (_waitlistBusyKeys.contains(key)) return;
+    setState(() => _waitlistBusyKeys.add(key));
+    try {
+      await SupabaseService.deleteWaitlistEntry(w.id);
+      ref.read(waitlistProvider.notifier).remove(w.id);
+    } catch (e) {
+      _showError("Couldn't leave the waitlist — check your connection and try again.");
+    } finally {
+      if (mounted) setState(() => _waitlistBusyKeys.remove(key));
+    }
+  }
+
+  /// Where [pick] happens: the session's own location if it has one, else
+  /// the location the owner marked as default in Customize Platform.
+  GymLocation? _pickLocation(PendingPick pick) {
+    final settings = ref.read(platformSettingsProvider);
+    final name = pick.locationName ?? settings.defaultLocation?.name;
+    if (name == null || name.trim().isEmpty) return null;
+    final match = settings.allLocations.where((l) => l.name == name);
+    return match.isNotEmpty ? match.first : GymLocation(name: name);
+  }
+
+  Future<void> _confirmBooking() async {
+    if (_busy) return;
+    final info = ref.read(clientInfoProvider);
+    final pick = _picking!;
+    final draft = Booking(
+      id: "",
+      clientId: info.id,
+      trainerId: pick.trainer.id,
+      date: _date,
+      slot: pick.slot,
+      sessionType: pick.sessionType,
+      discipline: pick.discipline,
+      // The session's own location when the owner created it at a
+      // specific site, otherwise the owner's default — the same place the
+      // confirm screen showed. A coach's profile location isn't used.
+      locationName: _pickLocation(pick)?.name,
+      planId: _pickPlanId,
+      // Marks the free first session: it belongs to no plan and is left out
+      // of every session count (see sessionsUsedThisPeriod).
+      isPhysicalAssessment: _freeAssessment,
+    );
+    final blocked = await bookingBlockMessage(info.id);
+    if (blocked != null) {
+      if (mounted) setState(() => _bookingError = blocked);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _bookingError = null;
+    });
+    try {
+      final rescheduling = _rescheduling;
+      // A booking paid for with a single-session credit can't be duplicated
+      // while the credit still belongs to the old booking, so move it
+      // delete-first: the credit is released, then re-used by the new time.
+      // If the new time can't be booked the credit stays available.
+      final singleResched = rescheduling?.planId?.startsWith("single:") ?? false;
+      if (singleResched) {
+        await SupabaseService.deleteBooking(rescheduling!.id);
+        ref.read(clientBookingsProvider.notifier).cancelBooking(rescheduling.id);
+        ref.read(allBookingsProvider.notifier).cancelBooking(rescheduling.id);
+      }
+      final saved = await SupabaseService.insertBooking(draft);
+      // Both lists: the client's own (their upcoming sessions) and the
+      // gym-wide one the slot list reads for "Booked" / "x of 4 open".
+      final allBookings = ref.read(allBookingsProvider.notifier);
+      allBookings.addBooking(saved);
+      if (rescheduling != null) {
+        if (!singleResched) await SupabaseService.deleteBooking(rescheduling.id);
+        if (singleResched) {
+          ref.read(clientBookingsProvider.notifier).addBooking(saved);
+        } else {
+          ref.read(clientBookingsProvider.notifier).reschedule(saved, rescheduling.id);
+          allBookings.cancelBooking(rescheduling.id);
+        }
+        notifyPush(
+          profileId: info.id,
+          title: "Session rescheduled",
+          body: "Your session is now ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
+          sms: true,
+        );
+      } else {
+        ref.read(clientBookingsProvider.notifier).addBooking(saved);
+        // One confirmation email for this booking.
+        SupabaseService.sendBookingConfirmation([saved.id]);
+        notifyPush(
+          profileId: info.id,
+          title: "Booking confirmed",
+          body: "You're booked for ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
+          sms: true,
+        );
+      }
+      // The coach is told now, while there's still time to chase the forms
+      // before the session. Only for a client who holds a plan — see
+      // notifyCoachIncompleteIntake.
+      if (info.heldPlanIds.isNotEmpty) {
+        final missing = incompleteIntakeTitles(ref.read(clientRecordProvider));
+        if (missing.isNotEmpty) {
+          notifyCoachIncompleteIntake(
+            trainerId: saved.trainerId,
+            clientName: info.name,
+            missingTitles: missing,
+            sessionDate: niceDate(_date),
+          );
+        }
+      }
+      // Notifications spec — "Low session balance": fires once, right at
+      // the exact booking that brings a client down to their last 1 or 2
+      // remaining sessions this period — never on every booking after, so
+      // it can't spam.
+      final plan = ref.read(membershipPlansProvider.notifier).byId(_pickPlanId);
+      if (plan != null) {
+        final remaining = effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, ref.read(clientBookingsProvider));
+        if (remaining == 1 || remaining == 2) {
+          notifyPush(
+            profileId: info.id,
+            title: "Low session balance",
+            body: "You have $remaining session${remaining == 1 ? '' : 's'} left this period.",
+            sms: true,
+          );
+        }
+      }
+      setState(() {
+        _busy = false;
+        _picking = null;
+        _pickPlanId = null;
+        _rescheduling = null;
+        // The free session is used up — the offer is gone from here on.
+        _setFreeAssessment(false);
+        _chosenType = null;
+        _chosenDisc = null;
+        _useDefaults = true;
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print("[booking confirm] failed: $e");
+      if (!mounted) return;
+      // The server found a waiver this device didn't know about yet — open
+      // it right here, then come back to this same confirm screen.
+      if (e.toString().contains("waiver-required") && _outstandingDocs().isNotEmpty) {
+        setState(() {
+          _busy = false;
+          _signingDoc = _outstandingDocs().first;
+          _afterSigning = null;
+        });
+        return;
+      }
+      setState(() {
+        _busy = false;
+        // Stays visible on the picking screen (not a transient SnackBar) so
+        // a real failure — this device has hit genuine network drops before
+        // — can't get missed and silently look like nothing happened.
+        // The database itself refuses a booking without a current waiver
+        // signature (enforce_waiver_before_booking) — say so plainly.
+        _bookingError = _bookingErrorMessage(e);
+      });
+    }
+  }
+
+  /// Why the booking was refused, in the client's terms. The database checks
+  /// capacity, coach double-booking and the waiver as the last word (the app's
+  /// own copy of the schedule can be a few seconds stale), so its reason is
+  /// the accurate one — "check your connection" is only for a real failure.
+  String _bookingErrorMessage(Object e) {
+    final text = e.toString();
+    if (text.contains("BALANCE_DUE")) {
+      return "You have an unpaid balance. Please pay it from your Profile before booking another session.";
+    }
+    if (text.contains("waiver-required")) {
+      return "Please sign the waiver under Signatures (in the menu) before booking.";
+    }
+    if (text.contains("already at capacity")) {
+      return "That session just filled up. Pick another time, or join the waitlist.";
+    }
+    if (text.contains("overlaps this time slot")) {
+      return "This coach was just booked for another session at that time. Please pick another time.";
+    }
+    if (text.contains("membership") || text.contains("plan")) {
+      return "That session isn't covered by your current plan — see Membership for what each plan covers.";
+    }
+    return "Couldn't book that session — check your connection and try again.";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = ref.watch(clientInfoProvider);
+    final bookings = ref.watch(clientBookingsProvider);
+    final trainers = ref.watch(trainersProvider);
+
+    if (_cancelTarget != null) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _cancelTarget = null),
+        child: BookingCancelScreen(
+          booking: _cancelTarget!,
+          trainers: trainers,
+          onBack: () => setState(() => _cancelTarget = null),
+          onConfirmCancel: _confirmCancel,
+        ),
+      );
+    }
+
+    final signing = _signingDoc;
+    if (signing != null) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: _cancelSigning,
+        child: WaiverSigningScreen(
+          key: ValueKey(signing.id),
+          doc: signing,
+          onBack: _cancelSigning,
+          onDone: _signingFinished,
+          doneLabel: "Continue booking",
+        ),
+      );
+    }
+
+    if (_denied != null) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() {
+          _denied = null;
+          _afterSigning = null;
+        }),
+        child: BookingDeniedScreen(
+          check: _denied,
+          onBack: () => setState(() {
+            _denied = null;
+            _afterSigning = null;
+          }),
+          onGoMemberships: widget.onGoMemberships,
+          onGoSignatures: _startSigning,
+        ),
+      );
+    }
+
+    if (_picking != null) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() {
+          _picking = null;
+          _bookingError = null;
+        }),
+        child: BookingPickingScreen(
+          pick: _picking!,
+          location: _pickLocation(_picking!),
+          date: _date,
+          onBack: () => setState(() {
+            _picking = null;
+            _bookingError = null;
+          }),
+          onConfirm: _confirmBooking,
+          busy: _busy,
+          error: _bookingError,
+        ),
+      );
+    }
+
+    final held = heldAccessPlans(info, ref.watch(membershipPlansProvider));
+    // Time-aware, not just date: this morning's session is gone by tonight.
+    final myUpcoming = bookings.where((b) => b.clientId == info.id && !sessionHasStarted(b.date, b.slot)).toList()
+      ..sort((a, b) => (a.date + a.slot.toString().padLeft(4, '0')).compareTo(b.date + b.slot.toString().padLeft(4, '0')));
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // First thing on the screen, above even the sessions-remaining
+          // line: an offer is time-limited and passes to someone else if
+          // missed, so nothing on this page is more urgent.
+          const WaitlistOfferBanner(),
+          // Above the upcoming-sessions grid, not below it: how many sessions
+          // are left is the thing that decides whether booking another one is
+          // even possible, so it shouldn't sit under a list the client has to
+          // scroll past (or expand) to reach.
+          if (held.isNotEmpty && _rescheduling == null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: _MembershipBanner(info: info, plans: held, bookings: bookings),
+            ),
+
+          if (myUpcoming.isNotEmpty) ...[
+            const SectionLabel("Your upcoming sessions"),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              // Fixed count, not max-extent: 4 across on every screen, with
+              // the cards themselves flexing to whatever width that leaves.
+              // At 4 columns a card is roughly half the width it had at 3, so
+              // the actions inside stack instead of sitting side by side —
+              // see UpcomingSessionCard, which lays itself out from its own
+              // measured width rather than assuming either shape.
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                // Just tall enough for the date, time, coach and the two
+                // actions — no empty space under them.
+                mainAxisExtent: 108,
+                crossAxisSpacing: 6,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: (_showAllUpcoming ? myUpcoming : myUpcoming.take(4).toList()).length,
+              itemBuilder: (context, i) {
+                final b = (_showAllUpcoming ? myUpcoming : myUpcoming.take(4).toList())[i];
+                return UpcomingSessionCard(
+                  booking: b,
+                  trainers: trainers,
+                  onReschedule: _startReschedule,
+                  onCancel: (b) => setState(() => _cancelTarget = b),
+                );
+              },
+            ),
+            if (myUpcoming.length > 4)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => setState(() => _showAllUpcoming = !_showAllUpcoming),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.gold,
+                      side: BorderSide(color: AppColors.line),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                    ),
+                    child: Text(
+                      _showAllUpcoming ? "Show fewer" : "View all ${myUpcoming.length} upcoming sessions",
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 22),
+          ],
+
+          if (_rescheduling != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: AppColors.gold.withValues(alpha: 0.1),
+                border: Border.all(color: AppColors.gold),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(padding: EdgeInsets.only(top: 1), child: Icon(LucideIcons.calendar, size: 16, color: AppColors.gold)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: RichText(
+                      text: TextSpan(
+                        style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.5),
+                        children: [
+                          const TextSpan(text: "Rescheduling "),
+                          TextSpan(
+                            text: "${dayLabel(_rescheduling!.date)} · ${fmtSlot(_rescheduling!.slot)}",
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const TextSpan(text: " — pick a new time."),
+                        ],
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _rescheduling = null),
+                    style: TextButton.styleFrom(foregroundColor: AppColors.mute, padding: EdgeInsets.zero, minimumSize: Size.zero),
+                    child: const Text("Stop", style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ),
+
+          // No plan means nothing here can be booked, so the schedule isn't
+          // offered at all — showing every open slot to someone who can't
+          // take any of them just reads as broken. Their upcoming sessions
+          // (from a plan that has since ended) still list above; only the
+          // pick-and-book steps are replaced. Staff booking themselves are
+          // exempt, same as every membership check.
+          // A client who has never booked anything gets their first session
+          // free — a physical assessment with a coach, no membership needed.
+          // The offer disappears the moment they book anything at all.
+          if (_freeAssessmentAvailable && !_freeAssessment) ...[
+            _FreeFirstSessionCard(onStart: _startFreeAssessment),
+            const SizedBox(height: 14),
+          ],
+
+          // In the free flow: says so, and offers a way back out for a
+          // client who holds a plan and meant to book an ordinary session.
+          if (_freeAssessment) ...[
+            _FreeSessionActiveBanner(onExit: _exitFreeAssessment),
+            const SizedBox(height: 14),
+          ],
+
+          if (held.isEmpty &&
+              !info.isStaff &&
+              !_freeAssessment &&
+              !ref.watch(platformSettingsProvider).anySingleSessionOffered &&
+              !_credits.any((c) => c.usable))
+            _NoPlanGate(onGoMemberships: widget.onGoMemberships)
+          else
+          Builder(builder: (context) {
+          // Only one type the client can book (e.g. a single Semi-Private
+          // membership) — step 1 would be a one-option question, so it's
+          // skipped and Booking opens straight on step 2, Choose a Discipline.
+          // The free first session is bookable as Semi-Private or One-on-One,
+          // whatever the client holds — that's the point of it.
+          final offered = ref.watch(platformSettingsProvider).offeredSessionTypes;
+          final types = _freeAssessment
+              ? ["semi-private", "one-on-one"].where(offered.contains).toList()
+              : _bookableTypes(
+                  plans: held,
+                  trainers: trainers,
+                  offeredTypes: offered,
+                  isStaff: info.isStaff,
+                  singleTypes: _singleTypes(ref.watch(platformSettingsProvider)),
+                );
+          final onlyType = types.length == 1 ? types.first : null;
+          // The default only applies while nothing has been picked, outside
+          // the free-assessment flow, and when a coach actually runs
+          // Semi-Private Personal Training — otherwise the client would land
+          // on an empty schedule.
+          final defaultsFit = _useDefaults &&
+              !_freeAssessment &&
+              _chosenType == null &&
+              _chosenDisc == null &&
+              types.contains(_defaultType) &&
+              trainers.any((t) => t.offeredAvailability
+                  .any((b) => b.sessionType == _defaultType && b.discipline == _defaultDisc));
+          final chosenType = _chosenType ?? (defaultsFit ? _defaultType : onlyType);
+          final chosenDisc = _chosenDisc ?? (defaultsFit ? _defaultDisc : null);
+          final changeType = onlyType == null
+              ? () => setState(() {
+                    _useDefaults = false;
+                    _chosenType = null;
+                    _chosenDisc = null;
+                  })
+              : null;
+          return LocalBackScope(
+            // With step 1 skipped, step 2 is the start — nothing to go back to.
+            isOpen: _chosenDisc != null || (_chosenType != null && onlyType == null),
+            onBack: () => setState(() {
+              if (_chosenDisc != null) {
+                _chosenDisc = null;
+              } else {
+                _chosenType = null;
+              }
+            }),
+            child: chosenType == null
+                ? _StepOne(
+                    plans: held,
+                    isStaff: info.isStaff,
+                    trainers: trainers,
+                    offeredTypes: ref.watch(platformSettingsProvider).offeredSessionTypes,
+                    singleTypes: _singleTypes(ref.watch(platformSettingsProvider)),
+                    onPick: _pickType,
+                  )
+                : chosenDisc == null
+                    ? _StepTwo(
+                        chosenType: chosenType,
+                        trainers: trainers,
+                        onChangeType: changeType,
+                        onPick: (d) => setState(() {
+                          _chosenType = chosenType;
+                          _chosenDisc = d;
+                        }),
+                      )
+                    : _StepThree(
+                        date: _date,
+                        chosenType: chosenType,
+                        chosenDisc: chosenDisc,
+                        info: info,
+                        trainers: trainers,
+                        // Gym-wide, not clientBookingsProvider's self-scoped `bookings`
+                        // above — capacity/fullness has to account for every client's
+                        // bookings on this trainer/date/slot, not just the signed-in
+                        // client's own (which would make a slot never show full unless
+                        // they themselves already occupy it).
+                        bookings: ref.watch(allBookingsProvider),
+                        blockedTimes: ref.watch(blockedTimesProvider),
+                        waitlist: ref.watch(waitlistProvider),
+                        // The owner's chosen default, not just the main site — a coach
+                        // without their own location runs sessions there.
+                        gymLocationName: ref.watch(platformSettingsProvider).defaultLocation?.name ??
+                            ref.watch(platformSettingsProvider).locationName,
+                        onDateChange: (d) => setState(() => _date = d),
+                        onChangeType: changeType,
+                        // Keeps the type (default or picked) and asks only
+                        // for the discipline.
+                        onChangeDisc: () => setState(() {
+                          _useDefaults = false;
+                          _chosenType = chosenType;
+                          _chosenDisc = null;
+                        }),
+                        onSlotTap: _onSlotTap,
+                        onJoinWaitlist: _joinWaitlist,
+                        onLeaveWaitlist: _leaveWaitlist,
+                        waitlistBusyKeys: _waitlistBusyKeys,
+                        semiPrivateCap: ref.watch(platformSettingsProvider).semiPrivateCap,
+                        locationFilter: effectiveBookingLocation(ref, info),
+                        locationDistances: bookingLocationDistances(ref, info),
+                        placeDistances: ref.watch(placeDistancesProvider),
+                        onLocationChange: _changeBookingLocation,
+                      ),
+          );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+/// One line per held plan — a client with a membership and a package needs
+/// to see both balances, since each session type may draw on a different
+/// one. The banner takes the colour of the lowest balance.
+class _MembershipBanner extends StatelessWidget {
+  const _MembershipBanner({required this.info, required this.plans, required this.bookings});
+  final dynamic info;
+  final List<MembershipPlan> plans;
+  final List<Booking> bookings;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = [
+      for (final plan in plans)
+        (
+          plan: plan,
+          remaining: (effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, bookings))
+              .clamp(0, effectiveMaxSessions(info, plan)),
+        ),
+    ];
+    final lowest = lines.map((l) => l.remaining).reduce((a, b) => a < b ? a : b);
+    final color = lowest > 3 ? AppColors.grn : (lowest > 0 ? AppColors.warning : AppColors.errorText);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final l in lines)
+            Padding(
+              padding: EdgeInsets.only(top: l == lines.first ? 0 : 4),
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: "${l.remaining} session${l.remaining != 1 ? 's' : ''} remaining  ",
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: l.remaining > 0 ? AppColors.txt : AppColors.errorText),
+                    ),
+                    TextSpan(
+                      text: "— ${l.plan.name}${l.plan.kind == PlanKind.membership ? " this month" : ""}",
+                      style: TextStyle(fontSize: 12, color: AppColors.mute),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The session types this client can pick in step 1 — what any plan they
+/// hold covers (every type for staff booking themselves, who hold none),
+/// limited to what the gym offers (Customize Platform → Services), plus
+/// Large Group, which comes with any membership as long as a coach runs it.
+List<String> _bookableTypes({
+  required List<MembershipPlan> plans,
+  required List<Trainer> trainers,
+  required List<String> offeredTypes,
+  bool isStaff = false,
+  Set<String> singleTypes = const {},
+}) {
+  // What the client's plans cover, plus any type the owner sells as a single
+  // session (staff with no plan keep seeing the two standard types).
+  final base = plans.isEmpty
+      ? (isStaff ? const ["semi-private", "one-on-one"] : const <String>[])
+      : plans.expand((p) => p.allowedTypes).toSet().toList();
+  final covered = {...base, ...singleTypes}.where(offeredTypes.contains).toList();
+  final anyLargeGroupOffered = offeredTypes.contains("large-group") &&
+      (plans.isNotEmpty || isStaff || singleTypes.contains("large-group")) &&
+      trainers.any(
+        (t) => t.offeredAvailability.any((b) => b.sessionType == "large-group" && b.byDay.values.any((s) => s.isNotEmpty)),
+      );
+  return [...covered.where((t) => t != "large-group"), if (anyLargeGroupOffered) "large-group"];
+}
+
+/// Session types a client can buy one-off, per the owner's settings.
+Set<String> _singleTypes(PlatformSettings s) => {
+      for (final t in s.offeredSessionTypes)
+        if (s.singleSessionPriceFor(t) != null) t,
+    };
+
+class _StepOne extends StatelessWidget {
+  const _StepOne({
+    required this.plans,
+    required this.onPick,
+    required this.trainers,
+    required this.offeredTypes,
+    this.singleTypes = const {},
+    this.isStaff = false,
+  });
+
+  /// Types sold as one-off sessions, so they show even without a covering plan.
+  final Set<String> singleTypes;
+
+  /// Customize Platform → Services. A type the gym has switched off is not
+  /// offered even if a plan technically covers it.
+  final List<String> offeredTypes;
+
+  /// Everything the client holds — a type is offered if any of them covers
+  /// it. Empty only for staff booking themselves, who see every type.
+  final List<MembershipPlan> plans;
+  final ValueChanged<String> onPick;
+  final List<Trainer> trainers;
+  final bool isStaff;
+
+  @override
+  Widget build(BuildContext context) {
+    final types = _bookableTypes(plans: plans, trainers: trainers, offeredTypes: offeredTypes, isStaff: isStaff, singleTypes: singleTypes);
+    final allowedTypes = types;
+    final anyLargeGroupOffered = types.contains("large-group");
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionLabel("Step 1 — What kind of session?"),
+        if (allowedTypes.contains("semi-private"))
+          AppCard(
+            onTap: () => onPick("semi-private"),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Semi-Private", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                SizedBox(height: 3),
+                Text(
+                  "Share your coach while following your own personalized workout. Expert coaching, "
+                  "individualized guidance, and accountability in a small group setting.",
+                  style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        if (allowedTypes.contains("one-on-one"))
+          AppCard(
+            onTap: () => onPick("one-on-one"),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("One-on-One", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                SizedBox(height: 3),
+                Text(
+                  "Your trainer's full attention in a private session tailored entirely to your goals, "
+                  "fitness level, and needs.",
+                  style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        for (final t in types.where((t) => !const {"semi-private", "one-on-one", "large-group"}.contains(t)))
+          AppCard(
+            onTap: () => onPick(t),
+            child: Text(sessionTypeLabel(t), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+          ),
+        if (anyLargeGroupOffered)
+          AppCard(
+            onTap: () => onPick("large-group"),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Large Group", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 3),
+                Text(
+                  "Hike and Outdoor HIIT classes — 1 hour, capacity ${capFor("large-group")}, starting on the "
+                  "hour every hour. Included with any active membership.",
+                  style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// What a client with no active plan sees instead of the booking steps.
+/// The first session is on the house: a physical assessment with a coach,
+/// bookable with no membership and deducted from nothing. Shown only to a
+/// client who has never booked anything, and gone as soon as they have.
+class _FreeFirstSessionCard extends StatelessWidget {
+  const _FreeFirstSessionCard({required this.onStart});
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.gold.withValues(alpha: 0.08),
+        border: Border.all(color: AppColors.gold),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.gift, size: 16, color: AppColors.gold),
+              SizedBox(width: 8),
+              Text("Your first session is free", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Book a free physical assessment with a coach — Semi-Private or One-on-One, your choice. "
+            "No membership needed, and it doesn't use up any sessions.",
+            style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          BtnGold(
+            full: true,
+            onPressed: onStart,
+            child: const Text("Book my free session"),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown for the whole of the free-session flow — including after a detour
+/// to sign a waiver, which drops the client back here on a fresh screen and
+/// would otherwise leave them wondering whether the free session stuck.
+class _FreeSessionActiveBanner extends StatelessWidget {
+  const _FreeSessionActiveBanner({required this.onExit});
+  final VoidCallback onExit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: AppColors.gold.withValues(alpha: 0.08),
+        border: Border.all(color: AppColors.gold),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(LucideIcons.gift, size: 16, color: AppColors.gold),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Booking your free physical assessment — pick a time below. "
+              "It won't use any of your sessions.",
+              style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.5),
+            ),
+          ),
+          TextButton(
+            onPressed: onExit,
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.mute,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              minimumSize: Size.zero,
+            ),
+            child: const Text("Not now", style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Nothing on the schedule is bookable for them, so rather than list slots
+/// they'd be refused on, this says why and sends them to the one place that
+/// changes it.
+class _NoPlanGate extends StatelessWidget {
+  const _NoPlanGate({required this.onGoMemberships});
+  final VoidCallback onGoMemberships;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.goldDim),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.lock, size: 16, color: AppColors.gold),
+              SizedBox(width: 8),
+              Text("Booking needs a plan", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Sessions are booked against a membership or package. Pick one in the Membership Hub and the full schedule opens up here.",
+            style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          BtnGold(
+            full: true,
+            onPressed: onGoMemberships,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.creditCard, size: 15, color: AppColors.onGold),
+                SizedBox(width: 6),
+                Text("See plans and what each covers"),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepTwo extends StatelessWidget {
+  const _StepTwo({required this.chosenType, required this.trainers, this.onChangeType, required this.onPick});
+  final String chosenType;
+  final List<Trainer> trainers;
+
+  /// Null when the client can only book one session type — nothing to change to.
+  final VoidCallback? onChangeType;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final offered = <String>{};
+    for (final t in trainers) {
+      for (final block in t.offeredAvailability) {
+        if (block.sessionType == chosenType) {
+          offered.add(block.discipline);
+        }
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(sessionTypeLabel(chosenType), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
+            if (onChangeType != null) ...[
+              const SizedBox(width: 8),
+              Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: onChangeType,
+                child: Text("Change", style: TextStyle(fontSize: 12, color: AppColors.mute, decoration: TextDecoration.underline)),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 18),
+        const SectionLabel("Step 2 — Choose a discipline"),
+        if (offered.isEmpty)
+          HintBox(text: "No ${sessionTypeLabel(chosenType).toLowerCase()} sessions are set up yet. Check back soon or contact ONE Fitness.")
+        else
+          ...offered.map((d) => AppCard(
+                onTap: () => onPick(d),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(disciplineLabel(d), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                          const SizedBox(height: 2),
+                          Text("${sessionTypeLabel(chosenType)} · ${disciplineLabel(d)}", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                        ],
+                      ),
+                    ),
+                    Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+                  ],
+                ),
+              )),
+      ],
+    );
+  }
+}
+
+class _JumpToChip extends StatelessWidget {
+  const _JumpToChip({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(border: Border.all(color: AppColors.line), color: AppColors.card, borderRadius: BorderRadius.circular(8)),
+        child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
+      ),
+    );
+  }
+}
+
+class _SlotAvailability {
+  _SlotAvailability({required this.trainer, required this.open, required this.cap, required this.mine, this.locationName});
+  final Trainer trainer;
+  final int open;
+  final int cap;
+  final bool mine;
+
+  /// Where this session runs, when it was created at one of the gym's other
+  /// locations — otherwise the coach's or the gym's main one.
+  final String? locationName;
+}
+
+class _StepThree extends StatefulWidget {
+  const _StepThree({
+    required this.date,
+    required this.chosenType,
+    required this.chosenDisc,
+    required this.info,
+    required this.trainers,
+    required this.bookings,
+    required this.blockedTimes,
+    required this.waitlist,
+    required this.onDateChange,
+    this.onChangeType,
+    required this.onChangeDisc,
+    required this.onSlotTap,
+    required this.onJoinWaitlist,
+    required this.onLeaveWaitlist,
+    required this.waitlistBusyKeys,
+    required this.semiPrivateCap,
+    required this.gymLocationName,
+    required this.locationFilter,
+    required this.locationDistances,
+    required this.placeDistances,
+    required this.onLocationChange,
+  });
+
+  /// Customize Platform → Location, shown on a slot whose coach has no
+  /// location of their own.
+  final String gymLocationName;
+
+  /// Only show sessions at this location; null shows them all.
+  final String? locationFilter;
+
+  /// Metres from the client's booking location to each gym location, by
+  /// name — orders each time's sessions nearest first.
+  final Map<String, double> locationDistances;
+
+  /// Metres from the CLIENT to each place, keyed by place name — what the
+  /// slot row shows. Distinct from [locationDistances], which measures
+  /// between the gym's own sites and only orders the list.
+  final Map<String, double> placeDistances;
+  final ValueChanged<String?> onLocationChange;
+  final String date;
+  final String chosenType;
+  final String chosenDisc;
+  final dynamic info;
+  final List<Trainer> trainers;
+
+  /// Gym-wide (every client's bookings), not just the signed-in client's —
+  /// capacity/fullness must account for everyone occupying this trainer/
+  /// date/slot. The "mine" flag below still filters back down to `info.id`
+  /// per booking, so a single shared list serves both purposes correctly.
+  final List<Booking> bookings;
+
+  /// Gym-wide ad-hoc Block Time entries — a slot a coach has blocked off
+  /// must stop being offered here, same as [fallsInUnavailability]'s
+  /// recurring-window check just below it.
+  final List<BlockedTime> blockedTimes;
+  final List<WaitlistEntry> waitlist;
+  final ValueChanged<String> onDateChange;
+  /// Null when the client can only book one session type — nothing to change to.
+  final VoidCallback? onChangeType;
+  final VoidCallback onChangeDisc;
+  final void Function(Trainer, String, String, int, bool, bool) onSlotTap;
+  final void Function(Trainer, String, String, int) onJoinWaitlist;
+  final void Function(WaitlistEntry) onLeaveWaitlist;
+  final Set<String> waitlistBusyKeys;
+  final int semiPrivateCap;
+
+  @override
+  State<_StepThree> createState() => _StepThreeState();
+}
+
+class _StepThreeState extends State<_StepThree> {
+  // Stable per-slot keys (not recreated every build) so "Jump to" can
+  // scroll a specific slot into view via Scrollable.ensureVisible — the
+  // Flutter equivalent of scrollIntoView against a DOM id.
+  final Map<int, GlobalKey> _slotKeys = {};
+  GlobalKey _keyFor(int slot) => _slotKeys.putIfAbsent(slot, GlobalKey.new);
+
+  void _jumpTo(int slot) {
+    final ctx = _slotKeys[slot]?.currentContext;
+    if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final date = widget.date;
+    final chosenType = widget.chosenType;
+    final chosenDisc = widget.chosenDisc;
+    final info = widget.info;
+    final trainers = widget.trainers;
+    final bookings = widget.bookings;
+    final waitlist = widget.waitlist;
+    final onDateChange = widget.onDateChange;
+    final onChangeType = widget.onChangeType;
+    final onChangeDisc = widget.onChangeDisc;
+    final onSlotTap = widget.onSlotTap;
+    final sunday = isSunday(date);
+
+    final bySlot = <int, List<_SlotAvailability>>{};
+    {
+      for (final t in trainers) {
+        if (fallsInUnavailability(t, date)) continue;
+        for (final o in trainerOfferingsOn(t, date)) {
+          // The weekly pattern never runs on Sunday; a session the owner
+          // created on a Sunday date deliberately does.
+          if (sunday && !o.oneOff) continue;
+          if (o.sessionType != chosenType || o.discipline != chosenDisc) continue;
+          if (fallsInBlockedTime(widget.blockedTimes, t.id, date, o.slot)) continue;
+          final used = bookedCount(bookings, t.id, date, o.slot);
+          final cap = capFor(o.sessionType, semiPrivateCap: widget.semiPrivateCap);
+          final mine = bookings.any((b) => b.clientId == info.id && b.trainerId == t.id && b.date == date && b.slot == o.slot);
+          // Where this slot actually happens: the session's own
+          // location, else the coach's, else the gym default.
+          final where = o.locationName ?? widget.gymLocationName;
+          final wanted = widget.locationFilter;
+          if (wanted != null && where != wanted) continue;
+          bySlot.putIfAbsent(o.slot, () => []).add(_SlotAvailability(trainer: t, open: cap - used, cap: cap, mine: mine, locationName: o.locationName));
+        }
+      }
+      // Nearest first within each time; locations we can't measure go last.
+      //
+      // Distance from the client themselves is the better answer when we
+      // have it, and it covers places a coach set as well as the gym's own.
+      // The older gym-to-gym figures stay as the fallback, so a client who
+      // refused location permission and gave no city still gets a sensible
+      // order rather than an arbitrary one.
+      final dist = widget.placeDistances.isNotEmpty
+          ? widget.placeDistances
+          : widget.locationDistances;
+      if (dist.isNotEmpty) {
+        double away(_SlotAvailability a) =>
+            dist[a.locationName ?? widget.gymLocationName] ?? double.infinity;
+        for (final list in bySlot.values) {
+          list.sort((a, b) => away(a).compareTo(away(b)));
+        }
+      }
+      // A session that's already started never shows — today's earlier
+      // slots, and every slot on a past date. The 2-hour lead-time cutoff
+      // is separate (canBookOffering, on tap), so this doesn't repeat it.
+      bySlot.removeWhere((slot, _) => sessionHasStarted(date, slot));
+    }
+    final slots = bySlot.keys.toList()..sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            Text(sessionTypeLabel(chosenType), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
+            Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
+            Text(disciplineLabel(chosenDisc), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
+            if (onChangeType != null)
+              GestureDetector(
+                onTap: onChangeType,
+                child: Text("Change type", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+              ),
+            GestureDetector(
+              onTap: onChangeDisc,
+              child: Text("Change discipline", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        // Collapsed to one line like the discipline row above; only appears
+        // when the gym actually runs more than one site.
+        LocationPicker(selected: widget.locationFilter, onSelect: widget.onLocationChange),
+        DateStrip(date: date, onSelect: onDateChange, disablePast: true),
+        if (slots.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Row(
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Text("Jump to:", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final slot in slots) ...[
+                          _JumpToChip(label: fmtSlotCompactAmPm(slot), onTap: () => _jumpTo(slot)),
+                          const SizedBox(width: 8),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (sunday)
+          const HintBox(text: "ONE Fitness is closed on Sundays. Pick another day.")
+        else if (trainers.isEmpty)
+          const HintBox(text: "No trainers set up yet.")
+        else if (slots.isEmpty)
+          HintBox(text: "No ${sessionTypeLabel(chosenType).toLowerCase()} ${disciplineLabel(chosenDisc)} sessions available on this day yet.")
+        else
+          ...slots.map((slot) {
+            final avail = bySlot[slot]!;
+            return Padding(
+              key: _keyFor(slot),
+              padding: const EdgeInsets.only(bottom: 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(fmtSlot(slot), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.gold)),
+                  const SizedBox(height: 8),
+                  ...avail.map((a) {
+                    final isFull = a.open <= 0 && !a.mine;
+                    final onWaitlistMatches = waitlist.where(
+                      (w) => w.clientId == info.id && w.trainerId == a.trainer.id && w.date == date && w.slot == slot && w.status == "waiting",
+                    );
+                    final onWaitlist = onWaitlistMatches.isEmpty ? null : onWaitlistMatches.first;
+                    final waitlistBusy = widget.waitlistBusyKeys.contains("${a.trainer.id}|$date|$slot");
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        children: [
+                          InkWell(
+                            onTap: (a.mine || isFull) ? null : () => onSlotTap(a.trainer, chosenType, chosenDisc, slot, a.mine, isFull),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Opacity(
+                              opacity: isFull && onWaitlist == null ? 0.65 : 1,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: a.mine
+                                      ? AppColors.gold.withValues(alpha: 0.1)
+                                      : onWaitlist != null
+                                          ? AppColors.warning.withValues(alpha: 0.06)
+                                          : AppColors.card,
+                                  border: Border.all(
+                                    color: a.mine
+                                        ? AppColors.gold
+                                        : onWaitlist != null
+                                            ? AppColors.warning.withValues(alpha: 0.35)
+                                            : (a.open > 0 ? AppColors.line : const Color(0xFF222222)),
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Avatar(src: a.trainer.photo, name: a.trainer.name, size: 38, active: a.mine),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Session type leads the card — what's
+                                          // being booked matters more than who's
+                                          // running it, and every slot in a day
+                                          // otherwise opens with the same coach
+                                          // name repeated down the list.
+                                          Text(
+                                            "${sessionTypeLabel(chosenType)} · ${disciplineLabel(chosenDisc)}",
+                                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 2),
+                                            child: Text(a.trainer.displayTitle, style: TextStyle(fontSize: 12, color: AppColors.txt)),
+                                          ),
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 3),
+                                            child: GestureDetector(
+                                              onTap: () => CoachProfileCard.show(context, a.trainer),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text("Meet the Coach", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.mute)),
+                                                  SizedBox(width: 3),
+                                                  Icon(LucideIcons.chevronRight, size: 11, color: AppColors.mute),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          // Where this session runs: the location
+                                          // it was created at, else the coach's
+                                          // own, else the gym's main one.
+                                          if ((a.locationName ?? widget.gymLocationName).isNotEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(top: 3),
+                                              child: Row(
+                                                children: [
+                                                  Icon(LucideIcons.mapPin, size: 11, color: AppColors.mute),
+                                                  const SizedBox(width: 3),
+                                                  Flexible(
+                                                    child: Text(
+                                                      a.locationName ?? widget.gymLocationName,
+                                                      style: TextStyle(fontSize: 11, color: AppColors.mute),
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  // How far this session is from
+                                                  // the client, not from another
+                                                  // gym. Absent rather than
+                                                  // guessed when the place has no
+                                                  // coordinates or we don't know
+                                                  // where the client is.
+                                                  Builder(builder: (context) {
+                                                    final metres = widget.placeDistances[
+                                                        a.locationName ?? widget.gymLocationName];
+                                                    if (metres == null) return const SizedBox.shrink();
+                                                    return Padding(
+                                                      padding: const EdgeInsets.only(left: 5),
+                                                      child: Text(
+                                                        "· ${formatDistance(metres)} away",
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: AppColors.gold,
+                                                          fontWeight: FontWeight.w700,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }),
+                                                ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (a.mine)
+                                      Text("Booked ✓", style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700))
+                                    else if (a.open > 0)
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text("${a.open}", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.gold)),
+                                          Text("of ${a.cap} open", style: TextStyle(fontSize: 10, color: AppColors.mute)),
+                                        ],
+                                      )
+                                    else if (onWaitlist != null)
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text("Waitlist", style: TextStyle(fontSize: 11, color: AppColors.warning, fontWeight: FontWeight.w700)),
+                                          Text("#${onWaitlist.position ?? '—'}", style: TextStyle(fontSize: 10, color: AppColors.mute)),
+                                        ],
+                                      )
+                                    else
+                                      const Text("Full", style: TextStyle(fontSize: 12, color: Color(0xFF8A5A5A), fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (isFull && !a.mine)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: onWaitlist != null
+                                    ? OutlinedButton(
+                                        onPressed: waitlistBusy ? null : () => widget.onLeaveWaitlist(onWaitlist),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: AppColors.errorText,
+                                          side: const BorderSide(color: Color(0xFF6B3B3B)),
+                                          padding: const EdgeInsets.symmetric(vertical: 7),
+                                        ),
+                                        child: Text(
+                                          "Leave waitlist (position #${onWaitlist.position ?? '—'})",
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                        ),
+                                      )
+                                    : OutlinedButton(
+                                        onPressed: waitlistBusy ? null : () => widget.onJoinWaitlist(a.trainer, chosenType, chosenDisc, slot),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: AppColors.warning,
+                                          side: BorderSide(color: AppColors.warning),
+                                          backgroundColor: AppColors.warning.withValues(alpha: 0.1),
+                                          padding: const EdgeInsets.symmetric(vertical: 7),
+                                        ),
+                                        child: const Text("+ Join waitlist", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                                      ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
+}

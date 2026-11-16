@@ -1,0 +1,412 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/intake_forms.dart";
+import "../../../data/models/client_record.dart";
+import "../../../data/models/intake_schema.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "intake_attachments.dart";
+
+/// Mirrors FormFiller.jsx — a generic schema-driven questionnaire renderer:
+/// text/textarea/single/multi/scale question types, with `showIf`
+/// conditional visibility, saving to `client.intake[key]`. Reused by both
+/// the client filling their own form (`who: "client"`, from
+/// IntakeAreaScreen via client_shell.dart) and a coach filling it on a
+/// client's behalf (`who: "trainer"`, from IntakeTab) — [profileId]/[client]
+/// identify whose record this is, and [onSaved] routes the result back into
+/// whichever provider the caller owns (clientRecordProvider vs.
+/// trainerClientRecordsProvider), matching FormFiller.jsx's own
+/// `by: who === "client" ? "Client" : "Trainer/Coach"`.
+class FormFillerScreen extends ConsumerStatefulWidget {
+  const FormFillerScreen({
+    super.key,
+    required this.assessmentKey,
+    required this.schema,
+    required this.onBack,
+    required this.profileId,
+    required this.client,
+    required this.who,
+    required this.onSaved,
+    this.keepPrevious = false,
+  });
+
+  final String assessmentKey;
+  final IntakeSchema schema;
+  final VoidCallback onBack;
+  final String profileId;
+  final ClientRecord client;
+  final String who; // "client" | "trainer"
+  final void Function(IntakeRecord) onSaved;
+
+  /// Whether saving files this as a new submission, keeping whatever is
+  /// already on record, rather than correcting the one that's there.
+  ///
+  /// Off for "Edit answers", which is how a coach fixes a figure they
+  /// mistyped — archiving that would bury the real re-intakes under a pile of
+  /// near-identical copies. On for "Fill in again", which is a client
+  /// answering the same questionnaire afresh months later.
+  final bool keepPrevious;
+
+  @override
+  ConsumerState<FormFillerScreen> createState() => _FormFillerScreenState();
+}
+
+class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
+  late Map<String, dynamic> _answers;
+
+  /// Kept in step with the record as files are added and removed — each
+  /// change is already saved by the time it lands here (see
+  /// IntakeAttachmentsField), so this is the list [_save] must write back
+  /// rather than the stale one the form opened with.
+  late List<IntakeAttachment> _attachments;
+
+  /// One controller per text question, created once and kept.
+  ///
+  /// These used to be built inside `build()`. Every keystroke runs
+  /// onChanged → setState → rebuild, so the whole form allocated a fresh
+  /// controller for each of its sixty-odd questions on every character
+  /// typed, leaking the previous ones and resetting the cursor. On an
+  /// intake this long that is indistinguishable from the page locking up.
+  final Map<String, TextEditingController> _textControllers = {};
+
+  TextEditingController _controllerFor(IntakeQuestion q) =>
+      _textControllers.putIfAbsent(q.id, () {
+        final initial = _answers[q.id] as String? ?? "";
+        return TextEditingController(text: initial)
+          ..selection = TextSelection.collapsed(offset: initial.length);
+      });
+
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.client.intake[widget.assessmentKey];
+    if (widget.keepPrevious) {
+      // Adding another copy of this form, so it opens blank. Carrying the
+      // last answers over would make a fresh intake look already filled in,
+      // and a client re-doing it months later would be correcting old
+      // answers instead of giving new ones. The previous submission isn't
+      // lost — it's saved and readable as soon as this one is filed.
+      _answers = {};
+      _attachments = [];
+    } else {
+      _answers = Map<String, dynamic>.from(existing?.answers ?? {});
+      _attachments = [...?existing?.attachments];
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _textControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _setText(String id, dynamic v) => setState(() => _answers[id] = v);
+
+  void _toggleMulti(String id, String opt) => setState(() {
+        final cur = List<String>.from(_answers[id] as List? ?? const []);
+        if (cur.contains(opt)) {
+          cur.remove(opt);
+        } else {
+          cur.add(opt);
+        }
+        _answers[id] = cur;
+      });
+
+  bool _shouldShow(IntakeQuestion q) => intakeQuestionVisible(q, _answers);
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    // Stamped with the form version these answers were given against, so a
+    // later revision of a gym-defined form can't relabel, reorder or hide
+    // what was actually asked. Null for the built-in forms, whose questions
+    // live in code.
+    final template = newestTemplateFor(
+      widget.assessmentKey,
+      ref.read(liveIntakeFormTemplatesProvider),
+    );
+    final record = IntakeRecord(
+      answers: _answers,
+      completed: true,
+      at: stamp(),
+      by: widget.who == "client" ? "Client" : "Trainer/Coach",
+      attachments: _attachments,
+      templateVersion: template?.version,
+    );
+    try {
+      await SupabaseService.updateClientIntake(
+        widget.profileId,
+        widget.assessmentKey,
+        record,
+        keepPrevious: widget.keepPrevious,
+      );
+      widget.onSaved(record);
+      // Nutrition Intake completing kicks off an AI-drafted calorie/macro
+      // target set (training vs. rest day) — fire-and-forget, mirroring
+      // IntakeArea.jsx's own trigger; a coach reviews and applies it later
+      // from NutritionBuilder, it's never visible to the client directly.
+      // Fires for a client completing their own intake (self-service, not
+      // "a coach generating a program") — but NOT for a coach filling this
+      // out on a client's behalf unless that coach is the owner, since
+      // generating a program is now a hard owner-only capability. Only
+      // checks for a prior AI draft (not any nutrition program at all —
+      // most real clients already have a coach-built plan on file, and
+      // that shouldn't block their first AI target draft from generating).
+      final isOwner = ref.read(trainerAuthProvider) == "owner";
+      final allowedToGenerate = widget.who == "client" || isOwner;
+      if (widget.assessmentKey == "nutritional" && allowedToGenerate && !widget.client.savedNutritionPrograms.any((p) => p.source == "ai")) {
+        SupabaseService.generateAiNutritionProgram(widget.profileId).catchError((_) => <String, dynamic>{});
+      }
+      widget.onBack();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = e.toString().replaceFirst("Exception: ", "");
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BackBar(onBack: widget.onBack),
+          const SizedBox(height: 6),
+          Text(widget.schema.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          Padding(
+            padding: EdgeInsets.only(top: 4, bottom: 16),
+            child: Text("Fill what you can — it saves to the client's profile.", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+          ),
+          ...widget.schema.sections.map((sec) => Padding(
+                padding: const EdgeInsets.only(bottom: 22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      sec.title.toUpperCase(),
+                      style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+                    ),
+                    const SizedBox(height: 12),
+                    ...sec.questions.where(_shouldShow).map((q) => Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(q.label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 7),
+                              _QuestionInput(
+                                question: q,
+                                value: _answers[q.id],
+                                controller: (q.type == "text" || q.type == "textarea")
+                                    ? _controllerFor(q)
+                                    : null,
+                                onText: (v) => _setText(q.id, v),
+                                onToggle: (opt) => _toggleMulti(q.id, opt),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+                ),
+              )),
+          if (assessmentDefFor(widget.assessmentKey,
+                  custom: ref.watch(intakeFormTemplatesProvider))?.allowsAttachments ??
+              false) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 22),
+              child: IntakeAttachmentsField(
+                profileId: widget.profileId,
+                assessmentKey: widget.assessmentKey,
+                attachments: _attachments,
+                onChanged: (next) {
+                  setState(() => _attachments = next);
+                  // The file is already saved against the record; this keeps
+                  // whichever provider owns this client in step, so backing
+                  // out without finishing the form doesn't lose sight of it.
+                  final existing = widget.client.intake[widget.assessmentKey] ?? const IntakeRecord();
+                  widget.onSaved(existing.copyWith(attachments: next));
+                },
+              ),
+            ),
+          ],
+          if (_error != null) ...[
+            Container(
+              padding: const EdgeInsets.all(10),
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: AppColors.errorText.withValues(alpha: 0.1),
+                border: Border.all(color: AppColors.errorText.withValues(alpha: 0.4)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+            ),
+          ],
+          BtnGold(
+            onPressed: _saving ? null : _save,
+            full: true,
+            child: _saving
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(AppColors.onGold)),
+                      ),
+                      SizedBox(width: 8),
+                      Text("Saving…"),
+                    ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(LucideIcons.check, size: 16, color: AppColors.onGold),
+                      SizedBox(width: 6),
+                      // Flexible so the label shrinks rather than pushing
+                      // past the button edge on a narrow phone.
+                      Flexible(child: Text("Save & mark complete", maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuestionInput extends StatelessWidget {
+  const _QuestionInput({
+    required this.question,
+    required this.value,
+    required this.onText,
+    required this.onToggle,
+    this.controller,
+  });
+  final IntakeQuestion question;
+  final dynamic value;
+
+  /// Owned by the parent State for text questions; null for the chip and
+  /// scale types, which have no text field to drive.
+  final TextEditingController? controller;
+  final ValueChanged<dynamic> onText;
+  final ValueChanged<String> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (question.type) {
+      case "text":
+        return AppField(
+          // An age, a weight or a phone number gets the keyboard it needs
+          // rather than the letter keyboard; see IntakeQuestion.inputKind.
+          kind: question.inputKind ?? FieldKind.text,
+          placeholder: "Type here…",
+          controller: TextEditingController(text: value as String? ?? "")..selection = TextSelection.collapsed(offset: (value as String? ?? "").length),
+          onChanged: onText,
+        );
+      case "textarea":
+        return TextField(
+          controller: TextEditingController(text: value as String? ?? "")..selection = TextSelection.collapsed(offset: (value as String? ?? "").length),
+          onChanged: onText,
+          minLines: 3,
+          maxLines: 6,
+          style: TextStyle(color: AppColors.txt, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: "Type here…",
+            hintStyle: TextStyle(color: AppColors.mute),
+            filled: true,
+            fillColor: AppColors.bg,
+            contentPadding: const EdgeInsets.all(10),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.line)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.line)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.gold)),
+          ),
+        );
+      case "scale":
+        final min = question.min ?? 1;
+        final max = question.max ?? 10;
+        return Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: List.generate(max - min + 1, (i) => min + i).map((n) {
+            final selected = value == n;
+            return InkWell(
+              onTap: () => onText(n),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? AppColors.gold : AppColors.bg,
+                  border: Border.all(color: selected ? AppColors.gold : AppColors.line),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text("$n", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: selected ? AppColors.onGold : AppColors.mute)),
+              ),
+            );
+          }).toList(),
+        );
+      case "multi":
+        final selected = List<String>.from(value as List? ?? const []);
+        return Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: question.options.map((opt) {
+            final on = selected.contains(opt);
+            return _OptionChip(label: opt, selected: on, onTap: () => onToggle(opt));
+          }).toList(),
+        );
+      default: // "single"
+        return Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: question.options.map((opt) {
+            final on = value == opt;
+            return _OptionChip(label: opt, selected: on, onTap: () => onText(opt));
+          }).toList(),
+        );
+    }
+  }
+}
+
+class _OptionChip extends StatelessWidget {
+  const _OptionChip({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : AppColors.bg,
+          border: Border.all(color: selected ? AppColors.gold : AppColors.line),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: selected ? AppColors.onGold : AppColors.mute)),
+      ),
+    );
+  }
+}

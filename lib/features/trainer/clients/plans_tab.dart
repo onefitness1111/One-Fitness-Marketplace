@@ -1,0 +1,1063 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
+import "../../../core/utils/write_failure.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/client_record.dart";
+import "../../../data/models/nutrition_plan.dart";
+import "../../../data/models/saved_program.dart";
+import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "../dashboard/live_workouts_card.dart";
+import "../programs/nutrition_builder_screen.dart";
+import "../programs/program_builder_screen.dart";
+import "../schedule/client_search_picker.dart";
+
+/// Mirrors PlansArea.jsx — 3 sub-tabs: Training (ProgramBuilder, shown
+/// inline — no separate "build" gate), Nutrition (NutritionBuilder),
+/// Programs (this client's AI drafts + saved programs + the shared
+/// template library — see ProgramsPanel.jsx). Owner-only, no exceptions —
+/// generating, approving, or assigning a workout/nutrition program is a
+/// hard owner-exclusive capability, same as Reports/Memberships/Waivers.
+class PlansTab extends ConsumerStatefulWidget {
+  const PlansTab({super.key, required this.clientId, required this.sub, required this.onSubChanged});
+
+  final String clientId;
+
+  /// Which of training / nutrition / programs is showing. Owned by
+  /// TrainerView rather than here, so the sub-tab is part of the same back
+  /// history as the client's main tabs — back from Nutrition goes to
+  /// Training, not straight out of the client.
+  final String sub;
+  final ValueChanged<String> onSubChanged;
+
+  @override
+  ConsumerState<PlansTab> createState() => _PlansTabState();
+}
+
+class _PlansTabState extends ConsumerState<PlansTab> {
+  String get _sub => widget.sub;
+
+  @override
+  Widget build(BuildContext context) {
+    final records = ref.watch(trainerClientRecordsProvider);
+    final record = records[widget.clientId];
+    if (record == null) return const SizedBox.shrink();
+
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
+    final canEdit = isOwner || ref.watch(platformSettingsProvider).coachCanEditClientWorkouts;
+    if (!canEdit) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(
+          text: "Only the owner can build, approve, or assign workout and nutrition programs.",
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+          child: BtnGold(
+            full: true,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => LiveWorkoutPage(clientId: widget.clientId, clientName: ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId).map((c) => c.name).firstOrNull ?? "Client"),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(LucideIcons.play, size: 14),
+                SizedBox(width: 6),
+                Text("Log workout"),
+              ],
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(10)),
+            child: Row(
+              children: [("training", "Training"), ("nutrition", "Nutrition"), ("programs", "Programs")]
+                  .map((t) => Expanded(
+                        child: InkWell(
+                          onTap: () => widget.onSubChanged(t.$1),
+                          borderRadius: BorderRadius.circular(7),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(color: _sub == t.$1 ? AppColors.gold : Colors.transparent, borderRadius: BorderRadius.circular(7)),
+                            child: Text(t.$2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _sub == t.$1 ? AppColors.onGold : AppColors.mute)),
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ),
+        Expanded(
+          child: switch (_sub) {
+            "training" => ProgramBuilderScreen(clientId: widget.clientId),
+            "nutrition" => NutritionBuilderScreen(clientId: widget.clientId, existing: record.nutrition),
+            _ => SingleChildScrollView(
+                padding: const EdgeInsets.all(18),
+                child: _ProgramsPanel(
+                  clientId: widget.clientId,
+                  record: record,
+                  onEditWorkout: () => widget.onSubChanged("training"),
+                  onEditNutrition: () => widget.onSubChanged("nutrition"),
+                ),
+              ),
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Mirrors ProgramsPanel.jsx — AI workout/nutrition draft review, this
+/// client's own saved programs (Edit/Archive/Duplicate/Assign/Delete), and
+/// the shared template library (Assign/Edit/Duplicate/Delete).
+class _ProgramsPanel extends ConsumerStatefulWidget {
+  const _ProgramsPanel({required this.clientId, required this.record, required this.onEditWorkout, required this.onEditNutrition});
+
+  final String clientId;
+  final ClientRecord record;
+  final VoidCallback onEditWorkout;
+  final VoidCallback onEditNutrition;
+
+  @override
+  ConsumerState<_ProgramsPanel> createState() => _ProgramsPanelState();
+}
+
+class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
+  bool _generatingWorkoutDraft = false;
+  bool _regeneratingWorkoutDraft = false;
+  bool _generatingNutritionDraft = false;
+  bool _regeneratingNutritionDraft = false;
+  bool _busy = false;
+  String? _error;
+  String _libraryTab = "training";
+
+  /// Library sub-tabs visited, so back steps through them before leaving
+  /// the Plans tab.
+  final List<String> _libraryTabHistory = [];
+
+  ClientRecord get _record => ref.watch(trainerClientRecordsProvider)[widget.clientId] ?? widget.record;
+
+  void _showAlert(String message) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        content: Text(message),
+        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("OK"))],
+      ),
+    );
+  }
+
+  Future<bool> _confirm(String message, {String confirmLabel = "Confirm"}) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(confirmLabel)),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _refreshClient() async {
+    try {
+      final fresh = await SupabaseService.loadClientRecord(widget.clientId);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (_) => fresh);
+    } catch (_) {}
+  }
+
+  // ── Workout AI draft ────────────────────────────────────────────────
+
+  Future<void> _generateWorkoutDraft() async {
+    setState(() => _generatingWorkoutDraft = true);
+    try {
+      final res = await SupabaseService.generateAiWorkoutProgram(widget.clientId);
+      if (res["ok"] == false) {
+        _showAlert(res["reason"] == "intakes-incomplete" ? "The Personalized Training Intake isn't marked complete yet." : "A workout program already exists for this client.");
+      }
+    } catch (e) {
+      _showAlert(e.toString().replaceFirst("Exception: ", ""));
+    }
+    await _refreshClient();
+    if (mounted) setState(() => _generatingWorkoutDraft = false);
+  }
+
+  Future<void> _regenerateWorkoutDraft() async {
+    final ok = await _confirm(
+      "Draft a fresh workout program from this client's current Personalized Training Intake answers? This creates a new draft to review — nothing changes until you approve it.",
+      confirmLabel: "Draft fresh workout",
+    );
+    if (!ok) return;
+    setState(() => _regeneratingWorkoutDraft = true);
+    try {
+      await SupabaseService.generateAiWorkoutProgram(widget.clientId, forceRegenerate: true);
+    } catch (e) {
+      _showAlert(e.toString().replaceFirst("Exception: ", ""));
+    }
+    await _refreshClient();
+    if (mounted) setState(() => _regeneratingWorkoutDraft = false);
+  }
+
+  Future<void> _approveWorkoutDraft(SavedProgram draft) async {
+    if (!await _confirmReplaceLiveSplit()) return;
+    await _writeSavedPrograms(
+      _record.savedPrograms.map((p) => p.id == draft.id ? p.copyWith(status: "active") : p).toList(),
+    );
+    // Approving means "this is their program now", so the Training tab —
+    // which is where a coach looks to see what a client is on — has to show
+    // it rather than staying empty.
+    await _loadIntoLiveSplit(draft);
+    _notifyClientPlanAssigned("workout");
+  }
+
+  Future<void> _discardWorkoutDraft(SavedProgram draft) async {
+    await _writeSavedPrograms(_record.savedPrograms.where((p) => p.id != draft.id).toList());
+    await _clearLiveSplitIfItMirrors(draft);
+  }
+
+  /// "Review & Edit" copies a program's days verbatim into the client's live
+  /// split ([_editWorkout] below), which is what the Training sub-tab shows
+  /// and the client's own plan reads. Deleting the program therefore has to
+  /// clear that copy too — otherwise the Training tab (and the client) keep
+  /// showing a program that no longer exists anywhere else.
+  ///
+  /// Matched on the exact set of day ids: ids are unique per program (the
+  /// generator and the builder both mint fresh ones), so this reliably
+  /// catches a loaded copy — including one whose exercises the coach has
+  /// since edited, since editing exercises never changes a day's id — while
+  /// never touching a split the coach built independently.
+  Future<void> _clearLiveSplitIfItMirrors(SavedProgram p) async {
+    if (!_liveSplitMirrors(p)) return;
+    try {
+      await SupabaseService.updateClientProgramDays(widget.clientId, const []);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(programDays: const []));
+    } catch (_) {
+      if (mounted) setState(() => _error = "Deleted, but the working copy in the Training tab couldn't be cleared — check your connection and try again.");
+    }
+  }
+
+  bool _liveSplitMirrors(SavedProgram p) {
+    final liveIds = _record.programDays.map((d) => d.id).toSet();
+    if (liveIds.isEmpty) return false;
+    final programIds = p.programDays.map((d) => d.id).toSet();
+    return liveIds.length == programIds.length && liveIds.containsAll(programIds);
+  }
+
+  Future<void> _editWorkout(SavedProgram p) async {
+    setState(() => _busy = true);
+    await _loadIntoLiveSplit(p);
+    if (mounted) setState(() => _busy = false);
+    widget.onEditWorkout();
+  }
+
+  /// Copies [p]'s days into the client's live split — what the Training
+  /// sub-tab shows.
+  ///
+  /// Assigning a program and approving an AI draft both used to write only
+  /// `savedPrograms`, leaving `programDays` untouched. The program appeared
+  /// under Programs while the Training tab still read "No days yet. Add Day
+  /// 1 to start building this client's split", which looks exactly like the
+  /// assignment having failed. Only "Review & Edit" ever filled it in.
+  Future<bool> _loadIntoLiveSplit(SavedProgram p) async {
+    try {
+      await SupabaseService.updateClientProgramDays(widget.clientId, p.programDays);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(programDays: p.programDays));
+      return true;
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = writeFailureMessage(e, whatFailed: "Assigned, but the Training tab couldn't be updated"));
+      }
+      return false;
+    }
+  }
+
+  /// Asks before replacing a split the coach has built but not saved as a
+  /// program — those days exist nowhere else, so overwriting them silently
+  /// would throw away work with no way back.
+  Future<bool> _confirmReplaceLiveSplit() async {
+    final live = _record.programDays;
+    if (live.isEmpty) return true;
+    // A split that mirrors a program they already hold is a loaded copy, not
+    // unsaved work — replacing that needs no ceremony.
+    if (_record.savedPrograms.any(_liveSplitMirrors)) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        content: Text(
+          "The Training tab has ${live.length} day${live.length == 1 ? "" : "s"} that isn't saved as a program. "
+          "Assigning this one replaces it.\n\nSave it as a program first if you want to keep it.",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text("Replace")),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// Notifications spec — "New workout/nutrition plan assigned" email, for
+  /// [widget.clientId] specifically. Best-effort (see notifyPlanAssigned),
+  /// looked up fresh off the roster each call rather than cached, since
+  /// this tab can stay open across a roster refresh.
+  void _notifyClientPlanAssigned(String kind) {
+    final matches = ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId);
+    if (matches.isEmpty) return;
+    final info = matches.first;
+    notifyPlanAssigned(toEmail: info.email ?? "", toName: info.name, kind: kind, profileId: info.id);
+  }
+
+  Future<void> _writeSavedPrograms(List<SavedProgram> next) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await SupabaseService.updateClientSavedPrograms(widget.clientId, next);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(savedPrograms: next));
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't save — check your connection and try again.");
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  // ── Nutrition AI draft ──────────────────────────────────────────────
+
+  Future<void> _generateNutritionDraft() async {
+    setState(() => _generatingNutritionDraft = true);
+    try {
+      final res = await SupabaseService.generateAiNutritionProgram(widget.clientId);
+      if (res["ok"] == false) {
+        _showAlert(res["reason"] == "nutrition-intake-incomplete" ? "The Nutrition Intake isn't marked complete yet." : "A draft already exists for this client.");
+      }
+    } catch (e) {
+      _showAlert(e.toString().replaceFirst("Exception: ", ""));
+    }
+    await _refreshClient();
+    if (mounted) setState(() => _generatingNutritionDraft = false);
+  }
+
+  Future<void> _regenerateNutritionDraft() async {
+    final ok = await _confirm(
+      "Draft fresh targets from this client's current Nutrition Intake answers? This creates a new draft to review — nothing changes until you apply it.",
+      confirmLabel: "Draft fresh targets",
+    );
+    if (!ok) return;
+    setState(() => _regeneratingNutritionDraft = true);
+    try {
+      await SupabaseService.generateAiNutritionProgram(widget.clientId, forceRegenerate: true);
+    } catch (e) {
+      _showAlert(e.toString().replaceFirst("Exception: ", ""));
+    }
+    await _refreshClient();
+    if (mounted) setState(() => _regeneratingNutritionDraft = false);
+  }
+
+  Future<void> _approveNutritionDraft(NutritionProgramEntry draft) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final nextPrograms = _record.savedNutritionPrograms.map((p) => p.id == draft.id ? p.copyWith(status: "active") : p).toList();
+      final nextPlan = (_record.nutrition ?? const NutritionPlan()).copyWith(
+        trainingTargets: draft.trainingTargets,
+        restTargets: draft.restTargets,
+        mealBudgets: draft.mealBudgets,
+        guidelines: draft.guidelines,
+      );
+      await SupabaseService.updateClientNutrition(widget.clientId, nextPlan);
+      await SupabaseService.updateClientSavedNutritionPrograms(widget.clientId, nextPrograms);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(nutrition: nextPlan, savedNutritionPrograms: nextPrograms));
+      _notifyClientPlanAssigned("nutrition");
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't apply this draft — check your connection and try again.");
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _discardNutritionDraft(String id) => _writeSavedNutritionPrograms(_record.savedNutritionPrograms.where((p) => p.id != id).toList());
+
+  /// The nutrition counterpart of [_clearLiveSplitIfItMirrors]. Approving a
+  /// draft copies its targets into the client's live nutrition plan (see
+  /// [_approveNutritionDraft]) — what the Nutrition sub-tab and the client's
+  /// own plan read — so deleting the program has to clear those copied
+  /// values too. Only the fields the program actually owns are reset; meals,
+  /// grocery items and attachments are the coach's separate work and are
+  /// left untouched.
+  Future<void> _clearLiveNutritionIfItMirrors(NutritionProgramEntry p) async {
+    final live = _record.nutrition;
+    if (live == null) return;
+    // An entry with nothing set would "match" any empty plan — only act when
+    // the program genuinely carries targets.
+    final hasTargets = p.trainingTargets.asMap().values.any((v) => v != null && v.isNotEmpty) ||
+        p.restTargets.asMap().values.any((v) => v != null && v.isNotEmpty);
+    if (!hasTargets) return;
+    if (!_sameTargets(live.trainingTargets, p.trainingTargets) || !_sameTargets(live.restTargets, p.restTargets)) return;
+    final next = NutritionPlan(
+      breakfast: live.breakfast,
+      lunch: live.lunch,
+      dinner: live.dinner,
+      snacks: live.snacks,
+      smoothies: live.smoothies,
+      extraGroceryItems: live.extraGroceryItems,
+      attachments: live.attachments,
+    );
+    try {
+      await SupabaseService.updateClientNutrition(widget.clientId, next);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(nutrition: next));
+    } catch (_) {
+      if (mounted) setState(() => _error = "Deleted, but this client's live targets couldn't be cleared — check your connection and try again.");
+    }
+  }
+
+  bool _sameTargets(MacroTargets a, MacroTargets b) {
+    final am = a.asMap();
+    final bm = b.asMap();
+    return am.keys.every((k) => am[k] == bm[k]);
+  }
+
+  Future<void> _writeSavedNutritionPrograms(List<NutritionProgramEntry> next) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await SupabaseService.updateClientSavedNutritionPrograms(widget.clientId, next);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(savedNutritionPrograms: next));
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't save — check your connection and try again.");
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  // ── Assign to another client ────────────────────────────────────────
+
+  Future<void> _assignWorkoutElsewhere(SavedProgram p) async {
+    final target = await _pickClient();
+    if (target == null) return;
+    setState(() => _busy = true);
+    try {
+      final targetRecord = await SupabaseService.loadClientRecord(target.id);
+      final copy = SavedProgram(
+        id: "${DateTime.now().microsecondsSinceEpoch}",
+        name: p.name,
+        status: "active",
+        coachName: p.coachName,
+        programDays: p.programDays,
+        createdAt: stamp(),
+      );
+      await SupabaseService.updateClientSavedPrograms(target.id, [...targetRecord.savedPrograms, copy]);
+      notifyPlanAssigned(toEmail: target.email ?? "", toName: target.name, kind: "workout", profileId: target.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Assigned to ${target.name}.")));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't assign — check your connection and try again.")));
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _assignNutritionElsewhere(NutritionProgramEntry p) async {
+    final target = await _pickClient();
+    if (target == null) return;
+    setState(() => _busy = true);
+    try {
+      final targetRecord = await SupabaseService.loadClientRecord(target.id);
+      final copy = NutritionProgramEntry(
+        id: "${DateTime.now().microsecondsSinceEpoch}",
+        name: p.name,
+        status: "active",
+        source: "coach",
+        trainingTargets: p.trainingTargets,
+        restTargets: p.restTargets,
+        mealBudgets: p.mealBudgets,
+        guidelines: p.guidelines,
+        createdAt: stamp(),
+      );
+      await SupabaseService.updateClientSavedNutritionPrograms(target.id, [...targetRecord.savedNutritionPrograms, copy]);
+      notifyPlanAssigned(toEmail: target.email ?? "", toName: target.name, kind: "nutrition", profileId: target.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Assigned to ${target.name}.")));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't assign — check your connection and try again.")));
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<dynamic> _pickClient() {
+    final roster = ref.read(trainerRosterProvider);
+    return showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 18, right: 18, top: 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionLabel("Assign to another client"),
+            const SizedBox(height: 8),
+            ClientSearchPicker(roster: roster, exclude: [widget.clientId], onSelect: (c) => Navigator.of(ctx).pop(c)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
+    final record = _record;
+    final workoutDrafts = record.savedPrograms.where((p) => p.source == "ai" && p.status == "draft").toList();
+    final workoutPrograms = record.savedPrograms.where((p) => !(p.source == "ai" && p.status == "draft")).toList();
+    final nutritionDrafts = record.savedNutritionPrograms.where((p) => p.source == "ai" && p.status == "draft").toList();
+    final nutritionPrograms = record.savedNutritionPrograms.where((p) => !(p.source == "ai" && p.status == "draft")).toList();
+    final hasAnyAiWorkout = record.savedPrograms.any((p) => p.source == "ai");
+    final hasAnyAiNutrition = record.savedNutritionPrograms.any((p) => p.source == "ai");
+    final workoutLibrary = ref.watch(programsLibraryProvider);
+    final nutritionLibrary = ref.watch(nutritionLibraryProvider);
+
+    return LocalBackScope(
+      isOpen: _libraryTabHistory.isNotEmpty,
+      onBack: () => setState(() => _libraryTab = _libraryTabHistory.removeLast()),
+      child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_error != null)
+          Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12))),
+
+        // ── AI workout draft ──
+        if (workoutDrafts.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text(hasAnyAiWorkout ? "Regenerate from their Training Intake" : "Draft a workout with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
+                    const SizedBox(width: 6),
+                    const Tag(text: "AI", gold: true),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  hasAnyAiWorkout
+                      ? "If this client has updated their Personalized Training Intake answers, draft a fresh split from their current answers. You'll review it here before anything changes."
+                      : "This client's Personalized Training Intake is complete but no AI draft has been generated yet. Draft a weekly split from their intake answers — you'll review it here before assigning it.",
+                  style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
+                ),
+                const SizedBox(height: 10),
+                if (isOwner)
+                  BtnGold(
+                    full: true,
+                    onPressed: (_generatingWorkoutDraft || _regeneratingWorkoutDraft) ? null : (hasAnyAiWorkout ? _regenerateWorkoutDraft : _generateWorkoutDraft),
+                    child: Text(_generatingWorkoutDraft || _regeneratingWorkoutDraft
+                        ? "Generating…"
+                        : hasAnyAiWorkout
+                            ? "Regenerate AI Workout Draft"
+                            : "Draft a Workout with AI"),
+                  )
+                else
+                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+        for (final p in workoutDrafts)
+          Container(
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(color: AppColors.gold.withValues(alpha: 0.08), border: Border.all(color: AppColors.goldDim), borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(p.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                const SizedBox(height: 6),
+                Builder(builder: (context) {
+                  // Counted separately: a "5 day split" that is really 3
+                  // committed days plus 2 optional ones misrepresents what
+                  // the client agreed to at the only glance most coaches
+                  // give this card.
+                  final committed = p.programDays.where((d) => !d.suggested).length;
+                  final suggested = p.programDays.length - committed;
+                  return Text(
+                    "$committed day split"
+                    "${suggested > 0 ? " · $suggested suggested day${suggested == 1 ? "" : "s"}" : ""}"
+                    "${p.createdAt != null ? " · generated ${p.createdAt}" : ""}",
+                    style: TextStyle(fontSize: 12, color: AppColors.mute),
+                  );
+                }),
+                if (p.programNote != null) ...[
+                  const SizedBox(height: 8),
+                  _DraftNote(icon: LucideIcons.info, text: p.programNote!),
+                ],
+                if (p.suggestedNote != null) ...[
+                  const SizedBox(height: 8),
+                  _DraftNote(icon: LucideIcons.sparkles, text: p.suggestedNote!),
+                ],
+                const SizedBox(height: 8),
+                const HintBox(text: "Not visible to this client until you approve it. Review the days, edit anything that needs a coach's touch, then approve to assign it."),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: BtnGold(onPressed: _busy ? null : () => _editWorkout(p), child: const Text("Review & Edit"))),
+                    const SizedBox(width: 6),
+                    Expanded(child: BtnGold(onPressed: _busy ? null : () => _approveWorkoutDraft(p), child: const Text("Approve & Assign"))),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    if (isOwner) ...[
+                      Expanded(
+                        child: BtnGhost(
+                          onPressed: _regeneratingWorkoutDraft ? null : _regenerateWorkoutDraft,
+                          child: Text(_regeneratingWorkoutDraft ? "Regenerating…" : "Regenerate"),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _busy ? null : () => _discardWorkoutDraft(p),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        child: const Text("Discard"),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+        // ── AI nutrition draft ──
+        if (nutritionDrafts.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(hasAnyAiNutrition ? "Regenerate Nutrition Targets from Intake" : "Draft Nutrition Targets with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                const SizedBox(height: 6),
+                Text(
+                  hasAnyAiNutrition
+                      ? "If this client has updated their Nutrition Intake answers since their targets were last set, draft a fresh set from their current answers. You'll review it here before anything changes."
+                      : "This client's Nutrition Intake is complete but no AI draft has been generated yet. Draft whole-number Training/Rest Day targets from their intake answers — you'll review it here before anything is applied.",
+                  style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
+                ),
+                const SizedBox(height: 10),
+                if (isOwner)
+                  BtnGold(
+                    full: true,
+                    onPressed: (_generatingNutritionDraft || _regeneratingNutritionDraft) ? null : (hasAnyAiNutrition ? _regenerateNutritionDraft : _generateNutritionDraft),
+                    child: Text(_generatingNutritionDraft || _regeneratingNutritionDraft
+                        ? "Generating…"
+                        : hasAnyAiNutrition
+                            ? "Regenerate AI Nutrition Targets"
+                            : "Generate AI Nutrition Targets"),
+                  )
+                else
+                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+        for (final p in nutritionDrafts)
+          Container(
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(color: AppColors.gold.withValues(alpha: 0.08), border: Border.all(color: AppColors.goldDim), borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text("AI-drafted calorie & macro targets are ready", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
+                    const SizedBox(width: 6),
+                    const Tag(text: "AI Draft", gold: true),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text("Training: ${p.trainingTargets.calories ?? "—"} kcal", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                Text("Rest: ${p.restTargets.calories ?? "—"} kcal", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                const SizedBox(height: 8),
+                const HintBox(text: "Approving fills in this client's Training/Rest Day Targets and Calorie Budget from this draft. Review it first if you'd like to adjust anything."),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: BtnGold(onPressed: _busy ? null : () => widget.onEditNutrition(), child: const Text("Review & Edit"))),
+                    const SizedBox(width: 6),
+                    Expanded(child: BtnGold(onPressed: _busy ? null : () => _approveNutritionDraft(p), child: const Text("Approve & Assign"))),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    if (isOwner) ...[
+                      Expanded(
+                        child: BtnGhost(
+                          onPressed: _regeneratingNutritionDraft ? null : _regenerateNutritionDraft,
+                          child: Text(_regeneratingNutritionDraft ? "Regenerating…" : "Regenerate"),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _busy ? null : () => _discardNutritionDraft(p.id),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        child: const Text("Discard"),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+        // ── This client's own programs ──
+        const SectionLabel("This Client's Workout Programs"),
+        const SizedBox(height: 8),
+        if (workoutPrograms.isEmpty) const Padding(padding: EdgeInsets.only(bottom: 16), child: HintBox(text: "No workout programs assigned yet."))
+        else
+          ...workoutPrograms.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ProgramCard(
+                  name: p.name,
+                  meta: "${p.programDays.length} day split · ${p.coachName ?? "—"}${p.createdAt != null ? " · ${p.createdAt}" : ""}",
+                  modifiedLabel: p.modifiedAt != null ? "Modified ${p.modifiedAt}" : null,
+                  archived: p.status == "archived",
+                  busy: _busy,
+                  onEdit: () => _editWorkout(p),
+                  onArchiveToggle: () => _writeSavedPrograms(
+                    _record.savedPrograms.map((x) => x.id == p.id ? x.copyWith(status: x.status == "archived" ? "active" : "archived") : x).toList(),
+                  ),
+                  onDuplicate: () async {
+                    await _writeSavedPrograms([
+                      ..._record.savedPrograms,
+                      SavedProgram(id: "${DateTime.now().microsecondsSinceEpoch}", name: "${p.name} (copy)", status: "active", coachName: p.coachName, programDays: p.programDays, createdAt: stamp()),
+                    ]);
+                    _notifyClientPlanAssigned("workout");
+                  },
+                  onAssign: () => _assignWorkoutElsewhere(p),
+                  onDelete: () async {
+                    if (!await _confirm("Delete \"${p.name}\"? This can't be undone.", confirmLabel: "Delete")) return;
+                    await _writeSavedPrograms(_record.savedPrograms.where((x) => x.id != p.id).toList());
+                    await _clearLiveSplitIfItMirrors(p);
+                  },
+                ),
+              )),
+
+        const SizedBox(height: 6),
+        const SectionLabel("This Client's Nutrition Programs"),
+        const SizedBox(height: 8),
+        if (nutritionPrograms.isEmpty) const Padding(padding: EdgeInsets.only(bottom: 16), child: HintBox(text: "No nutrition programs assigned yet."))
+        else
+          ...nutritionPrograms.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ProgramCard(
+                  name: p.name,
+                  meta: "${p.trainingTargets.calories ?? "—"} kcal/day · ${p.createdBy ?? "—"}${p.createdAt != null ? " · ${p.createdAt}" : ""}",
+                  archived: p.status == "archived",
+                  busy: _busy,
+                  onEdit: () => widget.onEditNutrition(),
+                  onArchiveToggle: () => _writeSavedNutritionPrograms(
+                    _record.savedNutritionPrograms.map((x) => x.id == p.id ? x.copyWith(status: x.status == "archived" ? "active" : "archived") : x).toList(),
+                  ),
+                  onDuplicate: () async {
+                    await _writeSavedNutritionPrograms([
+                      ..._record.savedNutritionPrograms,
+                      NutritionProgramEntry(
+                        id: "${DateTime.now().microsecondsSinceEpoch}",
+                        name: "${p.name} (copy)",
+                        status: "active",
+                        source: "coach",
+                        trainingTargets: p.trainingTargets,
+                        restTargets: p.restTargets,
+                        mealBudgets: p.mealBudgets,
+                        guidelines: p.guidelines,
+                        createdAt: stamp(),
+                      ),
+                    ]);
+                    _notifyClientPlanAssigned("nutrition");
+                  },
+                  onAssign: () => _assignNutritionElsewhere(p),
+                  onDelete: () async {
+                    if (!await _confirm("Delete \"${p.name}\"? This can't be undone.", confirmLabel: "Delete")) return;
+                    await _writeSavedNutritionPrograms(_record.savedNutritionPrograms.where((x) => x.id != p.id).toList());
+                    await _clearLiveNutritionIfItMirrors(p);
+                  },
+                ),
+              )),
+
+        // ── Programs Library ──
+        const SizedBox(height: 6),
+        const SectionLabel("Programs Library"),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(3),
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(10)),
+          child: Row(
+            children: [("training", "Training"), ("nutrition", "Nutrition")]
+                .map((t) => Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() {
+                          if (_libraryTab == t.$1) return;
+                          _libraryTabHistory.add(_libraryTab);
+                          _libraryTab = t.$1;
+                        }),
+                        borderRadius: BorderRadius.circular(7),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(color: _libraryTab == t.$1 ? AppColors.gold : Colors.transparent, borderRadius: BorderRadius.circular(7)),
+                          child: Text(t.$2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _libraryTab == t.$1 ? AppColors.onGold : AppColors.mute)),
+                        ),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+        if (_libraryTab == "training") ...[
+          if (workoutLibrary.isEmpty) const HintBox(text: "No saved templates yet. Build a program and it'll appear here too."),
+          ...workoutLibrary.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _LibraryCard(
+                  name: p.name,
+                  onAssign: () async {
+                    if (!await _confirmReplaceLiveSplit()) return;
+                    final assigned = SavedProgram(
+                      id: "${DateTime.now().microsecondsSinceEpoch}",
+                      name: p.name,
+                      status: "active",
+                      programDays: p.programDays,
+                      createdAt: stamp(),
+                    );
+                    await _writeSavedPrograms([..._record.savedPrograms, assigned]);
+                    // Same as approving a draft: the Training tab is the
+                    // coach's view of what this client is doing now.
+                    await _loadIntoLiveSplit(assigned);
+                    _notifyClientPlanAssigned("workout");
+                  },
+                  onDuplicate: () async {
+                    final copy = p.copyWith(name: "${p.name} (copy)");
+                    try {
+                      await SupabaseService.upsertProgramLibraryEntry(SavedProgram(id: "${DateTime.now().microsecondsSinceEpoch}", name: copy.name, programDays: copy.programDays));
+                      ref.read(programsLibraryProvider.notifier).add(copy);
+                    } catch (_) {}
+                  },
+                  onDelete: () async {
+                    if (!await _confirm("Delete template \"${p.name}\"? This can't be undone.", confirmLabel: "Delete")) return;
+                    try {
+                      await SupabaseService.deleteProgramLibraryEntry(p.id);
+                      ref.read(programsLibraryProvider.notifier).remove(p.id);
+                    } catch (_) {
+                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't delete — check your connection and try again.")));
+                    }
+                  },
+                ),
+              )),
+        ] else ...[
+          if (nutritionLibrary.isEmpty) const HintBox(text: "No saved nutrition templates yet."),
+          ...nutritionLibrary.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _LibraryCard(
+                  name: e.name,
+                  onAssign: () => SupabaseService.updateClientNutrition(widget.clientId, e.plan).then((_) {
+                    ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(nutrition: e.plan));
+                    _notifyClientPlanAssigned("nutrition");
+                  }).catchError((Object _) {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't assign — check your connection and try again.")));
+                  }),
+                  onDuplicate: null,
+                  onDelete: () async {
+                    if (!await _confirm("Delete template \"${e.name}\"? This can't be undone.", confirmLabel: "Delete")) return;
+                    ref.read(nutritionLibraryProvider.notifier).remove(e.id);
+                  },
+                ),
+              )),
+        ],
+      ],
+      ),
+    );
+  }
+}
+
+class _ProgramCard extends StatelessWidget {
+  const _ProgramCard({
+    required this.name,
+    required this.meta,
+    this.modifiedLabel,
+    required this.archived,
+    required this.busy,
+    required this.onEdit,
+    required this.onArchiveToggle,
+    required this.onDuplicate,
+    required this.onAssign,
+    required this.onDelete,
+  });
+
+  final String name;
+  final String meta;
+  final String? modifiedLabel;
+  final bool archived;
+  final bool busy;
+  final VoidCallback onEdit;
+  final VoidCallback onArchiveToggle;
+  final VoidCallback onDuplicate;
+  final VoidCallback onAssign;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: archived ? 0.6 : 1,
+      child: AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
+                if (archived) const Tag(text: "Archived"),
+              ],
+            ),
+            Padding(padding: const EdgeInsets.only(top: 2), child: Text(meta, style: TextStyle(fontSize: 11, color: AppColors.mute))),
+            if (modifiedLabel != null) Padding(padding: const EdgeInsets.only(top: 2), child: Text(modifiedLabel!, style: TextStyle(fontSize: 11, color: AppColors.mute))),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _ActionChip(label: "Edit", onTap: busy ? null : onEdit),
+                _ActionChip(label: archived ? "Unarchive" : "Archive", onTap: busy ? null : onArchiveToggle),
+                _ActionChip(label: "Duplicate", onTap: busy ? null : onDuplicate),
+                _ActionChip(label: "Assign", onTap: busy ? null : onAssign),
+                _ActionChip(label: "Delete", danger: true, onTap: busy ? null : onDelete),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LibraryCard extends StatelessWidget {
+  const _LibraryCard({required this.name, required this.onAssign, required this.onDuplicate, required this.onDelete});
+
+  final String name;
+  final VoidCallback onAssign;
+  final VoidCallback? onDuplicate;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _ActionChip(label: "Assign", onTap: onAssign),
+              if (onDuplicate != null) _ActionChip(label: "Duplicate", onTap: onDuplicate),
+              _ActionChip(label: "Delete", danger: true, onTap: onDelete),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionChip extends StatelessWidget {
+  const _ActionChip({required this.label, required this.onTap, this.danger = false});
+  final String label;
+  final VoidCallback? onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? AppColors.errorText : AppColors.gold;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: onTap == null ? AppColors.line : color.withValues(alpha: 0.5)),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: onTap == null ? AppColors.mute : color)),
+      ),
+    );
+  }
+}
+
+/// One line of the generator's own reasoning on an AI draft card.
+///
+/// These exist so a coach can read why a draft looks the way it does instead
+/// of guessing — most usefully when a program came back with no suggested
+/// days at all, which otherwise looks like the feature failing rather than
+/// the recovery rules doing their job.
+class _DraftNote extends StatelessWidget {
+  const _DraftNote({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Icon(icon, size: 13, color: AppColors.gold),
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 11.5, color: AppColors.mute, height: 1.45),
+          ),
+        ),
+      ],
+    );
+  }
+}

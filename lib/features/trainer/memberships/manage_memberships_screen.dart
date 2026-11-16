@@ -1,0 +1,1996 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/membership_utils.dart";
+import "../../../core/utils/write_failure.dart";
+import "../shell/trainer_shell_state.dart";
+import "../../../core/utils/plan_members.dart";
+import "../../../core/utils/domain_labels.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/membership_plan.dart";
+import "../../../data/models/product.dart";
+import "../../../data/models/waiver_doc.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
+
+
+/// Mirrors ManageMemberships.jsx + PackageSetupModal.jsx, folded into one
+/// inline form (matching this screen's existing style, rather than
+/// PackageSetupModal's separate payment-type-picker overlay step). Covers
+/// the highest-value subset of the modal's ~15 Advanced Settings fields —
+/// rollover, guests + guest fee, cancellation notice, early-termination
+/// fee, service balance, squad sharing, public flag, one-per-account
+/// limit, expiration, and the fee-item product link. Deliberately trimmed:
+/// contract attachment (would need a second bespoke waiver-linking flow —
+/// same "don't build a second bespoke editor" reasoning as Customize
+/// Platform's signup-waiver field) and two lower-value toggles
+/// (allowBookingBeyondBillingInterval, includeGuestsInVisitCount).
+/// The product lines a gym sells. Offered as a fixed list rather than free
+/// text so categories stay consistent across plans, products and reports —
+/// "Semi-Private Pack" and "semi private pack" would otherwise be two
+/// different things that look identical in a dropdown.
+const _presetCategories = [
+  "One-on-One Pack",
+  "Semi-Private Pack",
+  "Semi-Private Membership",
+  "Personalized Program",
+  "Nutrition Program",
+];
+
+class ManageMembershipsScreen extends ConsumerStatefulWidget {
+  const ManageMembershipsScreen({super.key});
+
+  @override
+  ConsumerState<ManageMembershipsScreen> createState() =>
+      _ManageMembershipsScreenState();
+}
+
+class _ManageMembershipsScreenState
+    extends ConsumerState<ManageMembershipsScreen> {
+  MembershipPlan? _editing;
+  bool _creating = false;
+  /// Pre-selects the category when adding a plan from inside a category
+  /// section, so the owner isn't re-picking what they just tapped under.
+  String? _creatingInCategory;
+  String? _pendingCategory;
+  bool _categoryBusy = false;
+
+  /// "+ Plan" on a category: choose a plan that already exists to file under
+  /// it, or create a brand-new one there.
+  Future<void> _addPlanToCategory(String category) async {
+    final all = ref.read(membershipPlansProvider);
+    final candidates = all.where((p) => !p.archived && (p.category ?? "").trim() != category).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final picked = await showModalBottomSheet<Object>(
+      context: context,
+      backgroundColor: AppColors.card,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(14))),
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+                child: Text("Add to $category", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+              ListTile(
+                leading: Icon(LucideIcons.plus, color: AppColors.gold),
+                title: const Text("Create a new plan", style: TextStyle(fontWeight: FontWeight.w700)),
+                onTap: () => Navigator.pop(ctx, "new"),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                child: Text("OR CHOOSE AN EXISTING PLAN", style: TextStyle(fontSize: 10.5, color: AppColors.mute, letterSpacing: 1)),
+              ),
+              if (candidates.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text("Every plan is already in this category.", style: TextStyle(fontSize: 13, color: AppColors.mute)),
+                )
+              else
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final p in candidates)
+                        ListTile(
+                          title: Text(p.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                            "${planKindLabel(p.kind)} · currently in ${(p.category ?? "").trim().isEmpty ? "no category" : p.category}",
+                            style: TextStyle(fontSize: 12, color: AppColors.mute),
+                          ),
+                          trailing: Icon(LucideIcons.plusCircle, size: 18, color: AppColors.gold),
+                          onTap: () => Navigator.pop(ctx, p),
+                        ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    if (picked == "new") {
+      setState(() {
+        _creatingInCategory = category;
+        _creating = true;
+      });
+      return;
+    }
+    final plan = picked as MembershipPlan;
+    // Placed after what is already there, so the owner's order is kept.
+    final inCategory = all.where((p) => (p.category ?? "").trim() == category);
+    final next = inCategory.fold<int>(-1, (m, p) => (p.sortOrder ?? 0) > m ? (p.sortOrder ?? 0) : m) + 1;
+    final updated = plan.withCategory(category, sortOrder: next);
+    try {
+      await SupabaseService.upsertMembershipPlan(updated);
+      ref.read(membershipPlansProvider.notifier).upsert(updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${plan.name} added to $category.")));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't save — check your connection and try again.")),
+        );
+      }
+    }
+  }
+
+  int _membersOn(String planId) {
+    final roster = ref.watch(trainerRosterProvider);
+    return membersOnPlan(roster, planId).length;
+  }
+
+  /// Moves a category one place. The list order is what clients see in the
+  /// Access Hub, so this writes the whole run of positions rather than just
+  /// the pair that swapped — cheaper to reason about than patching two rows
+  /// and hoping the rest still line up.
+  /// Moves one category to an absolute position. Both ways of reordering —
+  /// dragging it there, or stepping it with the arrows — land here, so the
+  /// two can't drift apart in what they save.
+  Future<void> _reorderCategories(int oldIndex, int newIndex) async {
+    final current = [...ref.read(packageCategoriesProvider)];
+    if (oldIndex < 0 || oldIndex >= current.length) return;
+    final target = newIndex.clamp(0, current.length - 1);
+    if (target == oldIndex) return;
+    current.insert(target, current.removeAt(oldIndex));
+    // Shown immediately; the write follows. A failure re-reads the server's
+    // order rather than leaving the screen showing something that isn't so.
+    ref.read(packageCategoriesProvider.notifier).setAll(current);
+    try {
+      await SupabaseService.savePackageCategoryOrder(current);
+    } catch (e) {
+      final fresh = await SupabaseService.loadPackageCategories();
+      if (!mounted) return;
+      ref.read(packageCategoriesProvider.notifier).setAll(fresh);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(writeFailureMessage(e, whatFailed: "Couldn't save the new order"))),
+      );
+    }
+  }
+
+  /// The arrows' one-step version, expressed in terms of the move above.
+  Future<void> _moveCategory(String name, int direction) {
+    final i = ref.read(packageCategoriesProvider).indexOf(name);
+    if (i < 0) return Future.value();
+    return _reorderCategories(i, i + direction);
+  }
+
+  /// Renames a category, carrying every plan and product tagged with it.
+  /// The server does both together, so a rename can't leave plans pointing
+  /// at a name that no longer exists.
+  Future<void> _renameCategory(String oldName, String newName) async {
+    try {
+      await SupabaseService.renamePackageCategory(oldName, newName);
+      final fresh = await SupabaseService.loadPackageCategories();
+      final plans = await SupabaseService.loadMembershipPlans();
+      if (!mounted) return;
+      ref.read(packageCategoriesProvider.notifier).setAll(fresh);
+      ref.read(membershipPlansProvider.notifier).setAll(plans);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Renamed to "$newName".')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
+      );
+    }
+  }
+
+  /// Reorders one category's plans among themselves.
+  ///
+  /// The plans are displayed grouped by category but held in a single flat
+  /// list, so a group's members can sit at non-adjacent positions in it.
+  /// Rather than guess at a global index, this takes the slots that group
+  /// already occupies and writes the regrouped order back into them — every
+  /// other plan keeps exactly the position it had.
+  Future<void> _reorderPlansInCategory(List<MembershipPlan> group, int oldIndex, int newIndex) async {
+    final plans = [...ref.read(membershipPlansProvider)];
+    final slots = [
+      for (final p in group) plans.indexWhere((x) => x.id == p.id),
+    ]..sort();
+    if (slots.length != group.length || slots.any((s) => s < 0)) return;
+    final target = newIndex.clamp(0, group.length - 1);
+    if (oldIndex < 0 || oldIndex >= group.length || target == oldIndex) return;
+
+    final regrouped = [...group];
+    regrouped.insert(target, regrouped.removeAt(oldIndex));
+    for (var k = 0; k < slots.length; k++) {
+      plans[slots[k]] = regrouped[k];
+    }
+    ref.read(membershipPlansProvider.notifier).setAll(plans);
+    try {
+      // The whole list, not just this group: sortOrder is a single sequence
+      // across every plan, so renumbering one group in isolation would leave
+      // it interleaved with the others on the next load.
+      await SupabaseService.saveMembershipPlanOrder([for (final p in plans) p.id]);
+    } catch (e) {
+      final fresh = await SupabaseService.loadMembershipPlans();
+      if (!mounted) return;
+      ref.read(membershipPlansProvider.notifier).setAll(fresh);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(writeFailureMessage(e, whatFailed: "Couldn't save the new order"))),
+      );
+    }
+  }
+
+  /// The arrows' one-step version, within the plan's own category.
+  void _move(String id, int dir) {
+    final plans = ref.read(membershipPlansProvider);
+    final plan = plans.where((p) => p.id == id).firstOrNull;
+    if (plan == null) return;
+    final group = _plansByCategory(plans, ref.read(packageCategoriesProvider))
+        .where((g) => g.value.any((p) => p.id == id))
+        .map((g) => g.value)
+        .firstOrNull;
+    if (group == null) return;
+    final i = group.indexWhere((p) => p.id == id);
+    if (i < 0) return;
+    _reorderPlansInCategory(group, i, i + dir);
+  }
+
+  Future<void> _removeOrArchive(MembershipPlan p) async {
+    final inUse = _membersOn(p.id);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text('${inUse > 0 ? "Archive" : "Delete"} "${p.name}"?'),
+        content: Text(
+          inUse > 0
+              ? "$inUse member(s) are on this plan. Archiving hides it from new sign-ups; current members keep it and keep working exactly as before."
+              : "No members are on this plan, so it can be permanently removed.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text("Yes, ${inUse > 0 ? "archive" : "delete"} it"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      if (inUse > 0) {
+        final archived = _withArchived(p, true);
+        await SupabaseService.upsertMembershipPlan(archived);
+        ref.read(membershipPlansProvider.notifier).upsert(archived);
+      } else {
+        await SupabaseService.deleteMembershipPlan(p.id);
+        ref.read(membershipPlansProvider.notifier).remove(p.id);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Couldn't ${inUse > 0 ? "archive" : "delete"} — check your connection and try again.",
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (mounted) setState(() => _editing = null);
+  }
+
+  Future<void> _restore(MembershipPlan p) async {
+    final restored = _withArchived(p, false);
+    try {
+      await SupabaseService.upsertMembershipPlan(restored);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't restore — check your connection and try again.",
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    ref.read(membershipPlansProvider.notifier).upsert(restored);
+    if (mounted) setState(() => _editing = null);
+  }
+
+  MembershipPlan _withArchived(MembershipPlan p, bool archived) =>
+      MembershipPlan(
+        id: p.id,
+        name: p.name,
+        kind: p.kind,
+        description: p.description,
+        startDate: p.startDate,
+        renewalDay: p.renewalDay,
+        maxSessions: p.maxSessions,
+        termMonths: p.termMonths,
+        allowedTypes: p.allowedTypes,
+        priceCents: p.priceCents,
+        archived: archived,
+        paymentType: p.paymentType,
+        feeItemProductId: p.feeItemProductId,
+        category: p.category,
+        allowGuests: p.allowGuests,
+        guestFeeCents: p.guestFeeCents,
+        rolloverEnabled: p.rolloverEnabled,
+        rolloverMaxVisits: p.rolloverMaxVisits,
+        cancellationNoticeDays: p.cancellationNoticeDays,
+        earlyTerminationFeeCents: p.earlyTerminationFeeCents,
+        serviceBalanceEnabled: p.serviceBalanceEnabled,
+        sharingEnabled: p.sharingEnabled,
+        sharingMaxAccounts: p.sharingMaxAccounts,
+        public: p.public,
+        limitOnePerAccount: p.limitOnePerAccount,
+        expirationEnabled: p.expirationEnabled,
+        expirationDays: p.expirationDays,
+      );
+
+  /// Returns whether it actually saved, so a caller with its own input to
+  /// clear (the custom-name field) doesn't throw away what the user typed
+  /// when the write failed and they'd have to retype it.
+  Future<bool> _addCategory(String name) async {
+    setState(() => _categoryBusy = true);
+    try {
+      await SupabaseService.insertPackageCategory(name);
+      ref.read(packageCategoriesProvider.notifier).add(name);
+      if (mounted) setState(() => _pendingCategory = null);
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't add that category — check your connection and try again.")),
+        );
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _categoryBusy = false);
+    }
+  }
+
+  Future<void> _deleteCategory(String name, int planCount) async {
+    // Deleting a category that plans still point at would leave them
+    // labelled with something no longer in the catalogue, so it's blocked
+    // rather than silently orphaning them.
+    if (planCount > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: Text('"$name" is still in use'),
+          content: Text(
+            "\$planCount plan(s) are in this category. Move or delete them first, "
+            "then the category can go.",
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
+        ),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text('Delete "$name"?'),
+        content: const Text("It stops being offered when creating plans and products. Nothing else changes."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Yes, delete it")),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await SupabaseService.deletePackageCategory(name);
+      ref.read(packageCategoriesProvider.notifier).remove(name);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't delete that category — check your connection and try again.")),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final plans = ref.watch(membershipPlansProvider);
+    final products = ref.watch(productsProvider);
+
+    if (_editing != null || _creating) {
+      final editingPlan = _editing;
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() {
+          _editing = null;
+          _creating = false;
+          _creatingInCategory = null;
+        }),
+        child: _PlanEditForm(
+          initial: editingPlan,
+          initialCategory: _creatingInCategory,
+          products: products,
+          onCancel: () => setState(() {
+            _editing = null;
+            _creating = false;
+          }),
+          onSave: (p) async {
+            try {
+              await SupabaseService.upsertMembershipPlan(p);
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      "Couldn't save — check your connection and try again.",
+                    ),
+                  ),
+                );
+              }
+              return;
+            }
+            ref.read(membershipPlansProvider.notifier).upsert(p);
+            setState(() {
+              _editing = null;
+              _creating = false;
+            });
+          },
+          onDelete: editingPlan == null
+              ? null
+              : () => _removeOrArchive(editingPlan),
+          onRestore: editingPlan == null || !editingPlan.archived
+              ? null
+              : () => _restore(editingPlan),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              SectionLabel("Membership Plans (${plans.length})"),
+              TextButton.icon(
+                onPressed: () => setState(() => _creating = true),
+                icon: Icon(
+                  LucideIcons.plus,
+                  size: 14,
+                  color: AppColors.gold,
+                ),
+                label: Text(
+                  "Plan",
+                  style: TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const HintBox(
+            text:
+                "Plans with active members can be archived (hidden from new sign-ups) but never deleted — existing members keep working.",
+          ),
+          const SizedBox(height: 14),
+          _CategoryManager(
+            categories: ref.watch(packageCategoriesProvider),
+            planCountFor: (c) => plans.where((p) => p.category == c).length,
+            pending: _pendingCategory,
+            busy: _categoryBusy,
+            onPick: (c) => setState(() => _pendingCategory = c),
+            onAdd: _addCategory,
+            onDelete: _deleteCategory,
+            onAddPlanIn: _addPlanToCategory,
+            onMove: _moveCategory,
+            onReorder: _reorderCategories,
+            onRename: _renameCategory,
+          ),
+          const SizedBox(height: 18),
+          // Grouped by category, in the gym's own category order — the same
+          // way clients see plans, so both sides read alike. Reordering is
+          // within a category: dragging a plan out of its own group would be
+          // a recategorisation, which is what the plan editor is for.
+          ...(() {
+            final grouped = _plansByCategory(plans, ref.watch(packageCategoriesProvider));
+            return [
+              for (final group in grouped) ...[
+                SectionLabel(group.key),
+                ReorderableColumn(
+                  itemCount: group.value.length,
+                  keyOf: (i) => group.value[i].id,
+                  enabled: group.value.length > 1,
+                  onReorder: (oldIndex, newIndex) =>
+                      _reorderPlansInCategory(group.value, oldIndex, newIndex),
+                  itemBuilder: (context, i) =>
+                      _planCard(group.value[i], i, group.value.length),
+                ),
+              ],
+            ];
+          })(),
+        ],
+      ),
+    );
+  }
+
+  /// Plans bucketed by category, categories in the owner's own order, with
+  /// anything uncategorised last — mirrors the client-side grouping.
+  List<MapEntry<String, List<MembershipPlan>>> _plansByCategory(List<MembershipPlan> plans, List<String> order) {
+    const uncategorised = "Other";
+    final buckets = <String, List<MembershipPlan>>{};
+    for (final p in plans) {
+      final c = (p.category ?? "").trim();
+      buckets.putIfAbsent(c.isEmpty ? uncategorised : c, () => []).add(p);
+    }
+    final names = <String>[
+      for (final c in order)
+        if (buckets.containsKey(c)) c,
+      for (final c in buckets.keys)
+        if (c != uncategorised && !order.contains(c)) c,
+      if (buckets.containsKey(uncategorised)) uncategorised,
+    ];
+    return [for (final n in names) MapEntry(n, buckets[n]!)];
+  }
+
+  Widget _planCard(MembershipPlan p, int i, int total) {
+    return Builder(
+      builder: (context) {
+            final inUse = _membersOn(p.id);
+            return Opacity(
+              opacity: p.archived ? 0.55 : 1,
+              child: AppCard(
+                onTap: () => setState(() => _editing = p),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  p.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (p.archived)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 6),
+                                  child: Tag(text: "Archived"),
+                                ),
+                            ],
+                          ),
+                          Text(
+                            "${_kindLabel(p.kind)} · \$${(p.priceCents / 100).toStringAsFixed(2)}${p.kind == PlanKind.membership ? '/mo' : ''} · ${p.maxSessions ?? 0} sessions · $inUse member${inUse != 1 ? "s" : ""}${p.category != null && p.category!.isNotEmpty ? ' · ${p.category}' : ''}",
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.mute,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: i == 0 ? null : () => _move(p.id, -1),
+                          child: Icon(
+                            LucideIcons.chevronUp,
+                            size: 16,
+                            color: i == 0 ? AppColors.line : AppColors.mute,
+                          ),
+                        ),
+                        InkWell(
+                          onTap: i == total - 1 ? null : () => _move(p.id, 1),
+                          child: Icon(
+                            LucideIcons.chevronDown,
+                            size: 16,
+                            color: i == total - 1 ? AppColors.line : AppColors.mute,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      LucideIcons.chevronRight,
+                      size: 15,
+                      color: AppColors.mute,
+                    ),
+                  ],
+                ),
+              ),
+            );
+      },
+    );
+  }
+}
+
+String _kindLabel(PlanKind k) => planKindLabel(k);
+
+class _PlanEditForm extends ConsumerStatefulWidget {
+  const _PlanEditForm({
+    this.initialCategory,
+    required this.initial,
+    required this.products,
+    required this.onCancel,
+    required this.onSave,
+    required this.onDelete,
+    required this.onRestore,
+  });
+  final MembershipPlan? initial;
+
+  /// Set when the form was opened from inside a category section, so a new
+  /// plan starts already filed under it.
+  final String? initialCategory;
+  final List<Product> products;
+  final VoidCallback onCancel;
+  final ValueChanged<MembershipPlan> onSave;
+  final VoidCallback? onDelete;
+  final VoidCallback? onRestore;
+
+  @override
+  ConsumerState<_PlanEditForm> createState() => _PlanEditFormState();
+}
+
+class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
+  late final _name = TextEditingController(text: widget.initial?.name ?? "");
+  late final _description = TextEditingController(text: widget.initial?.description ?? "");
+  late final _startDate = TextEditingController(text: widget.initial?.startDate ?? "");
+  late final _endDate = TextEditingController(text: widget.initial?.endDate ?? "");
+  late int? _renewalDay = widget.initial?.renewalDay;
+  late PlanKind _kind = widget.initial?.kind ?? PlanKind.membership;
+  late final _price = TextEditingController(
+    text: widget.initial != null
+        ? (widget.initial!.priceCents / 100).toStringAsFixed(2)
+        : "",
+  );
+  late final _maxSessions = TextEditingController(
+    text: "${widget.initial?.maxSessions ?? 0}",
+  );
+  late final _termMonths = TextEditingController(
+    text: "${widget.initial?.termMonths ?? 1}",
+  );
+  late final Set<String> _allowedTypes = {
+    ...(widget.initial?.allowedTypes ?? []),
+  };
+  late bool _archived = widget.initial?.archived ?? false;
+  String? _category;
+  bool _addingCategory = false;
+  final _newCategory = TextEditingController();
+  bool _advancedOpen = false;
+
+  // Advanced settings
+  late bool _allowGuests = widget.initial?.allowGuests ?? false;
+  late final _guestFee = TextEditingController(
+    text: ((widget.initial?.guestFeeCents ?? 0) / 100).toStringAsFixed(2),
+  );
+  late bool _rolloverEnabled = widget.initial?.rolloverEnabled ?? false;
+  late final _rolloverMax = TextEditingController(
+    text: "${widget.initial?.rolloverMaxVisits ?? 0}",
+  );
+  late final _noticeDays = TextEditingController(
+    text: "${widget.initial?.cancellationNoticeDays ?? 0}",
+  );
+  late final _terminationFee = TextEditingController(
+    text: ((widget.initial?.earlyTerminationFeeCents ?? 0) / 100)
+        .toStringAsFixed(2),
+  );
+  late bool _serviceBalance = widget.initial?.serviceBalanceEnabled ?? false;
+  late bool _sharingEnabled = widget.initial?.sharingEnabled ?? false;
+  late final _sharingMax = TextEditingController(
+    text: "${widget.initial?.sharingMaxAccounts ?? 1}",
+  );
+  late bool _public = widget.initial?.public ?? true;
+  late bool _limitOnePerAccount = widget.initial?.limitOnePerAccount ?? false;
+  late bool _expirationEnabled = widget.initial?.expirationEnabled ?? false;
+  late final _expirationDays = TextEditingController(
+    text: "${widget.initial?.expirationDays ?? 30}",
+  );
+  String? _feeItemProductId;
+
+  /// The plan's own contract — a waiver_docs row scoped to this plan, which
+  /// the client must sign before they can buy it. Loaded from whatever is
+  /// already attached, and saved alongside the plan.
+  WaiverDoc? _contractDoc;
+  late final _contractTitle = TextEditingController();
+  late final _contractBody = TextEditingController();
+  bool _contractLoaded = false;
+
+  void _loadContract() {
+    if (_contractLoaded) return;
+    _contractLoaded = true;
+    final planId = widget.initial?.id;
+    if (planId == null) return;
+    final match = ref
+        .read(waiversProvider)
+        .where((w) => w.scope == "plan" && w.planId == planId && !w.archived);
+    if (match.isEmpty) return;
+    _contractDoc = match.first;
+    _contractTitle.text = _contractDoc!.title;
+    _contractBody.text = _contractDoc!.body;
+  }
+
+  /// Saves the plan and its contract together — the contract needs the
+  /// plan's id, which a brand-new plan only gets here.
+  Future<void> _saveWithContract(MembershipPlan plan) async {
+    await _saveContract(plan.id, plan.name);
+    widget.onSave(plan);
+  }
+
+  /// Writes (or clears) the plan's contract. Called as the plan is saved, so
+  /// a brand-new plan's id is already settled.
+  Future<void> _saveContract(String planId, String planName) async {
+    final body = _contractBody.text.trim();
+    final existing = _contractDoc;
+    try {
+      if (body.isEmpty) {
+        // Contract removed: archived rather than deleted, so signatures
+        // already collected against it still point at a real document.
+        if (existing != null) {
+          final archived = WaiverDoc(
+            id: existing.id,
+            title: existing.title,
+            body: existing.body,
+            scope: "plan",
+            planId: planId,
+            required: existing.required,
+            archived: true,
+          );
+          await SupabaseService.upsertWaiverDoc(archived);
+          ref.read(waiversProvider.notifier).upsert(archived);
+        }
+        return;
+      }
+      final doc = WaiverDoc(
+        id: existing?.id ?? "contract-$planId",
+        title: _contractTitle.text.trim().isEmpty ? "$planName Agreement" : _contractTitle.text.trim(),
+        body: body,
+        scope: "plan",
+        planId: planId,
+        required: true,
+      );
+      await SupabaseService.upsertWaiverDoc(doc);
+      ref.read(waiversProvider.notifier).upsert(doc);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Plan saved, but the contract couldn't be saved — check your connection and try again.")),
+        );
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _category = widget.initial?.category ?? widget.initialCategory;
+    _feeItemProductId = widget.initial?.feeItemProductId;
+  }
+
+  Future<void> _pickDateInto(TextEditingController target) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.tryParse(target.text.trim()) ?? now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked != null) {
+      setState(() => target.text =
+          "${picked.year.toString().padLeft(4, "0")}-${picked.month.toString().padLeft(2, "0")}-${picked.day.toString().padLeft(2, "0")}");
+    }
+  }
+
+  /// One of the two sales-window pickers. Extracted because the start and
+  /// end fields are identical but for their label and controller.
+  Widget _dateField({required String label, required TextEditingController controller, required String hint}) {
+    return FieldLabeled(
+      label: label,
+      child: InkWell(
+        onTap: () => _pickDateInto(controller),
+        child: InputDecorator(
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: AppColors.bg,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: AppColors.line),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: AppColors.line),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  controller.text.isEmpty ? hint : controller.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: controller.text.isEmpty ? AppColors.mute : AppColors.txt,
+                  ),
+                ),
+              ),
+              if (controller.text.isNotEmpty)
+                InkWell(
+                  onTap: () => setState(controller.clear),
+                  child: Icon(LucideIcons.x, size: 14, color: AppColors.mute),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    _startDate.dispose();
+    _endDate.dispose();
+    _price.dispose();
+    _maxSessions.dispose();
+    _termMonths.dispose();
+    _newCategory.dispose();
+    _guestFee.dispose();
+    _rolloverMax.dispose();
+    _noticeDays.dispose();
+    _terminationFee.dispose();
+    _sharingMax.dispose();
+    _expirationDays.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addCategory() async {
+    final name = _newCategory.text.trim();
+    if (name.isEmpty) return;
+    try {
+      await SupabaseService.insertPackageCategory(name);
+      ref.read(packageCategoriesProvider.notifier).add(name);
+      setState(() {
+        _category = name;
+        _addingCategory = false;
+        _newCategory.clear();
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't add that category — check your connection and try again.",
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _loadContract();
+    final categories = ref.watch(packageCategoriesProvider);
+    final isSub = _kind == PlanKind.membership;
+    final isProgram = _kind == PlanKind.program;
+    final activeProducts = widget.products.where((p) => !p.archived).toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BackBar(
+            onBack: widget.onCancel,
+            title: widget.initial != null ? "Edit Plan" : "New Plan",
+          ),
+          const SizedBox(height: 12),
+          FieldLabeled(
+            label: "Name",
+            child: AppField(kind: FieldKind.name,
+              controller: _name,
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FieldLabeled(
+            label: "Description",
+            child: AppField(
+              controller: _description,
+              maxLines: 4,
+              minLines: 2,
+              placeholder: "What the client gets, in plain terms.",
+            ),
+          ),
+          const SizedBox(height: 10),
+          // A membership renews on a fixed day of the month for everyone on
+          // it; a package or program instead has an optional start date.
+          if (isSub) ...[
+            FieldLabeled(
+              label: "Renewal day (optional)",
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.bg,
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButton<int?>(
+                  value: _renewalDay,
+                  isExpanded: true,
+                  underline: const SizedBox(),
+                  dropdownColor: AppColors.card,
+                  style: TextStyle(color: AppColors.txt, fontSize: 14),
+                  items: [
+                    const DropdownMenuItem<int?>(value: null, child: Text("Each client's own signup day")),
+                    for (var d = 1; d <= 28; d++) DropdownMenuItem<int?>(value: d, child: Text("${_ordinal(d)} of every month")),
+                  ],
+                  onChanged: (v) => setState(() => _renewalDay = v),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                "Every client on this membership is billed on that day. Someone joining mid-month pays a prorated amount up to it, then the full price from then on. Days after the 28th aren't offered because not every month has them.",
+                style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          // The sales window, for every kind of plan. The start date used to
+          // live in the `else` of the membership branch, so a membership
+          // never had one — and `isSub` dropped it on save even if set.
+          Row(
+            children: [
+              Expanded(
+                child: _dateField(
+                  label: "On sale from",
+                  controller: _startDate,
+                  hint: "Any time",
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _dateField(
+                  label: "On sale until",
+                  controller: _endDate,
+                  hint: "No end",
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              "Controls when clients can buy this plan — outside these dates it isn't shown in the Access Hub and can't be assigned. "
+              "Anyone already on it keeps their access and keeps booking.",
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "KIND",
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.mute,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: PlanKind.values.map((k) {
+              final selected = _kind == k;
+              return InkWell(
+                onTap: () => setState(() => _kind = k),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppColors.gold
+                        : AppColors.card,
+                    border: Border.all(
+                      color: selected ? AppColors.gold : AppColors.line,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _kindLabel(k),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: selected ? AppColors.onGold : AppColors.txt,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: FieldLabeled(
+                  label: "Price (\$)",
+                  child: AppField(
+                    controller: _price,
+                    kind: FieldKind.decimal,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FieldLabeled(
+                  label: sessionAllowanceLabel(_kind),
+                  child: AppField(
+                    controller: _maxSessions,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (isProgram) ...[
+            const SizedBox(height: 10),
+            FieldLabeled(
+              label: "Term (months)",
+              child: AppField(
+                controller: _termMonths,
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+          if (!isProgram) ...[
+            const SizedBox(height: 10),
+            Text(
+              "ALLOWED SESSION TYPES",
+              style: TextStyle(
+                fontSize: 10,
+                color: AppColors.mute,
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              // The gym's own list, so a plan can cover a session type the
+              // owner added (Customize Platform → Services).
+              children: ref.watch(platformSettingsProvider).offeredSessionTypes.map((t) {
+                final selected = _allowedTypes.contains(t);
+                return InkWell(
+                  onTap: () => setState(
+                    () => selected
+                        ? _allowedTypes.remove(t)
+                        : _allowedTypes.add(t),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.gold
+                          : AppColors.card,
+                      border: Border.all(
+                        color: selected ? AppColors.gold : AppColors.line,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      sessionTypeLabel(t),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: selected ? AppColors.onGold : AppColors.txt,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              "CATEGORY",
+              style: TextStyle(
+                fontSize: 10,
+                color: AppColors.mute,
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final c in categories)
+                  InkWell(
+                    onTap: () => setState(() => _category = c),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _category == c
+                              ? AppColors.gold
+                              : AppColors.line,
+                        ),
+                        color: _category == c
+                            ? AppColors.gold
+                            : AppColors.bg,
+                      ),
+                      child: Text(
+                        c,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _category == c
+                              ? AppColors.onGold
+                              : AppColors.txt,
+                        ),
+                      ),
+                    ),
+                  ),
+                OutlinedButton(
+                  onPressed: () => setState(() => _addingCategory = true),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.mute,
+                    side: BorderSide(color: AppColors.line),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                  ),
+                  child: const Text(
+                    "+ Add category",
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            if (_addingCategory) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: AppField(kind: FieldKind.name,
+                      controller: _newCategory,
+                      placeholder: "e.g. Fees, Apparel",
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(onPressed: _addCategory, child: const Text("Add")),
+                ],
+              ),
+            ],
+
+            // ── Contract ──
+            // A plan can carry its own agreement. A client has to read and
+            // sign it before they can buy this plan; leaving it empty means
+            // no contract for this plan.
+            const SizedBox(height: 14),
+            const SectionLabel("Contract"),
+            Text(
+              "Clients sign this before they can buy this plan. Leave it empty for no contract.",
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+            ),
+            const SizedBox(height: 8),
+            FieldLabeled(
+              label: "Contract title",
+              child: AppField(kind: FieldKind.name, controller: _contractTitle, placeholder: "e.g. 12-Month Membership Agreement"),
+            ),
+            const SizedBox(height: 8),
+            FieldLabeled(
+              label: "Contract text",
+              child: AppField(
+                controller: _contractBody,
+                placeholder: "Paste the agreement the client must sign…",
+                minLines: 4,
+                maxLines: 12,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            if (_contractBody.text.trim().isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  "You can use {{client_full_name}}, {{client_dob}}, {{signature_date}} and {{coach_name}} — they're filled in for each client.",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                ),
+              ),
+
+            // ── Advanced Settings ──
+            const SizedBox(height: 14),
+            InkWell(
+              onTap: () => setState(() => _advancedOpen = !_advancedOpen),
+              child: Row(
+                children: [
+                  const Expanded(child: SectionLabel("Advanced Settings")),
+                  Icon(
+                    _advancedOpen
+                        ? LucideIcons.chevronUp
+                        : LucideIcons.chevronDown,
+                    size: 14,
+                    color: AppColors.mute,
+                  ),
+                ],
+              ),
+            ),
+            if (_advancedOpen) ...[
+              const SizedBox(height: 8),
+              _ToggleRow(
+                label: "Allow guests",
+                value: _allowGuests,
+                onChange: (v) => setState(() => _allowGuests = v),
+              ),
+              if (_allowGuests && !isSub) ...[
+                const SizedBox(height: 8),
+                FieldLabeled(
+                  label: "Guest fee (\$ per visit)",
+                  child: AppField(
+                    controller: _guestFee,
+                    kind: FieldKind.decimal,
+                  ),
+                ),
+              ],
+              if (isSub) ...[
+                const SizedBox(height: 8),
+                _ToggleRow(
+                  label: "Max unused rollover visits",
+                  value: _rolloverEnabled,
+                  onChange: (v) => setState(() => _rolloverEnabled = v),
+                ),
+                if (_rolloverEnabled) ...[
+                  const SizedBox(height: 8),
+                  FieldLabeled(
+                    label: "Max visits that roll over",
+                    child: AppField(
+                      controller: _rolloverMax,
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                FieldLabeled(
+                  label: "Cancellation notice required (days)",
+                  child: AppField(
+                    controller: _noticeDays,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                FieldLabeled(
+                  label: "Early termination fee (\$)",
+                  child: AppField(
+                    controller: _terminationFee,
+                    kind: FieldKind.decimal,
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 8),
+                FieldLabeled(
+                  label: "Fee Item (select a product)",
+                  child: AppCard(
+                    child: DropdownButton<String?>(
+                      value: _feeItemProductId,
+                      isExpanded: true,
+                      underline: const SizedBox(),
+                      dropdownColor: AppColors.card,
+                      hint: Text(
+                        "— Select a product —",
+                        style: TextStyle(color: AppColors.mute, fontSize: 13),
+                      ),
+                      style: TextStyle(
+                        color: AppColors.txt,
+                        fontSize: 13,
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text("— Select a product —"),
+                        ),
+                        ...activeProducts.map(
+                          (p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              "${p.name} — \$${(p.priceCents / 100).toStringAsFixed(2)}",
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() => _feeItemProductId = v),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _ToggleRow(
+                  label: "Enable service balance",
+                  value: _serviceBalance,
+                  onChange: (v) => setState(() => _serviceBalance = v),
+                ),
+                const SizedBox(height: 8),
+                _ToggleRow(
+                  label: "Limit purchasing to one per account",
+                  value: _limitOnePerAccount,
+                  onChange: (v) => setState(() => _limitOnePerAccount = v),
+                ),
+                const SizedBox(height: 8),
+
+              ],
+              if (!isProgram) ...[
+                const SizedBox(height: 8),
+                _ToggleRow(
+                  label: "Give each buyer a time-limited access window",
+                  value: _expirationEnabled,
+                  onChange: (v) => setState(() => _expirationEnabled = v),
+                ),
+                if (_expirationEnabled) ...[
+                  const SizedBox(height: 8),
+                  FieldLabeled(
+                    label: "Access expires after how many days?",
+                    child: AppField(
+                      controller: _expirationDays,
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      "Counted from the day they buy it. Separate from the sales window above, which is about when the plan is offered.",
+                      style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 8),
+              _ToggleRow(
+                label: "Enable sharing with squad",
+                value: _sharingEnabled,
+                onChange: (v) => setState(() => _sharingEnabled = v),
+              ),
+              if (_sharingEnabled) ...[
+                const SizedBox(height: 8),
+                FieldLabeled(
+                  label: "Max accounts this plan can be shared with",
+                  child: AppField(
+                    controller: _sharingMax,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              _ToggleRow(
+                label: "Public",
+                value: _public,
+                onChange: (v) => setState(() => _public = v),
+              ),
+            ],
+          ],
+          const SizedBox(height: 10),
+          InkWell(
+            onTap: () => setState(() => _archived = !_archived),
+            child: Row(
+              children: [
+                Icon(
+                  _archived ? LucideIcons.checkSquare : LucideIcons.square,
+                  size: 18,
+                  color: _archived ? AppColors.gold : AppColors.mute,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  "Archived (hidden from new signups)",
+                  style: TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+
+          // Who actually holds this plan. The archive dialog already knew
+          // the number; the owner could see that one person was on a plan
+          // and had no way to find out who.
+          if (widget.initial != null) _PlanMembers(planId: widget.initial!.id),
+
+          const SizedBox(height: 16),
+          BtnGold(
+            full: true,
+            onPressed: _name.text.trim().isEmpty
+                ? null
+                : () => _saveWithContract(
+                    MembershipPlan(
+                      id:
+                          widget.initial?.id ??
+                          "plan-${DateTime.now().microsecondsSinceEpoch}",
+                      name: _name.text.trim(),
+                      description: _description.text.trim().isEmpty ? null : _description.text.trim(),
+                      startDate: _startDate.text.trim().isEmpty ? null : _startDate.text.trim(),
+                      endDate: _endDate.text.trim().isEmpty ? null : _endDate.text.trim(),
+                      renewalDay: isSub ? _renewalDay : null,
+                      kind: _kind,
+                      maxSessions: int.tryParse(_maxSessions.text.trim()) ?? 0,
+                      termMonths: isProgram
+                          ? (int.tryParse(_termMonths.text.trim()) ?? 1)
+                          : null,
+                      allowedTypes: _allowedTypes.toList(),
+                      priceCents:
+                          ((double.tryParse(_price.text.trim()) ?? 0) * 100)
+                              .round(),
+                      archived: _archived,
+                      paymentType:
+                          widget.initial?.paymentType ??
+                          (isProgram
+                              ? null
+                              : (isSub ? "subscription" : "one-time")),
+                      feeItemProductId: isSub ? null : _feeItemProductId,
+                      // A program has no category picker, but one the owner
+                      // filed it under from the category list is kept.
+                      category: isProgram ? widget.initial?.category : _category,
+                      allowGuests: isProgram ? false : _allowGuests,
+                      guestFeeCents: (isProgram || isSub)
+                          ? 0
+                          : ((double.tryParse(_guestFee.text.trim()) ?? 0) *
+                                    100)
+                                .round(),
+                      rolloverEnabled: isSub && _rolloverEnabled,
+                      rolloverMaxVisits: isSub
+                          ? (int.tryParse(_rolloverMax.text.trim()) ?? 0)
+                          : 0,
+                      cancellationNoticeDays: isSub
+                          ? (int.tryParse(_noticeDays.text.trim()) ?? 0)
+                          : 0,
+                      earlyTerminationFeeCents: isSub
+                          ? ((double.tryParse(_terminationFee.text.trim()) ??
+                                        0) *
+                                    100)
+                                .round()
+                          : 0,
+                      serviceBalanceEnabled:
+                          (!isProgram && !isSub) && _serviceBalance,
+                      sharingEnabled: isProgram ? false : _sharingEnabled,
+                      sharingMaxAccounts:
+                          int.tryParse(_sharingMax.text.trim()) ?? 1,
+                      public: isProgram ? true : _public,
+                      limitOnePerAccount:
+                          (!isProgram && !isSub) && _limitOnePerAccount,
+                      expirationEnabled: !isProgram && _expirationEnabled,
+                      expirationDays: (!isProgram && _expirationEnabled)
+                          ? (int.tryParse(_expirationDays.text.trim()) ?? 30)
+                          : null,
+                    ),
+                  ),
+            child: const Text("Save plan"),
+          ),
+          if (widget.onRestore != null) ...[
+            const SizedBox(height: 10),
+            BtnGhost(
+              onPressed: widget.onRestore,
+              full: true,
+              child: const Text("Restore plan (visible to new sign-ups again)"),
+            ),
+          ] else if (widget.onDelete != null) ...[
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: widget.onDelete,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.errorText,
+              ),
+              child: const Text("Delete or archive plan"),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ToggleRow extends StatelessWidget {
+  const _ToggleRow({
+    required this.label,
+    required this.value,
+    required this.onChange,
+  });
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      onTap: () => onChange(!value),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+          Icon(
+            value ? LucideIcons.toggleRight : LucideIcons.toggleLeft,
+            size: 30,
+            color: value ? AppColors.gold : AppColors.mute,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Category catalogue: add one from the preset product lines, see how many
+/// plans sit in each, jump straight to creating a plan inside one, or remove
+/// an empty one.
+class _CategoryManager extends StatefulWidget {
+  const _CategoryManager({
+    required this.categories,
+    required this.planCountFor,
+    required this.pending,
+    required this.busy,
+    required this.onPick,
+    required this.onAdd,
+    required this.onDelete,
+    required this.onAddPlanIn,
+    required this.onMove,
+    required this.onReorder,
+    required this.onRename,
+  });
+
+  final List<String> categories;
+  final int Function(String) planCountFor;
+  final String? pending;
+  final bool busy;
+  final ValueChanged<String?> onPick;
+  final Future<bool> Function(String) onAdd;
+  final void Function(String, int) onDelete;
+  final ValueChanged<String> onAddPlanIn;
+
+  /// Moves a category one place in the list. The order is what clients see
+  /// in the Access Hub, so it is the owner's to arrange.
+  final void Function(String name, int direction) onMove;
+
+  /// Drag-to-position. [onMove] steps one place at a time; this lands a
+  /// category wherever it was dropped.
+  final void Function(int oldIndex, int newIndex) onReorder;
+
+  /// Renames it, carrying every plan and product tagged with it along.
+  final Future<void> Function(String oldName, String newName) onRename;
+
+  @override
+  State<_CategoryManager> createState() => _CategoryManagerState();
+}
+
+class _CategoryManagerState extends State<_CategoryManager> {
+  final _custom = TextEditingController();
+  String? _customError;
+
+  @override
+  void dispose() {
+    _custom.dispose();
+    super.dispose();
+  }
+
+  /// Asks for the new name, then hands it to the server, which renames the
+  /// category and re-tags everything pointing at it in one go.
+  Future<void> _rename(String current) async {
+    final controller = TextEditingController(text: current);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text("Rename category", style: TextStyle(fontSize: 15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AppField(kind: FieldKind.name, controller: controller),
+            const SizedBox(height: 8),
+            Text(
+              "Every plan and product in this category moves with it.",
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.35),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text("Rename", style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (next == null || next.isEmpty || next == current) return;
+    await widget.onRename(current, next);
+  }
+
+  Future<void> _createCustom() async {
+    final name = _custom.text.trim();
+    if (name.isEmpty) return;
+    // Case-insensitive, because "Semi-Private Pack" and "semi-private pack"
+    // would be two rows that look like one — the same reason the presets
+    // exist at all.
+    final clash = widget.categories.firstWhere(
+      (c) => c.toLowerCase() == name.toLowerCase(),
+      orElse: () => "",
+    );
+    if (clash.isNotEmpty) {
+      setState(() => _customError = '"$clash" already exists.');
+      return;
+    }
+    setState(() => _customError = null);
+    final saved = await widget.onAdd(name);
+    if (saved && mounted) _custom.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = widget.categories;
+    final planCountFor = widget.planCountFor;
+    final pending = widget.pending;
+    final busy = widget.busy;
+    final onPick = widget.onPick;
+    final onAdd = widget.onAdd;
+    final onDelete = widget.onDelete;
+    final onAddPlanIn = widget.onAddPlanIn;
+
+    // Only offer what isn't already there — re-adding an existing category
+    // is a no-op that just looks broken.
+    final available = _presetCategories.where((c) => !categories.contains(c)).toList();
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Categories", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(
+            "Group plans by what they are. Categories are shared with Products, so the same names appear there.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          if (categories.isEmpty)
+            const HintBox(text: "No categories yet — add one below.", bordered: false)
+          else ...[
+            if (categories.length > 1)
+              Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  "Press and hold a category to drag it into place.",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute, fontStyle: FontStyle.italic),
+                ),
+              ),
+            ReorderableColumn(
+              itemCount: categories.length,
+              keyOf: (i) => categories[i],
+              enabled: categories.length > 1,
+              onReorder: widget.onReorder,
+              itemBuilder: (context, i) {
+              final c = categories[i];
+              final count = planCountFor(c);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(c, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 1),
+                            Text(
+                              "$count plan${count == 1 ? "" : "s"}",
+                              style: TextStyle(fontSize: 11, color: AppColors.mute),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Up/down rather than drag: a drag handle inside a
+                      // scrolling form fights the scroll on a phone.
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _MoveButton(
+                            icon: LucideIcons.chevronUp,
+                            onTap: i == 0 ? null : () => widget.onMove(c, -1),
+                          ),
+                          _MoveButton(
+                            icon: LucideIcons.chevronDown,
+                            onTap: i == categories.length - 1 ? null : () => widget.onMove(c, 1),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        onPressed: () => _rename(c),
+                        icon: Icon(LucideIcons.pencil, size: 14, color: AppColors.mute),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      ),
+                      TextButton(
+                        onPressed: () => onAddPlanIn(c),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.gold,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                        ),
+                        child: const Text("+ Plan", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                      ),
+                      IconButton(
+                        onPressed: () => onDelete(c, count),
+                        icon: Icon(
+                          LucideIcons.trash2,
+                          size: 15,
+                          // Greyed when in use — the tap still explains why
+                          // rather than doing nothing silently.
+                          color: count > 0 ? AppColors.line : AppColors.errorText,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+              },
+            ),
+          ],
+          if (available.isEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: 4, bottom: 4),
+              child: Text(
+                "All the standard categories are already added — make your own below.",
+                style: TextStyle(fontSize: 11, color: AppColors.mute, fontStyle: FontStyle.italic),
+              ),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.bg,
+                      border: Border.all(color: AppColors.line),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: DropdownButton<String>(
+                      value: pending,
+                      isExpanded: true,
+                      underline: const SizedBox(),
+                      dropdownColor: AppColors.card,
+                      hint: Text("Choose a category…", style: TextStyle(color: AppColors.mute, fontSize: 13)),
+                      style: TextStyle(color: AppColors.txt, fontSize: 13),
+                      items: available.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: busy ? null : onPick,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                BtnGold(
+                  onPressed: (pending == null || busy) ? null : () => onAdd(pending),
+                  child: Text(busy ? "Adding…" : "Add"),
+                ),
+              ],
+            ),
+          // Anything the gym sells that the preset list never anticipated —
+          // the dropdown above stays the fast path for the usual five.
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Expanded(child: Divider(color: AppColors.line, height: 1)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: Text("OR CREATE YOUR OWN", style: TextStyle(color: AppColors.mute, fontSize: 10, letterSpacing: 1.2)),
+                ),
+                Expanded(child: Divider(color: AppColors.line, height: 1)),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: AppField(kind: FieldKind.name,
+                  controller: _custom,
+                  placeholder: "New category name",
+                  onChanged: (_) {
+                    if (_customError != null) setState(() => _customError = null);
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              BtnGold(
+                onPressed: busy ? null : _createCustom,
+                child: Text(busy ? "Adding…" : "Create"),
+              ),
+            ],
+          ),
+          if (_customError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_customError!, style: TextStyle(fontSize: 11, color: AppColors.errorText)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 1 → "1st", 2 → "2nd", 21 → "21st".
+String _ordinal(int d) {
+  if (d >= 11 && d <= 13) return "${d}th";
+  return switch (d % 10) { 1 => "${d}st", 2 => "${d}nd", 3 => "${d}rd", _ => "${d}th" };
+}
+
+/// The clients holding a plan, listed under its settings.
+///
+/// Read-only and tappable through to the client — changing someone's plan
+/// belongs on their own profile, where the consequences (sessions, billing,
+/// freezes) are in front of whoever is making the change.
+class _PlanMembers extends ConsumerWidget {
+  const _PlanMembers({required this.planId});
+  final String planId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final members = membersOnPlan(ref.watch(trainerRosterProvider), planId);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 18),
+        SectionLabel(
+          members.isEmpty
+              ? "Members on this plan"
+              : "Members on this plan (${members.length})",
+        ),
+        if (members.isEmpty)
+          const HintBox(text: "Nobody is on this plan yet. It can be deleted outright rather than archived.")
+        else ...[
+          Text(
+            "Tap a name to open their profile.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute),
+          ),
+          const SizedBox(height: 8),
+          for (final m in members)
+            InkWell(
+              onTap: () => ref.read(trainerModeProvider.notifier).openClient(m.id),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                decoration: BoxDecoration(
+                  color: AppColors.bg,
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            m.name,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Builder(builder: (context) {
+                            final bits = <String>[
+                              // Only the primary plan is what freezing and
+                              // cancelling act on, so it's worth marking.
+                              if (isPrimaryPlan(m, planId)) "Primary plan" else "Additional plan",
+                              if (planStartDate(m, planId) != null) "since ${planStartDate(m, planId)}",
+                            ];
+                            return Text(
+                              bits.join(" · "),
+                              style: TextStyle(fontSize: 11, color: AppColors.mute),
+                            );
+                          }),
+                          // A plan they've cancelled but are still running
+                          // out — they're on it today and won't be soon.
+                          if (planEndsOn(m, planId) != null)
+                            Text(
+                              "Ends ${planEndsOn(m, planId)}",
+                              style: TextStyle(
+                                  fontSize: 11, color: AppColors.warning, fontWeight: FontWeight.w700),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Icon(LucideIcons.chevronRight, size: 15, color: AppColors.mute),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+/// One arrow in the reorder control. Disabled at the ends rather than
+/// hidden, so the two buttons don't shift position row to row.
+class _MoveButton extends StatelessWidget {
+  const _MoveButton({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        child: Icon(
+          icon,
+          size: 14,
+          color: onTap == null ? AppColors.line : AppColors.mute,
+        ),
+      ),
+    );
+  }
+}

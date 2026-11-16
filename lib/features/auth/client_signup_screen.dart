@@ -1,0 +1,449 @@
+import "dart:convert";
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../core/legal/sms_consent.dart";
+import "../../core/legal/terms_screen.dart";
+import "../../core/legal/terms_text.dart";
+import "../../core/supabase/supabase_service.dart";
+import "../../core/theme/app_colors.dart";
+import "../../core/utils/photo_picker_utils.dart";
+import "../../core/widgets/city_state_fields.dart";
+import "../../core/widgets/widgets.dart";
+import "../../data/providers/client_providers.dart";
+import "../../data/providers/supabase_bootstrap_provider.dart";
+import "../../core/utils/phone_guard.dart";
+import "../../core/utils/notification_triggers.dart";
+
+/// Real self-signup — creates an actual Supabase Auth account + `clients`
+/// row + blank `client_records` row (mirrors signUpClient in
+/// supabaseData.js), then signs the new client straight in, same as the
+/// web app's own self-signup UX. Trimmed relative to the source's
+/// IntakeForm.jsx: this covers account creation itself (name/email/
+/// password/phone/city/birthday) — the physical assessment, nutrition
+/// intake, and waiver-signing steps IntakeForm also bundles in are each
+/// their own separate, already-built screens reachable after signing in,
+/// not part of creating the account.
+class ClientSignupScreen extends ConsumerStatefulWidget {
+  const ClientSignupScreen({super.key, required this.onBack});
+
+  final VoidCallback onBack;
+
+  @override
+  ConsumerState<ClientSignupScreen> createState() => _ClientSignupScreenState();
+}
+
+class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
+  final _firstName = TextEditingController();
+  final _lastName = TextEditingController();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _password2 = TextEditingController();
+  final _phone = TextEditingController();
+  final _city = TextEditingController();
+  final _state = TextEditingController();
+  final _birthday = TextEditingController();
+  final _coachCode = TextEditingController();
+  String? _photoDataUrl;
+  String? _error;
+  bool _busy = false;
+  bool _pickingPhoto = false;
+
+  /// Apple guideline 5.1.1 — an age confirmation replaces asking for a date
+  /// of birth, which isn't needed to run the app. Birthday stays optional.
+  bool _over18 = false;
+
+  /// Apple guideline 1.2 — signup is blocked until the Terms are accepted.
+  bool _agreedToTerms = false;
+
+  /// Express written consent to receive SMS (A2P 10DLC / CTIA). Starts
+  /// unticked and is entirely optional — signup works either way. A
+  /// pre-ticked box is not consent, and is what got the carrier campaign
+  /// rejected.
+  bool _smsConsent = false;
+
+  /// Shows the full Terms over the form without losing anything typed.
+  bool _readingTerms = false;
+
+  @override
+  void dispose() {
+    _firstName.dispose();
+    _lastName.dispose();
+    _email.dispose();
+    _password.dispose();
+    _password2.dispose();
+    _phone.dispose();
+    _city.dispose();
+    _state.dispose();
+    _birthday.dispose();
+    _coachCode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickPhoto() async {
+    setState(() => _pickingPhoto = true);
+    final dataUrl = await pickProfilePhotoDataUrl(context);
+    if (!mounted) return;
+    setState(() {
+      _pickingPhoto = false;
+      if (dataUrl != null) _photoDataUrl = dataUrl;
+    });
+  }
+
+  Future<void> _pickBirthday() async {
+    final now = DateTime.now();
+    final initial = DateTime.tryParse(_birthday.text) ?? DateTime(now.year - 25, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 100),
+      lastDate: now,
+    );
+    if (picked != null) setState(() => _birthday.text = "${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}");
+  }
+
+  Future<void> _submit() async {
+    final firstName = _firstName.text.trim();
+    final lastName = _lastName.text.trim();
+    // Stored combined as well as split: every screen in the app reads the
+    // single `name`, so it stays the display value.
+    final name = [firstName, lastName].where((p) => p.isNotEmpty).join(" ");
+    final email = _email.text.trim();
+    final password = _password.text;
+    final phone = _phone.text.trim();
+    final city = _city.text.trim();
+    // Name, email and password are all it takes to open an account. Phone
+    // and city are genuinely optional here — phone is asked for at the one
+    // point it's actually needed, booking an in-person session.
+    if (firstName.isEmpty || lastName.isEmpty || email.isEmpty || password.isEmpty) {
+      setState(() => _error = "First name, last name, email, and password are all required.");
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => _error = "Password must be at least 6 characters.");
+      return;
+    }
+    if (password != _password2.text) {
+      setState(() => _error = "Passwords don't match.");
+      return;
+    }
+    final gymErr = gymNumberError(context, phone);
+    if (gymErr != null) {
+      setState(() => _error = gymErr);
+      return;
+    }
+    if (!_over18) {
+      setState(() => _error = "You must confirm you are 18 or older to use ONE Fitness.");
+      return;
+    }
+    if (!_agreedToTerms) {
+      setState(() => _error = "Please agree to the Terms of Use to continue.");
+      return;
+    }
+    setState(() {
+      _error = null;
+      _busy = true;
+    });
+    try {
+      final userId = await SupabaseService.signUpClient(
+        email: email,
+        password: password,
+        name: name,
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
+        city: city,
+        state: _state.text.trim(),
+        birthday: _birthday.text.trim().isEmpty ? null : _birthday.text.trim(),
+        coachCode: _coachCode.text.trim().isEmpty ? null : _coachCode.text.trim(),
+      );
+      // Recorded against the account as evidence of acceptance, with the
+      // version of the text agreed to — a later revision re-prompts.
+      // Only written when they actually ticked it; the column defaults to
+      // false, so doing nothing correctly leaves them opted out.
+      if (_smsConsent) {
+        await SupabaseService.updateSmsOptIn(userId, true);
+        notifyPush(
+          profileId: userId,
+          title: "Welcome to ONE Fitness",
+          body: "Your account is set up. You'll get booking confirmations, reminders and waitlist offers here. Reply STOP to opt out.",
+          sms: true,
+        );
+      }
+      // Fire-and-forget, deliberately not awaited: the welcome email must
+      // never be a reason signup takes longer or appears to fail.
+      notifyWelcome(toEmail: email, firstName: firstName);
+      await SupabaseService.recordTermsAcceptance(
+        userId,
+        version: kTermsVersion,
+        confirmedOver18: true,
+      );
+      if (_photoDataUrl != null) {
+        await SupabaseService.updateClientRow(userId, photo: _photoDataUrl);
+      }
+      // Load the new account while this page is still showing. It used to
+      // close itself first, so the login screen appeared while loading —
+      // and stayed there if anything about the load was slow or failed.
+      await loadAndSeedCoreData(ref);
+      if (!ref.read(clientSignedInProvider)) {
+        // Signup didn't leave a session behind (or it hadn't settled yet):
+        // sign in with the details just entered, then load again.
+        await SupabaseService.signIn(email, password);
+        await loadAndSeedCoreData(ref);
+      }
+      if (!ref.read(clientSignedInProvider)) {
+        throw Exception("Your account was created, but we couldn't open it just now. Please sign in with the email and password you chose.");
+      }
+      // Only now leave the signup page — straight into the app.
+      ref.read(clientSigningUpProvider.notifier).set(false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst("Exception: ", "").replaceFirst("AuthException: ", "");
+        _busy = false;
+      });
+      return;
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Over the form, not instead of it — everything typed is still here on
+    // the way back.
+    if (_readingTerms) {
+      return TermsScreen(onBack: () => setState(() => _readingTerms = false));
+    }
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        // Ignored while the account is being created: the system back
+        // button would otherwise drop them on the login screen part-way
+        // through, for an account that may already exist.
+        if (!didPop && !_busy) widget.onBack();
+      },
+      child: Scaffold(
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              BackBar(onBack: _busy ? null : widget.onBack, title: "Create my profile"),
+              const SizedBox(height: 10),
+              Text(
+                "Set up your account to start booking sessions and tracking your progress.",
+                style: TextStyle(color: AppColors.mute, fontSize: 12, height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: Column(
+                  children: [
+                    GestureDetector(
+                      onTap: _pickingPhoto ? null : _pickPhoto,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.line, width: 2),
+                          image: _photoDataUrl != null
+                              ? DecorationImage(image: MemoryImage(base64Decode(_photoDataUrl!.substring(_photoDataUrl!.indexOf(",") + 1))), fit: BoxFit.cover)
+                              : null,
+                        ),
+                        alignment: Alignment.center,
+                        child: _photoDataUrl == null ? Icon(LucideIcons.user, size: 30, color: AppColors.mute) : null,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextButton.icon(
+                      onPressed: _pickingPhoto ? null : _pickPhoto,
+                      style: TextButton.styleFrom(foregroundColor: AppColors.gold),
+                      icon: const Icon(LucideIcons.image, size: 14),
+                      label: Text(_pickingPhoto ? "Opening…" : (_photoDataUrl != null ? "Change photo" : "Add photo"), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: FieldLabeled(
+                      label: "First name",
+                      child: AppField(kind: FieldKind.name, controller: _firstName, onChanged: (_) => setState(() => _error = null)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FieldLabeled(
+                      label: "Last name",
+                      child: AppField(kind: FieldKind.name, controller: _lastName, onChanged: (_) => setState(() => _error = null)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Email",
+                child: AppField(controller: _email, placeholder: "name@email.com", keyboardType: TextInputType.emailAddress, onChanged: (_) => setState(() => _error = null)),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Password",
+                child: AppField(kind: FieldKind.password, controller: _password, placeholder: "At least 6 characters", obscureText: true, onChanged: (_) => setState(() => _error = null)),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Confirm password",
+                child: AppField(kind: FieldKind.password, controller: _password2, placeholder: "••••••", obscureText: true, onChanged: (_) => setState(() => _error = null)),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Phone number (optional)",
+                child: AppField(controller: _phone, keyboardType: TextInputType.phone, onChanged: (_) => setState(() => _error = null)),
+              ),
+              Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  "We'll ask for this when you book your first in-person session, so your coach can coordinate with you. You can add it later.",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute, fontStyle: FontStyle.italic, height: 1.4),
+                ),
+              ),
+              const SizedBox(height: 10),
+              CityStateFields(
+                city: _city,
+                state: _state,
+                cityLabel: "City (optional)",
+                stateLabel: "State",
+                helper: "Helps us show you the gym and coaches nearest you.",
+                onChanged: () => setState(() => _error = null),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Birthday (optional)",
+                child: InkWell(
+                  onTap: _pickBirthday,
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.bg,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.line)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.line)),
+                    ),
+                    child: Text(
+                      _birthday.text.isEmpty ? "Select date" : _birthday.text,
+                      style: TextStyle(fontSize: 14, color: _birthday.text.isEmpty ? AppColors.mute : AppColors.txt),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Coach Code (optional)",
+                child: AppField(kind: FieldKind.code, controller: _coachCode, placeholder: "e.g. JESS10", onChanged: (_) => setState(() => _error = null)),
+              ),
+              Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text("If a coach gave you a code, enter it here to link your account to them.", style: TextStyle(fontSize: 11, color: AppColors.mute, fontStyle: FontStyle.italic)),
+              ),
+              const SizedBox(height: 14),
+              Divider(color: AppColors.line, height: 1),
+              const SizedBox(height: 6),
+              ConsentCheckbox(
+                value: _over18,
+                onChanged: (v) => setState(() {
+                  _over18 = v;
+                  _error = null;
+                }),
+                child: const Text(
+                  "I confirm I am 18 or older",
+                  style: TextStyle(fontSize: 13, height: 1.4),
+                ),
+              ),
+              ConsentCheckbox(
+                value: _agreedToTerms,
+                onChanged: (v) => setState(() {
+                  _agreedToTerms = v;
+                  _error = null;
+                }),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text("I agree to the ", style: TextStyle(fontSize: 13, height: 1.4)),
+                    GestureDetector(
+                      onTap: () => setState(() => _readingTerms = true),
+                      child: Text(
+                        "Terms of Use",
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.4,
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                          decorationColor: AppColors.gold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.only(left: 36, top: 2),
+                child: Text(
+                  "ONE Fitness has zero tolerance for objectionable content or abusive users.",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                ),
+              ),
+              const SizedBox(height: 6),
+              // Optional — never a condition of signing up, which is both
+              // the law and what carriers check for.
+              ConsentCheckbox(
+                value: _smsConsent,
+                onChanged: (v) => setState(() => _smsConsent = v),
+                child: const Text(
+                  kSmsConsentLabel,
+                  style: TextStyle(fontSize: 13, height: 1.4),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.only(left: 36, top: 2),
+                child: Text(
+                  kSmsConsentDisclosure,
+                  style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+              ],
+              const SizedBox(height: 16),
+              BtnGold(
+                onPressed: _busy ? null : _submit,
+                full: true,
+                child: _busy
+                    ? const Text("Creating your profile…")
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(LucideIcons.userPlus, size: 15),
+                          SizedBox(width: 6),
+                          Text("Create my profile"),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 10),
+              BtnGhost(onPressed: _busy ? null : widget.onBack, full: true, child: const Text("Back to sign in")),
+            ],
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+}

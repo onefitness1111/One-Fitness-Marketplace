@@ -1,0 +1,397 @@
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../core/utils/date_utils.dart";
+import "../mock/exercise_catalog.dart";
+import "../mock/meal_catalog.dart";
+import "../mock/mock_data.dart";
+import "../models/blocked_time.dart";
+import "../models/intake_form_template.dart";
+import "../models/booking.dart";
+import "../models/charge.dart";
+import "../models/client_info.dart";
+import "../models/client_record.dart";
+import "../models/coach_merit_badge.dart";
+import "../models/coach_pr_event.dart";
+import "../models/comm_message.dart";
+import "../models/exercise_def.dart";
+import "../models/meal_def.dart";
+import "../models/nutrition_library_entry.dart";
+import "../models/coupon.dart";
+import "../models/product.dart";
+import "../models/saved_program.dart";
+import "../models/waitlist_entry.dart";
+import "../models/waiver_doc.dart";
+
+/// The signed-in coach/owner's auth value — null (signed out), "owner", or a
+/// trainer id. Mirrors App.jsx's `trainerAuth`.
+class TrainerAuthNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void signIn(String value) => state = value;
+  void signOut() => state = null;
+}
+
+final trainerAuthProvider = NotifierProvider<TrainerAuthNotifier, String?>(TrainerAuthNotifier.new);
+
+List<ClientInfo> _byName(List<ClientInfo> list) =>
+    list.toList()..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+/// Every client at the gym (App.jsx `roster`, trainer-side view — a
+/// superset of the client-side single-client providers). Kept alphabetical
+/// by name at all times so every admin/coach screen that lists clients
+/// shows them in the same, predictable order without each screen having to
+/// sort it separately.
+class TrainerRosterNotifier extends Notifier<List<ClientInfo>> {
+  @override
+  List<ClientInfo> build() => _byName(MockData.trainerRoster());
+
+  void update(String clientId, ClientInfo Function(ClientInfo) updater) =>
+      state = _byName(state.map((c) => c.id == clientId ? updater(c) : c).toList());
+
+  void remove(String clientId) => state = state.where((c) => c.id != clientId).toList();
+
+  void setAll(List<ClientInfo> next) => state = _byName(next);
+}
+
+final trainerRosterProvider = NotifierProvider<TrainerRosterNotifier, List<ClientInfo>>(TrainerRosterNotifier.new);
+
+/// clientId -> that client's day-to-day record (App.jsx `clientRecords`).
+class TrainerClientRecordsNotifier extends Notifier<Map<String, ClientRecord>> {
+  @override
+  Map<String, ClientRecord> build() => MockData.trainerClientRecords();
+
+  void update(String clientId, ClientRecord Function(ClientRecord) updater) =>
+      state = {...state, clientId: updater(state[clientId]!)};
+
+  void remove(String clientId) => state = {...state}..remove(clientId);
+
+  void setAll(Map<String, ClientRecord> next) => state = next;
+
+  /// Folds chat threads (from the `messages` table) into the matching
+  /// records, newest first. Keyed by message id, so a message that's
+  /// already present — from the record's own older `comms`, or put there by
+  /// the realtime channel — isn't shown twice. Clients not in the map are
+  /// skipped rather than created.
+  void mergeComms(Map<String, List<CommMessage>> byClient) {
+    final next = {...state};
+    for (final entry in byClient.entries) {
+      final existing = next[entry.key];
+      if (existing == null) continue;
+      final byId = {for (final m in existing.comms) m.id: m, for (final m in entry.value) m.id: m};
+      final merged = byId.values.toList()..sort((a, b) => b.sentAt.compareTo(a.sentAt));
+      next[entry.key] = existing.copyWith(comms: merged);
+    }
+    state = next;
+  }
+}
+
+final trainerClientRecordsProvider =
+    NotifierProvider<TrainerClientRecordsNotifier, Map<String, ClientRecord>>(TrainerClientRecordsNotifier.new);
+
+/// All bookings across the whole roster (App.jsx `bookings`, trainer-side
+/// view — a superset of the client-side `clientBookingsProvider`, which only
+/// carries the signed-in client's own bookings).
+class AllBookingsNotifier extends Notifier<List<Booking>> {
+  @override
+  List<Booking> build() => MockData.allBookings();
+
+  void addBooking(Booking b) => state = [...state, b];
+
+  void cancelBooking(String id) => state = state.where((b) => b.id != id).toList();
+
+  /// Insert or replace by id (realtime echoes of our own writes must not
+  /// duplicate).
+  void upsert(Booking b) =>
+      state = state.any((x) => x.id == b.id) ? state.map((x) => x.id == b.id ? b : x).toList() : [...state, b];
+
+  void updateAttendance(String bookingId, String? status) =>
+      state = state.map((b) => b.id == bookingId ? b.copyWith(attendanceStatus: status) : b).toList();
+
+  void setAll(List<Booking> next) => state = next;
+}
+
+final allBookingsProvider = NotifierProvider<AllBookingsNotifier, List<Booking>>(AllBookingsNotifier.new);
+
+/// Two statuses in one list (App.jsx `waitlist`): "waiting" (single-slot,
+/// join-a-full-session) and "pending-approval" (Advanced Booking recurring
+/// series requests, reviewed on the owner's Waitlist screen). Shared between
+/// the client side (their own requests) and the owner side (everyone's).
+class WaitlistNotifier extends Notifier<List<WaitlistEntry>> {
+  @override
+  List<WaitlistEntry> build() => [];
+
+  void add(WaitlistEntry e) => state = [...state, e];
+  void remove(String id) => state = state.where((w) => w.id != id).toList();
+  void setAll(List<WaitlistEntry> next) => state = next;
+}
+
+final waitlistProvider = NotifierProvider<WaitlistNotifier, List<WaitlistEntry>>(WaitlistNotifier.new);
+
+/// Coach blocked-time-off entries (App.jsx blocked-time state) — starts
+/// empty; no blocks exist in the mock seed data.
+class BlockedTimesNotifier extends Notifier<List<BlockedTime>> {
+  @override
+  List<BlockedTime> build() => [];
+
+  void add(BlockedTime b) => state = [...state, b];
+  void remove(String id) => state = state.where((b) => b.id != id).toList();
+  void setAll(List<BlockedTime> next) => state = next;
+}
+
+final blockedTimesProvider = NotifierProvider<BlockedTimesNotifier, List<BlockedTime>>(BlockedTimesNotifier.new);
+
+/// The coach-editable exercise library (src/data/exercises.js), starting
+/// from the curated seed catalog.
+class ExerciseCatalogNotifier extends Notifier<List<ExerciseDef>> {
+  @override
+  List<ExerciseDef> build() => kExerciseCatalog;
+
+  void upsert(ExerciseDef ex) {
+    final exists = state.any((e) => e.id == ex.id);
+    state = exists ? state.map((e) => e.id == ex.id ? ex : e).toList() : [...state, ex];
+  }
+
+  void remove(String id) => state = state.where((e) => e.id != id).toList();
+
+  void setAll(List<ExerciseDef> next) => state = next;
+}
+
+final exerciseCatalogProvider = NotifierProvider<ExerciseCatalogNotifier, List<ExerciseDef>>(ExerciseCatalogNotifier.new);
+
+/// The gym's charge ledger (Reports → Financial), coach-mutable for
+/// waive/refund actions (mocked as local-only mutations, no real Stripe).
+class ChargesNotifier extends Notifier<List<Charge>> {
+  @override
+  List<Charge> build() => MockData.charges();
+
+  void add(Charge c) => state = [...state, c];
+
+  void remove(String id) => state = state.where((c) => c.id != id).toList();
+  void waive(String id) => state = state.map((c) => c.id == id ? Charge(
+        id: c.id, clientId: c.clientId, clientName: c.clientName, type: c.type, date: c.date, at: c.at, amount: c.amount,
+        category: c.category, description: c.description, planId: c.planId, planName: c.planName,
+        trainerId: c.trainerId, trainerName: c.trainerName, waivedAt: isoToday(),
+      ) : c).toList();
+
+  void setAll(List<Charge> next) => state = next;
+}
+
+final chargesProvider = NotifierProvider<ChargesNotifier, List<Charge>>(ChargesNotifier.new);
+
+/// Coach Merit Badge System — every coach's earned badges, gym-wide (like
+/// [chargesProvider], not scoped to "my own" — the owner needs to see
+/// every coach's history, and Coach of the Month needs to compare across
+/// all of them).
+class CoachMeritBadgesNotifier extends Notifier<List<CoachMeritBadge>> {
+  @override
+  List<CoachMeritBadge> build() => [];
+
+  void add(CoachMeritBadge b) => state = [...state, b];
+  void setAll(List<CoachMeritBadge> next) => state = next;
+}
+
+final coachMeritBadgesProvider = NotifierProvider<CoachMeritBadgesNotifier, List<CoachMeritBadge>>(CoachMeritBadgesNotifier.new);
+
+/// Every coach-verified PR event, gym-wide — see coach_pr_event.dart.
+class CoachPrEventsNotifier extends Notifier<List<CoachPrEvent>> {
+  @override
+  List<CoachPrEvent> build() => [];
+
+  void add(CoachPrEvent e) => state = [...state, e];
+  void setAll(List<CoachPrEvent> next) => state = next;
+}
+
+final coachPrEventsProvider = NotifierProvider<CoachPrEventsNotifier, List<CoachPrEvent>>(CoachPrEventsNotifier.new);
+
+/// The built-in meal database (src/data/mealDatabase.js), read-only.
+final mealCatalogProvider = Provider<List<MealDef>>((ref) => kMealCatalog);
+
+/// Coach-authored custom meals, shared across every client's nutrition
+/// builder once created (mirrors PlansArea.jsx's `customMeals` pool).
+class CustomMealsNotifier extends Notifier<List<MealDef>> {
+  @override
+  List<MealDef> build() => [];
+
+  void add(MealDef meal) => state = [...state, meal];
+
+  void setAll(List<MealDef> next) => state = next;
+}
+
+final customMealsProvider = NotifierProvider<CustomMealsNotifier, List<MealDef>>(CustomMealsNotifier.new);
+
+/// Reusable workout-program templates (ProgramsPanel.jsx's shared library).
+class ProgramsLibraryNotifier extends Notifier<List<SavedProgram>> {
+  @override
+  List<SavedProgram> build() => [];
+
+  void add(SavedProgram p) => state = [...state, p];
+  void upsert(SavedProgram p) =>
+      state = state.any((x) => x.id == p.id) ? state.map((x) => x.id == p.id ? p : x).toList() : [...state, p];
+  void update(String id, SavedProgram Function(SavedProgram) updater) => state = state.map((p) => p.id == id ? updater(p) : p).toList();
+  void remove(String id) => state = state.where((p) => p.id != id).toList();
+  void setAll(List<SavedProgram> next) => state = next;
+}
+
+final programsLibraryProvider = NotifierProvider<ProgramsLibraryNotifier, List<SavedProgram>>(ProgramsLibraryNotifier.new);
+
+/// Reusable nutrition-program templates (ProgramsPanel.jsx's shared library).
+class NutritionLibraryNotifier extends Notifier<List<NutritionLibraryEntry>> {
+  @override
+  List<NutritionLibraryEntry> build() => [];
+
+  void add(NutritionLibraryEntry e) => state = [...state, e];
+  void upsert(NutritionLibraryEntry e) =>
+      state = state.any((x) => x.id == e.id) ? state.map((x) => x.id == e.id ? e : x).toList() : [...state, e];
+  void remove(String id) => state = state.where((e) => e.id != id).toList();
+  void setAll(List<NutritionLibraryEntry> next) => state = next;
+}
+
+final nutritionLibraryProvider = NotifierProvider<NutritionLibraryNotifier, List<NutritionLibraryEntry>>(NutritionLibraryNotifier.new);
+
+/// Sellable fee-item catalog (ManageProducts.jsx).
+class ProductsNotifier extends Notifier<List<Product>> {
+  @override
+  List<Product> build() => [];
+
+  void upsert(Product p) {
+    final exists = state.any((x) => x.id == p.id);
+    state = exists ? state.map((x) => x.id == p.id ? p : x).toList() : [...state, p];
+  }
+
+  void remove(String id) => state = state.where((p) => p.id != id).toList();
+
+  void setAll(List<Product> next) => state = next;
+}
+
+final productsProvider = NotifierProvider<ProductsNotifier, List<Product>>(ProductsNotifier.new);
+
+/// Owner-managed coupon-code catalog — reachable from Customize Platform's
+/// "Coupons" tab, and read by any purchase surface (Membership Hub
+/// self-checkout, the coach/owner Purchase for Client flow).
+class CouponsNotifier extends Notifier<List<Coupon>> {
+  @override
+  List<Coupon> build() => [];
+
+  void upsert(Coupon c) {
+    final exists = state.any((x) => x.id == c.id);
+    state = exists ? state.map((x) => x.id == c.id ? c : x).toList() : [...state, c];
+  }
+
+  void remove(String id) => state = state.where((c) => c.id != id).toList();
+
+  void setAll(List<Coupon> next) => state = next;
+
+  Coupon? byCode(String code) {
+    final needle = code.trim().toUpperCase();
+    for (final c in state) {
+      if (!c.archived && c.code.toUpperCase() == needle) return c;
+    }
+    return null;
+  }
+}
+
+final couponsProvider = NotifierProvider<CouponsNotifier, List<Coupon>>(CouponsNotifier.new);
+
+/// Shared category catalog (package_categories table) — used by both
+/// Products and membership-package category pickers.
+class PackageCategoriesNotifier extends Notifier<List<String>> {
+  @override
+  List<String> build() => [];
+
+  void setAll(List<String> categories) => state = categories;
+
+  void add(String name) {
+    if (!state.contains(name)) state = [...state, name];
+  }
+
+  void remove(String name) => state = state.where((c) => c != name).toList();
+}
+
+final packageCategoriesProvider = NotifierProvider<PackageCategoriesNotifier, List<String>>(PackageCategoriesNotifier.new);
+
+/// Equipment Library — the gym's shared list of equipment names, offered
+/// as a picker when an exercise is added and managed from the staff menu.
+/// A name typed while adding an exercise lands here too, so it's offered
+/// next time.
+class EquipmentNotifier extends Notifier<List<String>> {
+  @override
+  List<String> build() => [];
+
+  void setAll(List<String> names) => state = names;
+
+  void add(String name) {
+    if (!state.contains(name)) state = [...state, name];
+  }
+
+  void remove(String name) => state = state.where((c) => c != name).toList();
+}
+
+final equipmentProvider = NotifierProvider<EquipmentNotifier, List<String>>(EquipmentNotifier.new);
+
+/// Gym-defined intake forms — every version of every one of them.
+///
+/// Holds the old versions as well as the current one because a submission is
+/// read back against the version it was filled against; see migration 37 and
+/// [IntakeFormTemplate].
+class IntakeFormTemplatesNotifier extends Notifier<List<IntakeFormTemplate>> {
+  @override
+  List<IntakeFormTemplate> build() => [];
+
+  void setAll(List<IntakeFormTemplate> templates) => state = templates;
+
+  /// Adds a newly written version, replacing nothing — the version it
+  /// supersedes stays in the list so past answers keep rendering.
+  void addVersion(IntakeFormTemplate template) => state = [template, ...state];
+
+  void setArchived(String key, bool archived) => state = [
+    for (final t in state)
+      if (t.key == key) t.copyWith(archived: archived) else t,
+  ];
+}
+
+final intakeFormTemplatesProvider =
+    NotifierProvider<IntakeFormTemplatesNotifier, List<IntakeFormTemplate>>(
+      IntakeFormTemplatesNotifier.new,
+    );
+
+/// The current version of each gym-defined form, newest first — what the
+/// "which form?" lists are built from. Archived ones are left out: they are
+/// readable but no longer offered.
+final liveIntakeFormTemplatesProvider = Provider<List<IntakeFormTemplate>>((ref) {
+  final all = ref.watch(intakeFormTemplatesProvider);
+  final newest = <String, IntakeFormTemplate>{};
+  for (final t in all) {
+    final seen = newest[t.key];
+    if (seen == null || t.version > seen.version) newest[t.key] = t;
+  }
+  return [for (final t in newest.values) if (!t.archived) t];
+});
+
+/// Waiver/contract documents (ManageWaivers.jsx).
+class WaiversNotifier extends Notifier<List<WaiverDoc>> {
+  @override
+  List<WaiverDoc> build() => [
+        const WaiverDoc(id: "signup-waiver", title: "General Liability Waiver", body: "I acknowledge the physical risks of exercise and release ONE Fitness from liability for injury arising from my participation."),
+      ];
+
+  void upsert(WaiverDoc w) {
+    final exists = state.any((x) => x.id == w.id);
+    state = exists ? state.map((x) => x.id == w.id ? w : x).toList() : [...state, w];
+  }
+
+  void remove(String id) => state = state.where((w) => w.id != id).toList();
+
+  void setAll(List<WaiverDoc> next) => state = next;
+}
+
+final waiversProvider = NotifierProvider<WaiversNotifier, List<WaiverDoc>>(WaiversNotifier.new);
+
+/// Which roster client is open in the Clients tab (App.jsx `activeId`).
+class SelectedClientIdNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void select(String? id) => state = id;
+}
+
+final selectedClientIdProvider = NotifierProvider<SelectedClientIdNotifier, String?>(SelectedClientIdNotifier.new);

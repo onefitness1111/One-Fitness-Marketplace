@@ -1,0 +1,198 @@
+import "../../data/models/booking.dart";
+import "../../data/models/client_info.dart";
+import "../../data/models/membership_plan.dart";
+import "date_utils.dart";
+
+/// Session-accounting helpers ported from src/lib/helpers.js and
+/// src/data/membershipPlans.js — trimmed to what the client dashboard needs.
+
+/// Mirrors constants/domain.js `GIVE_BACK_ATTENDANCE_STATUSES` — these
+/// attendance outcomes hand the session back, so they don't count against
+/// the plan. Everything else — including a plain upcoming/not-yet-attended
+/// booking, and a no-show — does count, same as the real app. A no-show
+/// deliberately costs the client both the fee AND the session itself
+/// (Attendance & Cancellation Charging Policy, July 2026) — only a
+/// cancellation, early or late, gives the session back.
+const kGiveBackAttendanceStatuses = {"early-cancel", "late-cancel"};
+
+/// Every membership or package the client currently holds, in the order
+/// booking should draw on them: the recurring membership first (its sessions
+/// reset monthly, so unused ones are lost), then packages oldest-first (a
+/// lifetime balance keeps).
+///
+/// A client can hold one recurring membership plus any number of one-time
+/// packages at the same time. `membershipPlanId` is only the subscription
+/// slot — the one that cancel/freeze/change operate on — so reading it alone
+/// misses every package bought alongside. Programs are deliberately not
+/// here: they grant programming, not sessions (see isProgramKind).
+List<MembershipPlan> heldAccessPlans(ClientInfo info, List<MembershipPlan> allPlans) {
+  final byId = {for (final p in allPlans) p.id: p};
+  final seen = <String>{};
+  final held = <MembershipPlan>[];
+  void add(String? id) {
+    final p = id == null ? null : byId[id];
+    if (p == null || isProgramKind(p.kind) || !seen.add(p.id)) return;
+    held.add(p);
+  }
+
+  final today = isoToday();
+
+  // The plan in the subscription slot, unless its own enrolment says it has
+  // expired.
+  //
+  // This used to be added unconditionally, which meant an expiry date set on
+  // the client's main plan did nothing at all — staff could give someone
+  // access "until March" and they would keep booking indefinitely. The
+  // enrolment list below was already checked; the slot was the hole.
+  final slotEnrolment = info.plans
+      .where((e) => e.planId == info.membershipPlanId && e.status == "active");
+  final slotExpiry = slotEnrolment.isEmpty ? null : slotEnrolment.first.endsAt;
+  if (slotExpiry == null || today.compareTo(slotExpiry) <= 0) {
+    add(info.membershipPlanId);
+  }
+
+  // A plan the client switched away from keeps its remaining sessions until
+  // the period they already paid for runs out (endsAt) — after that it's
+  // spent, and only whatever rolled over lives on under the new plan.
+  final enrolled = [
+    ...info.plans.where((e) => e.status == "active" && (e.endsAt == null || today.compareTo(e.endsAt!) <= 0)),
+  ]..sort((a, b) => a.startDate.compareTo(b.startDate));
+  for (final e in enrolled) {
+    add(e.planId);
+  }
+  // Memberships ahead of packages, keeping start-date order within each —
+  // a partition rather than a sort, because List.sort isn't stable.
+  return [
+    ...held.where((p) => p.kind == PlanKind.membership),
+    ...held.where((p) => p.kind != PlanKind.membership),
+  ];
+}
+
+/// The held plan a staff-made booking should be charged to, or null when
+/// the client holds nothing that covers [sessionType].
+///
+/// Same preference as canBookOffering — membership before packages, first
+/// with budget wins — but with one difference: staff can knowingly book a
+/// client past their balance, so if every covering plan is spent, the first
+/// covering plan is still returned and simply goes over. What must never
+/// happen is the booking landing with no plan at all while the client does
+/// hold one; that's a session silently not deducted.
+String? planToChargeFor(
+  ClientInfo info,
+  String sessionType,
+  List<Booking> bookings,
+  List<MembershipPlan> allPlans,
+) {
+  final covering = heldAccessPlans(info, allPlans)
+      .where((p) => sessionType == "large-group" || p.allowedTypes.contains(sessionType))
+      .toList();
+  if (covering.isEmpty) return null;
+  for (final p in covering) {
+    if (sessionsUsedThisPeriod(info, p, bookings) < effectiveMaxSessions(info, p)) return p.id;
+  }
+  return covering.first.id;
+}
+
+/// Takes the client's full booking list (not pre-filtered to checked-in —
+/// an upcoming booking counts against the plan the moment it's made, only
+/// a give-back attendance status or a physical assessment excuses it).
+///
+/// A booking is charged to the plan it recorded at booking time (`planId`).
+/// Rows from before that existed carry none, and fall back to being charged
+/// to any plan covering their session type — the only attribution possible
+/// for them, and exactly what the app did when they were made.
+int sessionsUsedThisPeriod(ClientInfo info, MembershipPlan plan, List<Booking> bookings) {
+  final mine = bookings.where((b) =>
+      b.clientId == info.id &&
+      (b.planId == null ? plan.allowedTypes.contains(b.sessionType) : b.planId == plan.id) &&
+      !b.isPhysicalAssessment &&
+      !kGiveBackAttendanceStatuses.contains(b.attendanceStatus));
+  if (plan.kind == PlanKind.membership) {
+    final thisMonth = isoToday().substring(0, 7);
+    return mine.where((b) => b.date.substring(0, 7) == thisMonth).length;
+  }
+  return mine.length; // package: lifetime count against the plan
+}
+
+/// Mirrors lib/helpers.js `effectiveMaxSessions` — a membership-kind plan's
+/// override goes stale once the calendar rolls into a new month from the
+/// one it was set in (sessionCountOverrideMonth), falling back to the
+/// plan's own default; a package's override has no month stamp and stays
+/// permanent.
+int effectiveMaxSessions(ClientInfo info, MembershipPlan plan) {
+  final override = info.sessionCountOverride;
+  var base = plan.maxSessions ?? 0;
+  if (override != null) {
+    final month = info.sessionCountOverrideMonth;
+    final stale = plan.kind == PlanKind.membership && month != null && month != isoToday().substring(0, 7);
+    if (!stale) base = override;
+  }
+  return base + rolloverSessionsFor(info, plan);
+}
+
+/// Sessions carried into THIS month from last month's leftovers under the
+/// plan's roll-over rule. Written at renewal (stripe-webhook) and good for
+/// that month only, so an unused carry-over never compounds.
+int rolloverSessionsFor(ClientInfo info, MembershipPlan plan) {
+  if (plan.kind != PlanKind.membership) return 0;
+  final thisMonth = isoToday().substring(0, 7);
+  for (final e in info.plans) {
+    if (e.planId == plan.id && e.status == "active" && e.rolloverMonth == thisMonth) {
+      return e.rolloverSessions;
+    }
+  }
+  return 0;
+}
+
+const _months = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+class TermRenewal {
+  const TermRenewal({required this.renewsLabel, required this.termMonths});
+  final String renewsLabel;
+  final int termMonths;
+}
+
+/// Mirrors lib/helpers.js `termRenewal` — rolls forward in whole terms from
+/// the plan start date until the term containing today, returning that
+/// term's end (= next renewal) date.
+TermRenewal? termRenewal(String startDateISO, int termMonths) {
+  if (termMonths <= 0) return null;
+  var end = DateTime.parse(startDateISO);
+  final now = DateTime.parse(isoToday());
+  while (!end.isAfter(now)) {
+    end = DateTime(end.year, end.month + termMonths, end.day);
+  }
+  return TermRenewal(
+    renewsLabel: "${_months[end.month - 1]} ${end.day}, ${end.year}",
+    termMonths: termMonths,
+  );
+}
+
+/// Whether [plan] is on sale on [today] (ISO yyyy-MM-dd).
+///
+/// A plan carries an optional sales window: `startDate` is the first day it
+/// can be bought, `endDate` the last. Outside it the plan is hidden from the
+/// Access Hub and refused by the purchase paths.
+///
+/// This is deliberately only about selling. Clients already holding the plan
+/// keep their access, keep their session allowance and keep booking, and a
+/// membership carries on renewing — closing a plan to new sales is a
+/// merchandising decision, not a reason to cut off people who are paying.
+/// Both ends are inclusive: a plan sold "until 31 Dec" is still on sale on
+/// the 31st.
+bool planOnSale(MembershipPlan plan, String today) {
+  final from = (plan.startDate ?? "").trim();
+  if (from.isNotEmpty && today.compareTo(from) < 0) return false;
+  final until = (plan.endDate ?? "").trim();
+  if (until.isNotEmpty && today.compareTo(until) > 0) return false;
+  return true;
+}
+
+/// What a plan's session allowance is counted against — the two kinds mean
+/// different things by the same number, and the editor used to just say
+/// "Max sessions".
+String sessionAllowanceLabel(PlanKind kind) =>
+    kind == PlanKind.membership ? "Sessions per month" : "Sessions included";

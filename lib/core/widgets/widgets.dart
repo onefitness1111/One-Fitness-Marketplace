@@ -1,0 +1,45 @@
+/// Barrel export for the shared widget library, ported 1:1 from the web
+/// app's src/components/ui/FormPrimitives.jsx and StatusDot.jsx.
+library;
+
+export "conversation_list.dart";
+export "support_screen.dart";
+export "product_photo.dart";
+export "time_field.dart";
+export "animated_screen_switcher.dart";
+export "animated_tab_icon.dart";
+export "app_buttons.dart";
+export "app_card.dart";
+export "app_text_field.dart";
+export "avatar.dart";
+export "back_bar.dart";
+export "exercise_video.dart";
+export "badge_earned_modal.dart";
+export "before_after_editor.dart";
+export "billing_choice_row.dart";
+export "coach_badge_shield.dart";
+export "coach_profile_card.dart";
+export "coachmark_overlay.dart";
+export "collapsible_section.dart";
+export "download_csv_button.dart";
+export "download_pdf_button.dart";
+export "fade_slide_in.dart";
+export "flag_alert.dart";
+export "gym_citizen_progress_ring.dart";
+export "habit_widgets.dart";
+export "hint_box.dart";
+export "ledger_table.dart";
+export "locations_editor.dart";
+export "merit_badge_row.dart";
+export "merit_badge_shield.dart";
+export "mini_field.dart";
+export "placeholder_screen.dart";
+export "pressable_scale.dart";
+export "reorderable_column.dart";
+export "section_label.dart";
+export "signature_pad.dart";
+export "status_dot.dart";
+export "sub_badge_icon.dart";
+export "swipeable_tab_view.dart";
+export "theme_mode_picker.dart";
+export "tag.dart";

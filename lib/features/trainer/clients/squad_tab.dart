@@ -1,0 +1,379 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/roster_client.dart";
+import "../../../data/models/squad.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "../../client/squad/squad_member_search_screen.dart";
+
+void _showMutateError(BuildContext context) {
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save — check your connection and try again.")));
+  }
+}
+
+/// Mirrors SquadTrainerPanel.jsx — staff-mediated management of the ONE
+/// squad this client belongs to (not a squad browser). Coaches/owner can
+/// create a squad on the client's behalf and search-invite others (never
+/// force-add without consent); owner alone can remove members.
+class SquadTab extends ConsumerStatefulWidget {
+  const SquadTab({super.key, required this.clientId});
+
+  final String clientId;
+
+  @override
+  ConsumerState<SquadTab> createState() => _SquadTabState();
+}
+
+class _SquadTabState extends ConsumerState<SquadTab> {
+  String _sub = "members";
+  final List<String> _subHistory = [];
+  bool _searching = false;
+
+  /// Explicit choice for the new squad's `billingShared` — null until the
+  /// coach picks one, deliberately no default (same as the client-side
+  /// create form in squad_dashboard_screen.dart).
+  bool? _billingChoice;
+
+  @override
+  Widget build(BuildContext context) {
+    final roster = ref.watch(trainerRosterProvider);
+    final matches = roster.where((c) => c.id == widget.clientId);
+    if (matches.isEmpty) return const SizedBox.shrink();
+    final info = matches.first;
+    final trainerAuth = ref.watch(trainerAuthProvider);
+    final isOwner = trainerAuth == "owner";
+    final squads = ref.watch(squadsProvider);
+    final clientRoster = ref.watch(rosterProvider);
+    final squadMatches = squads.where((s) => s.memberIds.contains(widget.clientId));
+    final squad = squadMatches.isEmpty ? null : squadMatches.first;
+
+    if (squad == null) {
+      return Padding(
+        padding: const EdgeInsets.all(18),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.users2, size: 36, color: AppColors.gold),
+              const SizedBox(height: 14),
+              Text("${info.name} isn't in a Squad yet", style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              const SizedBox(height: 16),
+              Text(
+                "Will this Squad share a membership or session package?",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.txt),
+              ),
+              const SizedBox(height: 8),
+              BillingChoiceRow(
+                value: _billingChoice,
+                onChanged: (v) => setState(() => _billingChoice = v),
+              ),
+              const SizedBox(height: 16),
+              BtnGold(
+                onPressed: _billingChoice == null
+                    ? null
+                    : () async {
+                        final newSquad = Squad(
+                          id: DateTime.now().microsecondsSinceEpoch.toString(),
+                          leadId: info.id,
+                          memberIds: [info.id],
+                          memberMeta: {info.id: const SquadMemberMeta(paymentEnabled: true)},
+                          billingShared: _billingChoice!,
+                        ).withActivity("squad_created", actorName: info.name, description: "${info.name} created the Squad");
+                        try {
+                          await SupabaseService.insertSquad(newSquad);
+                        } catch (e) {
+                          _showMutateError(context);
+                          return;
+                        }
+                        ref.read(squadsProvider.notifier).createSquad(newSquad);
+                        setState(() => _billingChoice = null);
+                      },
+                child: Text("Create Squad for ${info.name.split(' ').first}"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_searching) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _searching = false),
+        child: SquadMemberSearchScreen(
+          roster: clientRoster,
+          squad: squad,
+          onCancel: () => setState(() => _searching = false),
+          onSelect: (c) async {
+            final ok = await mutateSquad(ref, squad, (s) {
+              final invites = [...s.pendingInvites, SquadInvite(clientId: c.id, sentAt: _nowLabel())];
+              var updated = s.copyWith(pendingInvites: invites);
+              if (!s.canAddMember() && isOwner) {
+                updated = updated.withActivity("admin_override", actorName: "Owner", description: "Owner overrode the ${s.maxSize}-member cap to invite ${c.name}");
+              }
+              return updated.withActivity("invite_sent", actorName: info.name, description: "${c.name} was invited to the Squad");
+            });
+            if (!ok) {
+              _showMutateError(context);
+              return;
+            }
+            setState(() => _searching = false);
+          },
+        ),
+      );
+    }
+
+    final members = squad.memberIds
+        .map((id) => id == info.id ? RosterClient(id: id, name: info.name, email: info.email) : clientRoster.firstWhere((r) => r.id == id, orElse: () => RosterClient(id: id, name: "Member")))
+        .toList();
+
+    // Billing toggled off (by the Lead, client-side) while Membership was
+    // open here — fall back rather than render a hidden tab's content.
+    if (_sub == "membership" && !squad.billingShared) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _sub = "members");
+      });
+    }
+
+    // Back steps through the Squad sub-tabs visited before leaving the tab.
+    return LocalBackScope(
+      isOpen: _subHistory.isNotEmpty,
+      onBack: () => setState(() => _sub = _subHistory.removeLast()),
+      child: SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.users2, size: 20, color: AppColors.gold),
+              const SizedBox(width: 10),
+              Expanded(child: Text(squad.displayName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18))),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(10)),
+            child: Row(
+              children: [
+                ("members", "Members"),
+                if (squad.billingShared) ("membership", "Membership"),
+                ("activity", "Activity"),
+              ]
+                  .map((t) => Expanded(
+                        child: InkWell(
+                          onTap: () => setState(() {
+                            if (_sub == t.$1) return;
+                            _subHistory.add(_sub);
+                            _sub = t.$1;
+                          }),
+                          borderRadius: BorderRadius.circular(7),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: _sub == t.$1 ? AppColors.gold : Colors.transparent,
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: Text(t.$2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _sub == t.$1 ? AppColors.onGold : AppColors.mute)),
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_sub == "members") ...[
+            ...members.map((c) {
+              final m = squad.memberMeta[c.id] ?? const SquadMemberMeta();
+              final lead = c.id == squad.leadId;
+              return AppCard(
+                child: Row(
+                  children: [
+                    Avatar(src: c.photo, name: c.name, size: 40, active: m.status != "inactive"),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                              if (lead)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                  decoration: BoxDecoration(color: AppColors.gold, border: Border.all(color: AppColors.gold), borderRadius: BorderRadius.circular(5)),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    Icon(LucideIcons.crown, size: 9, color: AppColors.onGold),
+                                    SizedBox(width: 3),
+                                    Text("LEAD", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppColors.onGold)),
+                                  ]),
+                                ),
+                            ],
+                          ),
+                          if (m.relationship.isNotEmpty) Text(m.relationship, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                        ],
+                      ),
+                    ),
+                    if (isOwner && !lead)
+                      IconButton(
+                        onPressed: () async {
+                          final ok = await mutateSquad(ref, squad, (s) {
+                            final newIds = s.memberIds.where((id) => id != c.id).toList();
+                            final newMeta = {...s.memberMeta}..remove(c.id);
+                            return s.copyWith(memberIds: newIds, memberMeta: newMeta).withActivity("member_removed", actorName: "Owner", description: "${c.name} was removed from the Squad");
+                          });
+                          if (!ok && context.mounted) _showMutateError(context);
+                        },
+                        icon: const Icon(LucideIcons.userMinus, size: 14, color: Color(0xFF6B3B3B)),
+                      ),
+                  ],
+                ),
+              );
+            }),
+            if (squad.pendingCount > 0) ...[
+              const SectionLabel("Pending Invites"),
+              ...squad.pendingInvites.where((i) => i.status == "pending").map((inv) {
+                final invitee = clientRoster.firstWhere((m) => m.id == inv.clientId, orElse: () => const RosterClient(id: "", name: "Client"));
+                final name = invitee.name;
+                return AppCard(
+                  child: Row(
+                    children: [
+                      Avatar(src: invitee.photo, name: name, size: 34),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                      OutlinedButton(
+                        onPressed: () async {
+                          final ok = await mutateSquad(ref, squad, (s) => s.copyWith(pendingInvites: s.pendingInvites.where((x) => x.clientId != inv.clientId).toList()));
+                          if (!ok && context.mounted) _showMutateError(context);
+                        },
+                        style: OutlinedButton.styleFrom(foregroundColor: AppColors.mute, side: BorderSide(color: AppColors.line)),
+                        child: const Text("Cancel", style: TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+            AppCard(
+              borderColor: AppColors.goldDim,
+              onTap: () => setState(() => _searching = true),
+              child: Row(children: [
+                Icon(LucideIcons.userPlus, size: 17, color: AppColors.gold),
+                SizedBox(width: 10),
+                Expanded(child: Text("Add existing client", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+              ]),
+            ),
+            if (!squad.canAddMember())
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  "Squad is at the ${squad.maxSize}-member limit (including pending invites).${isOwner ? ' As owner you can override this by inviting anyway.' : ''}",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
+              ),
+            if (isOwner) ...[
+              const SizedBox(height: 8),
+              BtnGhost(
+                onPressed: () => _promptSetMaxSize(context, squad),
+                child: const Text("Set size limit"),
+              ),
+            ],
+          ],
+          if (_sub == "membership")
+            squad.membership == null
+                ? const HintBox(text: "No shared membership or package assigned to this Squad yet.")
+                : AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(squad.membership!.planName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        const SizedBox(height: 4),
+                        Text("${squad.membership!.sessionsRemaining} / ${squad.membership!.sessionsTotal} sessions remaining", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                      ],
+                    ),
+                  ),
+          if (_sub == "activity")
+            squad.activity.isEmpty
+                ? const HintBox(text: "No activity recorded yet.")
+                : Column(
+                    children: squad.activity
+                        .map((e) => Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
+                              child: Row(
+                                children: [
+                                  Expanded(child: Text(e.description ?? e.type, style: const TextStyle(fontSize: 13))),
+                                  Text(e.at, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                                ],
+                              ),
+                            ))
+                        .toList(),
+                  ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  void _promptSetMaxSize(BuildContext context, Squad squad) {
+    final controller = TextEditingController(text: "${squad.maxSize}");
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text("Set new max Squad size"),
+        content: AppField(controller: controller, keyboardType: TextInputType.number),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () async {
+              final v = int.tryParse(controller.text.trim());
+              if (v != null && v > 0) {
+                final ok = await mutateSquad(
+                  ref,
+                  squad,
+                  (s) => Squad(
+                    id: s.id,
+                    name: s.name,
+                    leadId: s.leadId,
+                    memberIds: s.memberIds,
+                    memberMeta: s.memberMeta,
+                    maxSize: v,
+                    membership: s.membership,
+                    pendingInvites: s.pendingInvites,
+                    activity: s.activity,
+                    billingShared: s.billingShared,
+                    chat: s.chat,
+                  ).withActivity("admin_override", actorName: "Owner", description: "Owner set the Squad size limit to $v"),
+                );
+                if (!ok && context.mounted) _showMutateError(context);
+              }
+              if (ctx.mounted) Navigator.of(ctx).pop();
+            },
+            child: const Text("Save"),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _nowLabel() {
+  final d = DateTime.now();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return "${months[d.month - 1]} ${d.day}";
+}

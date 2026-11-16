@@ -1,0 +1,250 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/membership_utils.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/booking.dart";
+import "../../../data/models/client_info.dart";
+import "../../../data/models/membership_plan.dart";
+import "../../../data/providers/client_providers.dart";
+
+/// Mirrors MembershipsHub.jsx `SessionsRemainingBadge`. Returns nothing
+/// (SizedBox.shrink) if the client has no membership plan, matching the
+/// React component's `return null`.
+class SessionsRemainingBadge extends ConsumerWidget {
+  const SessionsRemainingBadge({super.key, required this.info, required this.bookings, this.showEndNotice = true});
+
+  final ClientInfo info;
+  final List<Booking> bookings;
+
+  /// Adds "Membership cancelled — ends …" under the card once it's been
+  /// cancelled. Off in the Membership Hub, which has its own fuller notice.
+  final bool showEndNotice;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final card = _card(context, ref);
+    final endsAt = info.membershipCancelsAt;
+    if (!showEndNotice || endsAt == null || card is SizedBox) return card;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        card,
+        Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0x1AC97F7F),
+            border: Border.all(color: const Color(0xFFA8632F)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            "Membership cancelled. You can keep booking until ${niceDate(endsAt)}, then it ends.",
+            style: TextStyle(fontSize: 12, color: AppColors.errorText, fontWeight: FontWeight.w700, height: 1.4),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _card(BuildContext context, WidgetRef ref) {
+    // The slot plan leads; every other held package follows as a compact
+    // row so a client with a membership and a package sees both balances.
+    // If the membership was cancelled but packages remain, the first
+    // package takes the lead spot rather than the card vanishing.
+    final held = heldAccessPlans(info, ref.watch(membershipPlansProvider));
+    final plan = ref.watch(membershipPlansProvider.notifier).byId(info.membershipPlanId) ?? (held.isEmpty ? null : held.first);
+    if (plan == null) return const SizedBox.shrink();
+    final others = held.where((p) => p.id != plan.id).toList();
+
+    if (info.membershipPaused) {
+      return AppCard(
+        borderColor: const Color(0xFFA8632F),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(LucideIcons.circleSlash, size: 18, color: AppColors.warning),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "${plan.name} — Frozen",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "Contact your gym to unfreeze early — nothing on your plan has been lost.",
+              style: TextStyle(fontSize: 12, color: AppColors.mute),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (plan.kind == PlanKind.program || plan.maxSessions == null || plan.maxSessions == 0) {
+      final active = info.plans.where((p) => p.planId == plan.id && p.status == "active").toList();
+      final enrollment = active.isNotEmpty ? active.first : null;
+      final term = (enrollment != null && plan.termMonths != null)
+          ? termRenewal(enrollment.startDate, plan.termMonths!)
+          : null;
+      return AppCard(
+        borderColor: AppColors.goldDim,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "YOUR MEMBERSHIP",
+              style: TextStyle(fontSize: 10, color: AppColors.mute, fontWeight: FontWeight.w700, letterSpacing: 0.8),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(LucideIcons.clipboardList, size: 18, color: AppColors.gold),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(plan.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "Your coach builds and manages your program.",
+              style: TextStyle(fontSize: 12, color: AppColors.mute),
+            ),
+            if (term != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                "${term.termMonths}-month term · renews ${term.renewsLabel}",
+                style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final used = sessionsUsedThisPeriod(info, plan, bookings);
+    final max = effectiveMaxSessions(info, plan);
+    final remaining = (max - used).clamp(0, max);
+    final pct = max > 0 ? remaining / max : 0.0;
+    final color = pct > 0.5 ? AppColors.grn : (pct > 0.2 ? AppColors.gold : AppColors.danger);
+
+    final mainCard = AppCard(
+      borderColor: color,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  plan.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.txt),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  plan.kind == PlanKind.membership ? "MEMBERSHIP" : "PACKAGE",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: AppColors.mute, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "SESSIONS REMAINING",
+            style: TextStyle(fontSize: 10, color: AppColors.mute, fontWeight: FontWeight.w700, letterSpacing: 0.8),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text("$remaining", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: color)),
+              const SizedBox(width: 6),
+              Text(
+                "of $max ${plan.kind == PlanKind.membership ? "this month" : "in package"}",
+                style: TextStyle(fontSize: 13, color: AppColors.mute),
+              ),
+            ],
+          ),
+          // Sessions carried in from last month under the plan's roll-over
+          // rule — part of the total above, called out so it's clear where
+          // the extra sessions came from and that they expire this month.
+          if (rolloverSessionsFor(info, plan) > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                "Includes ${rolloverSessionsFor(info, plan)} rolled over from last month — use them this month.",
+                style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w600),
+              ),
+            ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: pct.clamp(0.0, 1.0),
+              minHeight: 6,
+              backgroundColor: AppColors.line,
+              valueColor: AlwaysStoppedAnimation(color),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (others.isEmpty) return mainCard;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        mainCard,
+        for (final p in others)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Builder(builder: (context) {
+              final m = effectiveMaxSessions(info, p);
+              final left = (m - sessionsUsedThisPeriod(info, p, bookings)).clamp(0, m);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    ),
+                    Text(
+                      "$left of $m ${p.kind == PlanKind.membership ? "this month" : "left"}",
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: left > 0 ? AppColors.gold : AppColors.danger),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ),
+      ],
+    );
+  }
+}

@@ -1,0 +1,500 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/habit_utils.dart";
+import "../../../core/utils/intake_entitlements.dart";
+import "../../../core/utils/onboarding_utils.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/booking.dart";
+import "../../../data/models/client_info.dart";
+import "../../../data/models/client_record.dart";
+import "../../../data/models/earned_badge.dart";
+import "../../../data/models/membership_plan.dart";
+import "sessions_remaining_badge.dart";
+import "workout_calendar.dart";
+
+/// Mirrors ClientDashboard.jsx — the client's home tab.
+class ClientDashboardScreen extends ConsumerStatefulWidget {
+  const ClientDashboardScreen({
+    super.key,
+    required this.client,
+    required this.info,
+    required this.plan,
+    required this.bookings,
+    required this.onGoBooking,
+    required this.onLogWorkout,
+    required this.onPickDate,
+    required this.onGoHabits,
+    required this.earnedBadges,
+    required this.onGoBadges,
+    required this.onGoToForm,
+    required this.onGoMemberships,
+  });
+
+  final ClientRecord client;
+  final ClientInfo info;
+  final MembershipPlan? plan;
+  final List<Booking> bookings;
+  final VoidCallback onGoBooking;
+  final VoidCallback onLogWorkout;
+  final ValueChanged<String> onPickDate;
+  final VoidCallback onGoHabits;
+  final List<EarnedBadge> earnedBadges;
+  final VoidCallback onGoBadges;
+
+  /// Opens the Access Hub. Where every intake button leads for a client
+  /// who hasn't bought anything yet.
+  final VoidCallback onGoMemberships;
+
+  /// Opens the Assessments screen straight into one form — takes the
+  /// assessment key ("personalTraining" | "nutritional").
+  final ValueChanged<String> onGoToForm;
+
+  @override
+  ConsumerState<ClientDashboardScreen> createState() => _ClientDashboardScreenState();
+}
+
+class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
+  bool _skipOnboarding = false;
+
+  ClientRecord get client => widget.client;
+  ClientInfo get info => widget.info;
+  List<Booking> get bookings => widget.bookings;
+
+  Booking? get _next {
+    final todayStr = isoToday();
+    final upcoming = bookings.where((b) => b.clientId == info.id && b.date.compareTo(todayStr) >= 0).toList()
+      ..sort((a, b) => (a.date + a.slot.toString().padLeft(4, '0'))
+          .compareTo(b.date + b.slot.toString().padLeft(4, '0')));
+    return upcoming.isEmpty ? null : upcoming.first;
+  }
+
+  bool get _loggedToday => client.loggedOn(isoToday());
+  bool get _hasSessionToday => bookings.any((b) => b.clientId == info.id && b.date == isoToday());
+
+  /// True while the client is in the gym ahead of a session they've booked
+  /// for later today. A 9pm booking is no reason to send someone home at
+  /// six — they can start now against the same booking.
+  bool get _canStartEarly {
+    final n = _next;
+    if (n == null || n.date != isoToday()) return false;
+    if (n.attendanceStatus != null) return false; // already checked in or settled
+    final now = DateTime.now();
+    return now.hour * 60 + now.minute < n.slot;
+  }
+
+  bool _startingEarly = false;
+
+  /// Checks the client in against their own booking and opens the session.
+  /// Deliberately the same booking rather than a new one: it's the slot they
+  /// paid for, just taken earlier, so their session balance and their
+  /// coach's roster both stay right.
+  Future<void> _startEarly(Booking booking) async {
+    setState(() => _startingEarly = true);
+    try {
+      await SupabaseService.checkInToBooking(booking.id);
+      // The booking changed server-side, so re-read rather than guessing
+      // at the new state (same pattern as the waitlist banner).
+      final fresh = await SupabaseService.loadBookings();
+      ref.read(allBookingsProvider.notifier).setAll(fresh);
+      ref.read(clientBookingsProvider.notifier)
+          .setAll(fresh.where((b) => b.clientId == info.id).toList());
+      if (!mounted) return;
+      widget.onLogWorkout();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't start your session — check your connection and try again.")),
+      );
+    } finally {
+      if (mounted) setState(() => _startingEarly = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final firstName = info.name.split(" ").first;
+    final habits = getClientHabits(client);
+    final todayLog = getHabitLog(client, isoToday());
+    final done = habits.where((h) => todayLog.checked[h.id] == true).length;
+    final showHabitTile = habits.isNotEmpty && done < habits.length;
+
+    final entitlements = computeIntakeEntitlements(info: info, allPlans: ref.watch(membershipPlansProvider));
+    final onboardingAlerts = getOnboardingAlerts(client, bookings, info.id, widget.plan, entitlements: entitlements);
+    final assessmentBooked = onboardingStepDone(client, bookings, info.id, "physicalAssessmentBooked");
+    // A client with nothing purchased still sees the intake buttons and
+    // forms — so they know what's waiting for them — but every one of them
+    // leads to the Access Hub, since none can be started without a plan.
+    final hasPurchase = entitlements.hasAnyPurchase;
+    // The intake call exists to get the two questionnaires filled in. Once
+    // the client has answered both themselves there is nothing left to book
+    // it for, so the button goes away.
+    final intakeFormsDone = onboardingStepDone(client, bookings, info.id, "personalizedIntake") &&
+        onboardingStepDone(client, bookings, info.id, "nutritionIntake");
+    // Nothing bought yet: the forms are still listed so the client knows
+    // what's coming, but any they've already completed drop off the list
+    // just as they do once a plan is held.
+    final lockedAlerts = kOnboardingSteps
+        .where((s) => !onboardingStepDone(client, bookings, info.id, s.key))
+        .toList();
+    final showOnboarding = !_skipOnboarding &&
+        (hasPurchase ? (onboardingAlerts.isNotEmpty || !assessmentBooked) : lockedAlerts.isNotEmpty);
+
+    // Staggers each top-level section's entrance by 45ms, played once when
+    // the Dashboard first mounts.
+    var stagger = 0;
+    Widget stag(Widget child) {
+      final delay = Duration(milliseconds: 45 * stagger);
+      stagger++;
+      return FadeSlideIn(delay: delay, child: child);
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          stag(Text(
+            "Hey $firstName, it's ${_hasSessionToday ? "lifting day!" : "a rest day"}",
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          )),
+          const SizedBox(height: 2),
+          stag(Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(dayLabel(isoToday()), style: TextStyle(fontSize: 13, color: AppColors.mute)),
+          )),
+
+          if (widget.earnedBadges.any((b) => b.clientId == info.id && b.isActive)) ...[
+            stag(MeritBadgeRow(clientId: info.id, earnedBadges: widget.earnedBadges)),
+            const SizedBox(height: 2),
+          ],
+          stag(TextButton(
+            onPressed: widget.onGoBadges,
+            style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
+            child: const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: Text("See all Merit Badges →", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+            ),
+          )),
+
+          if (showOnboarding)
+            stag(_OnboardingSection(
+              alerts: onboardingAlerts,
+              showIntakeButtons:
+                  !intakeFormsDone && (hasPurchase ? !assessmentBooked : true),
+              onBookIntake: hasPurchase ? widget.onGoBooking : widget.onGoMemberships,
+              // Opens the form, whether or not anything has been bought. The
+              // two questionnaires are no longer behind a purchase, so
+              // bouncing the client to the Access Hub here would send them
+              // away from the one thing this card is asking them to do.
+              onGoToForm: widget.onGoToForm,
+              onGoBookAssessment: widget.onGoBooking,
+              noPurchaseYet: !hasPurchase,
+              // No way out while a questionnaire is outstanding: these stay
+              // on the dashboard until they're filled in. Dismissing is still
+              // allowed once the only thing left is booking a session, which
+              // is a decision rather than an unfinished task.
+              onSkip: intakeFormsDone ? () => setState(() => _skipOnboarding = true) : null,
+            )),
+
+          stag(SessionsRemainingBadge(info: info, bookings: bookings)),
+
+          if (showHabitTile)
+            stag(AppCard(
+              borderColor: AppColors.goldDim,
+              onTap: widget.onGoHabits,
+              child: Row(
+                children: [
+                  const Text("\u{1F525}", style: TextStyle(fontSize: 22)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Habits — $done/${habits.length} done today",
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        const SizedBox(height: 1),
+                        Text(
+                          "${habitStreak(client)} day streak · ${((done / habits.length) * 100).round()}% today",
+                          style: TextStyle(fontSize: 11, color: AppColors.mute),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(LucideIcons.chevronRight, size: 15, color: AppColors.mute),
+                ],
+              ),
+            )),
+
+          stag(WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate)),
+
+          const SizedBox(height: 4),
+          stag(AppCard(
+            borderColor: AppColors.goldDim,
+            margin: const EdgeInsets.only(top: 12, bottom: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "NEXT SESSION",
+                  style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+                ),
+                const SizedBox(height: 8),
+                if (_next != null) ...[
+                  Text(
+                    "${dayLabel(_next!.date)} · ${fmtSlot(_next!.slot)}",
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                  if (_next!.locationName != null) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(LucideIcons.mapPin, size: 12, color: AppColors.gold),
+                        const SizedBox(width: 4),
+                        Text(_next!.locationName!, style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                      ],
+                    ),
+                  ],
+                  // Turning up early is normal: the gym is open, the client
+                  // is here, and their slot is later tonight. This starts
+                  // that same booking now rather than making them wait or
+                  // rebook.
+                  if (_canStartEarly) ...[
+                    const SizedBox(height: 10),
+                    BtnGold(
+                      full: true,
+                      onPressed: _startingEarly ? null : () => _startEarly(_next!),
+                      child: Text(
+                        _startingEarly ? "Starting…" : "I'm here — start my session",
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Starts now against tonight's booking.",
+                      style: TextStyle(fontSize: 11, color: AppColors.mute),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: widget.onGoBooking,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.gold,
+                      side: BorderSide(color: AppColors.line),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: const Text("Manage sessions", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  ),
+                ] else ...[
+                  Text("No upcoming sessions booked.", style: TextStyle(fontSize: 13, color: AppColors.mute)),
+                  const SizedBox(height: 10),
+                  BtnGold(onPressed: widget.onGoBooking, child: const Text("Book a session", style: TextStyle(fontSize: 13))),
+                ],
+              ],
+              ),
+            ),
+          )),
+
+          stag(AppCard(
+            onTap: widget.onLogWorkout,
+            child: Row(
+              children: [
+                Icon(LucideIcons.check, size: 20, color: _loggedToday ? AppColors.gold : AppColors.mute),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Today's workout", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      Text(
+                        _loggedToday ? "Logged — tap to review or edit" : "Tap to log your session",
+                        style: TextStyle(fontSize: 12, color: AppColors.mute),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+              ],
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+/// Mirrors the "Complete your onboarding" block in ClientDashboard.jsx: the
+/// two free-intake booking buttons (shown until the client's booked one),
+/// any still-incomplete intake-form alert cards, and — only for clients on a
+/// session-based plan — the Free Physical Assessment reminder card.
+class _OnboardingSection extends StatelessWidget {
+  const _OnboardingSection({
+    required this.alerts,
+    required this.showIntakeButtons,
+    required this.onBookIntake,
+    required this.onGoToForm,
+    required this.onGoBookAssessment,
+    this.noPurchaseYet = false,
+    this.onSkip,
+  });
+
+  /// Nothing bought yet. The questionnaires are still open — only the line
+  /// explaining what happens after them changes.
+  final bool noPurchaseYet;
+
+  final List<OnboardingStep> alerts;
+  final bool showIntakeButtons;
+  final VoidCallback onBookIntake;
+
+  final ValueChanged<String> onGoToForm;
+  final VoidCallback onGoBookAssessment;
+
+  /// Null while a questionnaire is still outstanding — those stay on the
+  /// dashboard until they're done, so there is nothing to skip to.
+  final VoidCallback? onSkip;
+
+  static const _formKeys = {"personalizedIntake": "personalTraining", "nutritionIntake": "nutritional"};
+
+  @override
+  Widget build(BuildContext context) {
+    final intakeSteps = alerts.where((s) => s.key == "personalizedIntake" || s.key == "nutritionIntake").toList();
+    final assessmentStep = alerts.where((s) => s.key == "physicalAssessmentBooked").toList();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "COMPLETE YOUR ONBOARDING",
+            style: TextStyle(fontSize: 12, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5),
+          ),
+          if (noPurchaseYet)
+            Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.clipboardList, size: 12, color: AppColors.gold),
+                  SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      "Fill these in now — your answers are what your coach builds your plan from. You'll choose a membership or package once they're done.",
+                      style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          if (showIntakeButtons) ...[
+            SizedBox(
+              width: double.infinity,
+              child: _IntakeButton(icon: LucideIcons.phone, label: "Book Intake Call", onTap: onBookIntake),
+            ),
+            Padding(
+              padding: EdgeInsets.only(top: 8, bottom: 8),
+              child: Text(
+                "Or fill out your intake forms below to complete on your own.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.5, fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
+          for (final step in intakeSteps)
+            _OnboardingStepCard(step: step, onTap: () => onGoToForm(_formKeys[step.key]!)),
+          for (final step in assessmentStep)
+            _OnboardingStepCard(step: step, onTap: onGoBookAssessment),
+          if (onSkip != null)
+            TextButton(
+              onPressed: onSkip,
+              style: TextButton.styleFrom(foregroundColor: AppColors.mute, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
+              child: const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text("Skip for now", style: TextStyle(fontSize: 11)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IntakeButton extends StatelessWidget {
+  const _IntakeButton({required this.icon, required this.label, required this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: AppColors.gold.withValues(alpha: 0.12),
+        foregroundColor: AppColors.gold,
+        side: BorderSide(color: AppColors.goldDim),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OnboardingStepCard extends StatelessWidget {
+  const _OnboardingStepCard({required this.step, required this.onTap});
+  final OnboardingStep step;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      onTap: onTap,
+      child: Row(
+        children: [
+          Icon(step.icon, size: 17, color: AppColors.mute),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(step.label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.txt)),
+                const SizedBox(height: 1),
+                Text(step.sub, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 7,
+            height: 7,
+            child: DecoratedBox(decoration: BoxDecoration(color: AppColors.danger, shape: BoxShape.circle)),
+          ),
+        ],
+      ),
+    );
+  }
+}

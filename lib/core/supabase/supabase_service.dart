@@ -1,0 +1,5285 @@
+import "dart:convert";
+import "dart:typed_data";
+import "package:http/http.dart" as http;
+import "package:supabase_flutter/supabase_flutter.dart";
+import "package:uuid/uuid.dart";
+import "streamed_upload.dart";
+import "../utils/coach_merit_badge_utils.dart";
+import "../utils/image_shrink.dart";
+import "../utils/date_utils.dart";
+import "../../data/models/activity_entry.dart";
+import "../../data/models/availability_block.dart";
+import "../../data/models/live_session.dart";
+import "../../data/models/saved_payment_method.dart";
+import "../../data/models/blocked_time.dart";
+import "../../data/models/billing_anchor_history_entry.dart";
+import "../../data/models/billing_address.dart";
+import "../../data/models/single_session_credit.dart";
+import "../../data/models/booking.dart";
+import "../../data/models/challenge.dart";
+import "../../data/models/charge.dart";
+import "../../data/models/client_info.dart";
+import "../../data/models/client_plan.dart";
+import "../../data/models/client_record.dart";
+import "../../data/models/coach_merit_badge.dart";
+import "../../data/models/coach_pr_event.dart";
+import "../../data/models/comm_message.dart";
+import "../../data/models/earned_badge.dart";
+import "../../data/models/exercise_def.dart";
+import "../../data/models/exercise_prescription.dart";
+import "../../data/models/habit_def.dart";
+import "../../data/models/habit_log_entry.dart";
+import "../../data/models/intake_form_template.dart";
+import "../../data/models/intake_schema.dart";
+import "../../data/models/meal_def.dart";
+import "../../data/models/measurement.dart";
+import "../../data/models/membership_plan.dart";
+import "../../data/models/nutrition_library_entry.dart";
+import "../../data/models/nutrition_plan.dart";
+import "../../data/models/order.dart";
+import "../../data/models/points_ledger_entry.dart";
+import "../../data/models/coupon.dart";
+import "../../data/models/product.dart";
+import "../../data/models/program_day.dart";
+import "../../data/models/progress_photo.dart";
+import "../../data/models/report_range.dart";
+import "../../data/models/saved_program.dart";
+import "../../data/models/signature.dart";
+import "../../data/models/squad.dart";
+import "../../data/models/squad_chat_message.dart";
+import "../../data/models/trainer.dart";
+import "../../data/models/trainer_note.dart";
+import "../../data/models/waitlist_entry.dart";
+import "../../data/models/waiver_doc.dart";
+import "../../data/models/waiver_signature_record.dart";
+import "../../data/models/workout_log.dart";
+import "../legal/sms_consent.dart";
+import "../../data/providers/platform_settings_provider.dart";
+import "supabase_config.dart";
+
+/// Thin wrapper around the real Supabase project (same backend the web app
+/// uses), mirroring src/lib/supabaseData.js's field-name mapping 1:1 —
+/// `profiles` (id/role/name/email/phone/photo_url) joined with the
+/// role-specific `clients`/`trainers` table, `bookings`, and the
+/// JSONB-blob `client_records` table.
+///
+/// Phase 1 scope: real Auth (sign in/out, session restore) plus read-only
+/// roster/trainers/bookings/client-records. Writes and every other domain
+/// (badges, points, memberships, reports, programs library, etc.) still run
+/// on local mock state until a later phase moves them too — exactly the
+/// same "Step 1: core entities only" migration order the web app itself
+/// followed (see App.jsx's own comment to that effect).
+class SupabaseService {
+  SupabaseService._();
+
+  static SupabaseClient get client => Supabase.instance.client;
+
+  static Future<void> initialize() async {
+    await Supabase.initialize(
+      url: SupabaseConfig.url,
+      publishableKey: SupabaseConfig.publishableKey,
+    );
+  }
+
+  static User? get currentUser => client.auth.currentUser;
+
+  static Future<void> ensureSession() async {
+    // Triggers supabase-js/supabase-flutter's session restore-from-storage
+    // (and a token refresh if near-expired) before any RLS-protected query
+    // fires — mirrors ensureSession() in supabaseData.js exactly; skipping
+    // this is what caused "0 rows back, correct after a reload" there.
+    // ignore: unused_local_variable
+    final _ = client.auth.currentSession;
+  }
+
+  /// { id, role, name, email, phone, photo_url } or null if signed out /
+  /// the account's app-side row was removed.
+  static Future<Map<String, dynamic>?> getSessionProfile() async {
+    final user = currentUser;
+    if (user == null) return null;
+    final row = await client
+        .from("profiles")
+        .select()
+        .eq("id", user.id)
+        .maybeSingle();
+    return row;
+  }
+
+  static Future<void> signIn(String email, String password) async {
+    await client.auth.signInWithPassword(email: email, password: password);
+  }
+
+  /// Real self-signup — creates the auth account (a server-side trigger,
+  /// handle_new_user in schema_phase1.sql, creates the matching `profiles`
+  /// row from the `requested_role`/`name`/`phone` metadata passed here),
+  /// then the `clients` row and a blank `client_records` row, mirroring
+  /// signUpClient in supabaseData.js. Signing up also signs the new
+  /// account in immediately (Supabase's default when email confirmation
+  /// is off), matching the web app's own self-signup UX — the caller
+  /// still needs to seed core data / restore state afterward, same as a
+  /// normal sign-in.
+  /// Permanently deletes the signed-in user's own account (Apple guideline
+  /// 5.1.1(v)). The server takes the id from the caller's JWT, never from
+  /// this call, so it can only ever delete the account making the request.
+  ///
+  /// On success the session is already invalid server-side; [signOut] here
+  /// clears the local copy so nothing is left on the device.
+  static Future<void> deleteMyAccount() async {
+    final res = await client.functions.invoke("delete-account", body: {});
+    final data = res.data;
+    if (data is Map && data["error"] != null) {
+      throw Exception(data["error"].toString());
+    }
+    if (res.status != 200) {
+      throw Exception("We couldn't delete your account just now. Please try again.");
+    }
+    try {
+      await client.auth.signOut();
+    } catch (_) {
+      // The user is already gone server-side; a failed sign-out call must
+      // not make a successful deletion look like a failure.
+    }
+  }
+
+  /// Records that this user accepted the Terms of Use (Apple guideline 1.2)
+  /// and, at signup, confirmed they are 18 or older (guideline 5.1.1, which
+  /// is why no date of birth is required).
+  ///
+  /// Stores the version accepted, so a later revision of the text re-prompts
+  /// on next sign-in rather than silently counting the old acceptance.
+  static Future<void> recordTermsAcceptance(
+    String userId, {
+    required String version,
+    bool confirmedOver18 = false,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await client.from("profiles").update({
+      "accepted_terms_at": now,
+      "accepted_terms_version": version,
+      if (confirmedOver18) "over_18_confirmed_at": now,
+    }).eq("id", userId);
+  }
+
+  /// Whether this user still needs to accept the current Terms — true for
+  /// an account created before the Terms existed, or before the latest
+  /// revision. Read on sign-in to decide whether to show the gate.
+  static Future<bool> needsTermsAcceptance(String userId, String currentVersion) async {
+    final row = await client
+        .from("profiles")
+        .select("accepted_terms_at, accepted_terms_version")
+        .eq("id", userId)
+        .maybeSingle();
+    if (row == null) return false;
+    if (row["accepted_terms_at"] == null) return true;
+    return row["accepted_terms_version"] != currentVersion;
+  }
+
+  static Future<String> signUpClient({
+    required String email,
+    required String password,
+    required String name,
+    String? firstName,
+    String? lastName,
+    String? phone,
+    String? city,
+    String? state,
+    String? birthday,
+    String? coachCode,
+  }) async {
+    final res = await client.auth.signUp(
+      email: email,
+      password: password,
+      data: {"requested_role": "client", "name": name, "phone": phone ?? ""},
+    );
+    final userId = res.user?.id;
+    if (userId == null)
+      throw Exception("Sign-up failed — no account was created.");
+    // A referring coach — best-effort, case-insensitive lookup against
+    // `trainers.coach_code`. A typo or unknown code just means no referral
+    // link; it never blocks account creation.
+    String? referringTrainerId;
+    final trimmedCode = coachCode?.trim() ?? "";
+    if (trimmedCode.isNotEmpty) {
+      final match = await client
+          .from("trainers")
+          .select("profile_id")
+          .ilike("coach_code", trimmedCode)
+          .maybeSingle();
+      referringTrainerId = match?["profile_id"] as String?;
+    }
+    if (firstName != null || lastName != null) {
+      await client.from("profiles").update({
+        if (firstName != null) "first_name": firstName,
+        if (lastName != null) "last_name": lastName,
+      }).eq("id", userId);
+    }
+    // Upsert, not insert: trg_ensure_client_row already created this row
+    // the moment the profile appeared, so a plain insert collides on
+    // clients_pkey and the whole signup fails after the auth user exists.
+    // The row it made is bare, so this write still supplies everything
+    // the form collected.
+    await client.from("clients").upsert({
+      "profile_id": userId,
+      if (city != null) "city": city,
+      if (state != null) "state": state,
+      if (birthday != null) "birthday": birthday,
+      // A referred client becomes that coach's client — this is what
+      // makes the coach's roster-scoped Needs Attention alert (and their
+      // Clients tab) actually show this signup.
+      if (referringTrainerId != null)
+        "referred_by_trainer_id": referringTrainerId,
+      if (referringTrainerId != null) "primary_trainer_id": referringTrainerId,
+    }, onConflict: "profile_id");
+    // Same shape for the same reason — a retry after a failure part-way
+    // through must not trip over its own earlier half-success.
+    await client.from("client_records").upsert({
+      "profile_id": userId,
+      "data": {"program": [], "logs": [], "comms": []},
+    }, onConflict: "profile_id");
+    return userId;
+  }
+
+  /// Clears the referring coach's one-time "Coach Code" Needs Attention
+  /// alert for this client — called when the coach opens the client's
+  /// profile from that alert.
+  static Future<void> markCoachCodeAlertSeen(String clientId) => client
+      .from("clients")
+      .update({"coach_code_alert_seen": true})
+      .eq("profile_id", clientId);
+
+  /// { code, expiresAt, generatedAt, usedAt } or null — the current staff
+  /// approval code a prospective coach needs to self-signup.
+  static Future<Map<String, dynamic>?> loadCoachApprovalCode() async {
+    return client.from("coach_approval_code").select().maybeSingle();
+  }
+
+  /// Owner generated a new coach approval code — mirrors saveCoachCode in
+  /// supabaseData.js (singleton row, id: true).
+  static Future<void> saveCoachApprovalCode({
+    required String code,
+    String? expiresAt,
+    String? generatedAt,
+    String? usedAt,
+  }) async {
+    await client.from("coach_approval_code").upsert({
+      "id": true,
+      "code": code,
+      "expires_at": expiresAt,
+      "generated_at": generatedAt,
+      "used_at": usedAt,
+    });
+  }
+
+  /// Real coach self-signup — mirrors signUpCoach in supabaseData.js.
+  /// `reviewed_by_owner: false` for self-signup (an owner adding a coach
+  /// directly would pass true, but that flow isn't built here — see
+  /// coaches_overview_screen.dart's own "mocked" note). Spending the
+  /// approval code is best-effort — same as the source: the account
+  /// already exists by the time this RPC runs regardless of its outcome,
+  /// so a race here shouldn't fail an otherwise-successful signup.
+  static Future<String> signUpCoach({
+    required String email,
+    required String password,
+    required String name,
+    String? firstName,
+    String? lastName,
+    String? title,
+    String? phone,
+    required String approvalCode,
+    String? photo,
+    List<String>? disciplines,
+    List<String>? sessionTypes,
+    List<AvailabilityBlock>? availability,
+    String? locationName,
+    String? locationAddress,
+    String? bio,
+    List<TrainerBeforeAfter>? beforeAfters,
+    String? coachCode,
+  }) async {
+    final res = await client.auth.signUp(
+      email: email,
+      password: password,
+      data: {"requested_role": "coach", "name": name, "phone": phone ?? ""},
+    );
+    final userId = res.user?.id;
+    if (userId == null)
+      throw Exception("Sign-up failed — no account was created.");
+    try {
+      await client.from("trainers").insert({
+        "profile_id": userId,
+        "reviewed_by_owner": false,
+        "signup_at": isoToday(),
+        if (title != null && title.trim().isNotEmpty) "title": title.trim(),
+        // Set at signup so a new coach is bookable straight away rather
+        // than invisible in the booking flow until they remember to fill
+        // this in from their profile later.
+        if (availability != null && availability.isNotEmpty)
+          "availability": availability.map(_availabilityToJson).toList(),
+        if (disciplines != null && disciplines.isNotEmpty)
+          "disciplines": disciplines,
+        // Picked at signup from the gym's own catalogue — the booking flow
+        // only offers a coach for the types they hold.
+        if (sessionTypes != null && sessionTypes.isNotEmpty)
+          "session_types": sessionTypes,
+        if (locationName != null || locationAddress != null)
+          "locations": [
+            {
+              "id": "loc-main",
+              "name": locationName ?? "",
+              "address": locationAddress ?? "",
+            },
+          ],
+        if (bio != null && bio.isNotEmpty) "bio": bio,
+        if (beforeAfters != null && beforeAfters.isNotEmpty)
+          "before_afters": beforeAfters.map(_beforeAfterToJson).toList(),
+        if (coachCode != null && coachCode.isNotEmpty) "coach_code": coachCode,
+      });
+    } on PostgrestException catch (e) {
+      if (e.code == "23505")
+        throw Exception(
+          "That coach code is already taken — pick a different one.",
+        );
+      rethrow;
+    }
+    final profilePatch = <String, dynamic>{
+      if (photo != null) "photo_url": photo,
+      if (firstName != null) "first_name": firstName,
+      if (lastName != null) "last_name": lastName,
+    };
+    if (profilePatch.isNotEmpty) {
+      await client.from("profiles").update(profilePatch).eq("id", userId);
+    }
+    try {
+      await client.rpc(
+        "mark_coach_code_used",
+        params: {"entered_code": approvalCode},
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print("[SupabaseService] mark_coach_code_used failed: $e");
+    }
+    return userId;
+  }
+
+  /// Owner-only — mirrors signUpCoach's `onBehalf: true` path in
+  /// supabaseData.js: an owner adding a coach directly (not the coach
+  /// self-signing-up with an approval code). Auth needs a real
+  /// `auth.signUp` call to create the account, but running that on the
+  /// owner's own signed-in client would replace the owner's session with
+  /// the brand-new coach's session. Mirrors the web's fix exactly — a
+  /// second, throwaway `SupabaseClient` with no persistent storage and no
+  /// auto-refresh does the signUp in complete isolation, then gets
+  /// disposed; every other write below runs on the real (owner's) `client`.
+  static Future<String> signUpCoachOnBehalf({
+    required String email,
+    required String password,
+    required String name,
+    String? phone,
+    String? photo,
+    List<String>? disciplines,
+    List<String>? sessionTypes,
+    List<TrainerLocation>? locations,
+    String? bio,
+    List<TrainerBeforeAfter>? beforeAfters,
+    List<AvailabilityBlock>? availability,
+    num? commissionRate,
+    String? coachCode,
+    String? payoutMode,
+    int? payoutRateCents,
+    num? referralCommissionPercent,
+    List<TrainerUnavailability>? unavailability,
+  }) async {
+    // A raw REST call, not `client.auth.signUp` (even on a second
+    // `SupabaseClient` instance) — the Dart SDK's `AuthClientOptions` has
+    // no `persistSession` equivalent to the JS SDK's, and a first attempt
+    // at the "second client" approach was confirmed live to still replace
+    // the owner's own session (signed the owner straight out). A plain
+    // HTTP POST to the auth endpoint is what `.auth.signUp()` does under
+    // the hood anyway, but touches no GoTrueClient/session state at all —
+    // the only way to guarantee the owner's real session is untouched.
+    final signUpRes = await http.post(
+      Uri.parse("${SupabaseConfig.url}/auth/v1/signup"),
+      headers: {
+        "apikey": SupabaseConfig.publishableKey,
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode({
+        "email": email,
+        "password": password,
+        "data": {"requested_role": "coach", "name": name, "phone": phone ?? ""},
+      }),
+    );
+    final signUpBody =
+        jsonDecode(signUpRes.body) as Map<String, dynamic>? ?? {};
+    if (signUpRes.statusCode >= 400) {
+      throw Exception(
+        (signUpBody["msg"] as String?) ??
+            (signUpBody["error_description"] as String?) ??
+            (signUpBody["message"] as String?) ??
+            "Sign-up failed (${signUpRes.statusCode}).",
+      );
+    }
+    final userId =
+        (signUpBody["user"] as Map<String, dynamic>?)?["id"] as String? ??
+        signUpBody["id"] as String?;
+    if (userId == null)
+      throw Exception("Sign-up failed — no account was created.");
+    try {
+      await client.from("trainers").insert({
+        "profile_id": userId,
+        "reviewed_by_owner": true, // owner-added coaches skip approval review
+        if (disciplines != null && disciplines.isNotEmpty)
+          "disciplines": disciplines,
+        if (sessionTypes != null && sessionTypes.isNotEmpty)
+          "session_types": sessionTypes,
+        if (locations != null && locations.isNotEmpty)
+          "locations": locations.map(_trainerLocationToJson).toList(),
+        if (bio != null && bio.isNotEmpty) "bio": bio,
+        if (beforeAfters != null && beforeAfters.isNotEmpty)
+          "before_afters": beforeAfters.map(_beforeAfterToJson).toList(),
+        if (availability != null && availability.isNotEmpty)
+          "availability": availability.map(_availabilityToJson).toList(),
+        if (commissionRate != null) "commission_rate": commissionRate,
+        if (coachCode != null && coachCode.isNotEmpty) "coach_code": coachCode,
+        if (payoutMode != null) "payout_mode": payoutMode,
+        if (payoutRateCents != null) "payout_rate_cents": payoutRateCents,
+        if (referralCommissionPercent != null)
+          "referral_commission_percent": referralCommissionPercent,
+        if (unavailability != null && unavailability.isNotEmpty)
+          "unavailability": unavailability.map(_unavailabilityToJson).toList(),
+      });
+    } on PostgrestException catch (e) {
+      if (e.code == "23505")
+        throw Exception(
+          "That coach code is already taken — pick a different one.",
+        );
+      rethrow;
+    }
+    if (photo != null) {
+      await client
+          .from("profiles")
+          .update({"photo_url": photo})
+          .eq("id", userId);
+    }
+    return userId;
+  }
+
+  static Future<void> signOut() async {
+    await client.auth.signOut();
+  }
+
+  // ── Read ──────────────────────────────────────────────────────────
+
+  /// A single client's own ClientInfo — used right after sign-in, so the
+  /// client doesn't need the whole-gym roster fetched first just to find
+  /// their own row in it.
+  static Future<ClientInfo?> loadClientById(String id) async {
+    final profile = await client
+        .from("profiles")
+        .select()
+        .eq("id", id)
+        .maybeSingle();
+    if (profile == null) return null;
+    final c = await client
+        .from("clients")
+        .select()
+        .eq("profile_id", id)
+        .maybeSingle();
+    return _clientInfoFromRow(profile, c ?? const {});
+  }
+
+  static Future<List<ClientInfo>> loadRoster() async {
+    final profiles = await client
+        .from("profiles")
+        .select()
+        .eq("role", "client");
+    if (profiles.isEmpty) return [];
+    final ids = profiles.map((p) => p["id"] as String).toList();
+    final clients = await client
+        .from("clients")
+        .select()
+        .inFilter("profile_id", ids);
+    final byId = {for (final c in clients) c["profile_id"] as String: c};
+    return _safeMap(
+      profiles,
+      (p) => _clientInfoFromRow(p, byId[p["id"]] ?? const {}),
+    );
+  }
+
+  static Future<List<Trainer>> loadTrainers() async {
+    final profiles = await client.from("profiles").select().eq("role", "coach");
+    if (profiles.isEmpty) return [];
+    final ids = profiles.map((p) => p["id"] as String).toList();
+    final trainers = await client
+        .from("trainers")
+        .select()
+        .inFilter("profile_id", ids);
+    final byId = {for (final t in trainers) t["profile_id"] as String: t};
+    final withRow = profiles.where((p) => byId.containsKey(p["id"]));
+    return _safeMap(withRow, (p) => _trainerFromRow(p, byId[p["id"]]!));
+  }
+
+  static Future<List<Booking>> loadBookings() async {
+    final rows = await client.from("bookings").select();
+    return _safeMap(rows, _bookingFromRow);
+  }
+
+  /// Maps a realtime `bookings` row. Null when the row is unusable.
+  static Booking? bookingFromRealtimeRow(Map<String, dynamic> row) {
+    try {
+      return _bookingFromRow(row);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<ClientRecord> loadClientRecord(String id) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", id)
+        .maybeSingle();
+    final data = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    return _clientRecordFromJson(id, data);
+  }
+
+  /// Every listed client's record in a handful of requests instead of one
+  /// per client — the per-client loop made startup grow with roster size.
+  /// Ids are chunked so the `in` filter never pushes the request URL past
+  /// what the gateway accepts. A client with no row gets the same blank
+  /// record [loadClientRecord] would have returned.
+  static Future<Map<String, ClientRecord>> loadClientRecords(
+    List<String> ids,
+  ) async {
+    const chunkSize = 100;
+    final chunks = [
+      for (var i = 0; i < ids.length; i += chunkSize)
+        ids.sublist(i, i + chunkSize > ids.length ? ids.length : i + chunkSize),
+    ];
+    final results = await Future.wait(chunks.map(
+      (chunk) => client
+          .from("client_records")
+          .select("profile_id, data")
+          .inFilter("profile_id", chunk),
+    ));
+    final dataById = <String, Map<String, dynamic>>{
+      for (final rows in results)
+        for (final r in rows)
+          r["profile_id"] as String:
+              (r["data"] as Map?)?.cast<String, dynamic>() ?? const {},
+    };
+    return {
+      for (final id in ids) id: _clientRecordFromJson(id, dataById[id] ?? const {}),
+    };
+  }
+
+  /// Owner-edited membership plans (jsonb-blob-per-row, same convention as
+  /// products/waiver_docs/programs_library/custom_meals — id + a `data`
+  /// blob whose keys are already camelCase, unlike the normalized tables).
+  static Future<List<MembershipPlan>> loadMembershipPlans() async {
+    final rows = await client.from("membership_plans").select();
+    final plans = _safeMap(
+      rows,
+      (r) =>
+          _membershipPlanFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+    // Sorted here rather than in the query: order lives inside the jsonb
+    // blob (see MembershipPlan.sortOrder), and without this the rows come
+    // back in whatever order Postgres hands them over, which is why the
+    // Access Hub's arrows used to rearrange the list and then forget.
+    // Plans saved before ordering existed have no sortOrder and sit after
+    // the ordered ones, alphabetically, instead of in an arbitrary order
+    // that changes between loads.
+    plans.sort((a, b) {
+      final ao = a.sortOrder, bo = b.sortOrder;
+      if (ao != null && bo != null && ao != bo) return ao.compareTo(bo);
+      if (ao != null && bo == null) return -1;
+      if (ao == null && bo != null) return 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return plans;
+  }
+
+  /// Writes the owner's chosen plan order, as a `sortOrder` on each plan.
+  ///
+  /// Gapped by ten so a single plan can later be slotted between two others
+  /// without renumbering the rest. Reads every row first and merges, for the
+  /// same reason as [_mergeJsonbUpsert]: these rows carry Stripe ids and
+  /// other fields this app doesn't model, and a blind write would erase them.
+  static Future<void> saveMembershipPlanOrder(List<String> idsInOrder) async {
+    if (idsInOrder.isEmpty) return;
+    final rows = await client
+        .from("membership_plans")
+        .select("id, data")
+        .inFilter("id", idsInOrder);
+    final byId = {
+      for (final r in rows)
+        r["id"] as String: ((r["data"] as Map?) ?? const {}).cast<String, dynamic>(),
+    };
+    final payload = [
+      for (var i = 0; i < idsInOrder.length; i++)
+        if (byId.containsKey(idsInOrder[i]))
+          {
+            "id": idsInOrder[i],
+            "data": {...byId[idsInOrder[i]]!, "sortOrder": (i + 1) * 10},
+          },
+    ];
+    if (payload.isEmpty) return;
+    await client.from("membership_plans").upsert(payload);
+  }
+
+  /// Roster-wide — RLS (points_ledger_select_self_or_staff) scopes what
+  /// actually comes back to whatever the caller may see either way.
+  static Future<List<PointsLedgerEntry>> loadPointsLedgerAll() async {
+    final rows = await client.from("points_ledger").select();
+    return _safeMap(rows, _pointsLedgerFromRow);
+  }
+
+  static Future<List<EarnedBadge>> loadMeritBadgesAll() async {
+    final rows = await client.from("merit_badges").select();
+    return _safeMap(rows, _earnedBadgeFromRow);
+  }
+
+  /// Re-fetches just one client's rows after a points/badge mutation — used
+  /// instead of trusting a locally-reconstructed row, since the server
+  /// computes the real id/expiry/cap-checked amount (see grant-points'
+  /// insert) that a client-guessed value can't replicate.
+  static Future<List<PointsLedgerEntry>> loadPointsLedgerFor(
+    String clientId,
+  ) async {
+    final rows = await client
+        .from("points_ledger")
+        .select()
+        .eq("client_id", clientId);
+    return _safeMap(rows, _pointsLedgerFromRow);
+  }
+
+  static Future<List<EarnedBadge>> loadMeritBadgesFor(String clientId) async {
+    final rows = await client
+        .from("merit_badges")
+        .select()
+        .eq("client_id", clientId);
+    return _safeMap(rows, _earnedBadgeFromRow);
+  }
+
+  /// Unfiltered, unlike loadBlockedTimeInRange's date-windowed query in
+  /// supabaseData.js — this app doesn't do windowed fetches anywhere yet
+  /// (same as loadBookings), and RLS scopes what a trainer/owner can see
+  /// regardless of any client-side date filter.
+  static Future<List<BlockedTime>> loadBlockedTime() async {
+    final rows = await client.from("blocked_time").select();
+    return _safeMap(rows, _blockedTimeFromRow);
+  }
+
+  static BlockedTime _blockedTimeFromRow(Map<String, dynamic> row) =>
+      BlockedTime(
+        id: row["id"].toString(),
+        trainerId: row["trainer_id"] as String,
+        date: row["date"] as String,
+        allDay: row["full_day"] as bool? ?? true,
+        startMin: _asInt(row["start_min"]),
+        endMin: _asInt(row["end_min"]),
+        reason: row["reason"] as String?,
+      );
+
+  /// Real timestamp columns come back as full ISO-with-time
+  /// (`2026-08-04T11:14:33.05+00:00`); every date-comparison util and every
+  /// display site was built against mock data's plain `yyyy-MM-dd` strings.
+  /// `DateTime.parse` handles both equally well for ordering/comparison, so
+  /// truncating here (once, at the boundary) keeps every downstream site
+  /// unchanged instead of reformatting at each of the several places these
+  /// fields are displayed.
+  static String? _dateOnly(String? iso) =>
+      (iso != null && iso.length >= 10) ? iso.substring(0, 10) : iso;
+
+  static PointsLedgerEntry _pointsLedgerFromRow(Map<String, dynamic> row) =>
+      PointsLedgerEntry(
+        id: row["id"].toString(),
+        clientId: row["client_id"] as String,
+        amount: _asInt(row["amount"]) ?? 0,
+        type: row["type"] as String? ?? "",
+        source: row["source"] as String? ?? "",
+        createdAt: _dateOnly(row["created_at"] as String?) ?? "",
+        expiresAt: _dateOnly(row["expires_at"] as String?),
+        grantedByUserId: row["granted_by_user_id"] as String?,
+        reason: row["reason"] as String?,
+        voidedByLedgerId: row["voided_by_ledger_id"]?.toString(),
+      );
+
+  static EarnedBadge _earnedBadgeFromRow(Map<String, dynamic> row) =>
+      EarnedBadge(
+        id: row["id"].toString(),
+        clientId: row["client_id"] as String,
+        badgeKey: row["badge_key"] as String,
+        earnedAt: _dateOnly(row["earned_at"] as String?) ?? "",
+        earnedMethod: row["earned_method"] as String? ?? "automatic",
+        grantedByUserId: row["granted_by_user_id"] as String?,
+        note: row["note"] as String?,
+        revokedAt: _dateOnly(row["revoked_at"] as String?),
+        revokedByUserId: row["revoked_by_user_id"] as String?,
+      );
+
+  // ── Coach Merit Badge System ────────────────────────────────────────
+  // Separate from the client-facing merit_badges table above — coach
+  // badges re-earn every month and keep full history (merit_badges' "one
+  // active row per client+badge_key" constraint doesn't fit that shape).
+
+  static Future<List<CoachMeritBadge>> loadCoachMeritBadges() async {
+    final rows = await client.from("coach_merit_badges").select();
+    return _safeMap(rows, _coachMeritBadgeFromRow);
+  }
+
+  static CoachMeritBadge _coachMeritBadgeFromRow(Map<String, dynamic> row) =>
+      CoachMeritBadge(
+        id: row["id"].toString(),
+        trainerId: row["trainer_id"] as String,
+        badgeKey: row["badge_key"] as String,
+        periodMonth: row["period_month"] as String,
+        earnedAt: row["earned_at"] as String,
+        rewardCents: _asInt(row["reward_cents"]) ?? 0,
+        payoutStatus: row["payout_status"] as String? ?? "pending",
+        note: row["note"] as String?,
+      );
+
+  /// Owner-triggered — no cron, matches this app's opportunistic-
+  /// reconciliation doctrine (see award-merit-badge's own doc comment).
+  /// `23505` on the (trainer_id, badge_key, period_month) unique
+  /// constraint means that badge is already finalized for this coach this
+  /// month — treated as a no-op, safe to call repeatedly/concurrently.
+  static Future<CoachMeritBadge?> insertCoachMeritBadge({
+    required String trainerId,
+    required String badgeKey,
+    required String periodMonth,
+    required int rewardCents,
+  }) async {
+    try {
+      final row = await client
+          .from("coach_merit_badges")
+          .insert({
+            "trainer_id": trainerId,
+            "badge_key": badgeKey,
+            "period_month": periodMonth,
+            "reward_cents": rewardCents,
+          })
+          .select()
+          .single();
+      return _coachMeritBadgeFromRow(row);
+    } on PostgrestException catch (e) {
+      if (e.code == "23505") return null;
+      rethrow;
+    }
+  }
+
+  static Future<List<CoachPrEvent>> loadCoachPrEvents() async {
+    final rows = await client.from("coach_pr_events").select();
+    return _safeMap(rows, _coachPrEventFromRow);
+  }
+
+  static CoachPrEvent _coachPrEventFromRow(Map<String, dynamic> row) =>
+      CoachPrEvent(
+        id: row["id"].toString(),
+        clientId: row["client_id"] as String,
+        trainerId: row["trainer_id"] as String,
+        exerciseName: row["exercise_name"] as String,
+        earnedAt: row["earned_at"] as String,
+        note: row["note"] as String?,
+      );
+
+  static Future<CoachPrEvent> insertCoachPrEvent({
+    required String clientId,
+    required String trainerId,
+    required String exerciseName,
+    String? note,
+  }) async {
+    final row = await client
+        .from("coach_pr_events")
+        .insert({
+          "client_id": clientId,
+          "trainer_id": trainerId,
+          "exercise_name": exerciseName,
+          if (note != null && note.isNotEmpty) "note": note,
+        })
+        .select()
+        .single();
+    return _coachPrEventFromRow(row);
+  }
+
+  /// Owner-triggered — no cron (opportunistic reconciliation, same as
+  /// [checkGymCitizenExpiry] and every other month/expiry sweep in this
+  /// app). Computes every coach's 6 monthly badges plus Coach of the Month
+  /// via coach_merit_badge_utils.dart's pure functions against
+  /// already-loaded gym-wide state, then persists every qualifying badge.
+  /// Each badge insert is independently idempotent (23505 = already
+  /// finalized this coach/badge/month, safely skipped) — safe to call
+  /// repeatedly or from a concurrent owner session, and safe to call again
+  /// for an already-finalized month (a no-op).
+  static Future<void> finalizeCoachBadgesForMonth({
+    required String periodMonth, // "YYYY-MM"
+    required ReportRange monthRange,
+    required List<Trainer> coaches,
+    required List<ClientInfo> roster,
+    required Map<String, ClientRecord> clientRecords,
+    required List<Booking> bookings,
+    required List<CoachPrEvent> prEvents,
+    required List<Challenge> challenges,
+    required List<CoachMeritBadge> existingCoachBadges,
+    required int habitPercent,
+    required int habitConsecutiveWeeks,
+    required Map<String, int> rewardCentsByBadgeKey,
+    int semiPrivateCap = 4,
+  }) async {
+    final priorWinCounts = <String, int>{};
+    for (final b in existingCoachBadges) {
+      if (b.badgeKey == "coach_of_month")
+        priorWinCounts[b.trainerId] = (priorWinCounts[b.trainerId] ?? 0) + 1;
+    }
+
+    final composites = <CoachCompositeScore>[];
+    for (final coach in coaches) {
+      final badges = computeAllCoachBadges(
+        coach: coach,
+        roster: roster,
+        clientRecords: clientRecords,
+        bookings: bookings,
+        prEvents: prEvents,
+        challenges: challenges,
+        range: monthRange,
+        habitPercent: habitPercent,
+        habitConsecutiveWeeks: habitConsecutiveWeeks,
+        semiPrivateCap: semiPrivateCap,
+      );
+      composites.add(
+        coachCompositeScore(coach, roster, bookings, badges, monthRange),
+      );
+      for (final b in badges) {
+        if (!b.qualifies) continue;
+        await insertCoachMeritBadge(
+          trainerId: coach.id,
+          badgeKey: b.badgeKey,
+          periodMonth: periodMonth,
+          rewardCents: rewardCentsByBadgeKey[b.badgeKey] ?? 0,
+        );
+      }
+    }
+
+    final winner = pickCoachOfTheMonth(
+      composites,
+      priorWinCounts: priorWinCounts,
+    );
+    if (winner != null) {
+      await insertCoachMeritBadge(
+        trainerId: winner.trainer.id,
+        badgeKey: "coach_of_month",
+        periodMonth: periodMonth,
+        rewardCents: rewardCentsByBadgeKey["coach_of_month"] ?? 0,
+      );
+    }
+  }
+
+  static Future<List<Product>> loadProducts() async {
+    final rows = await client.from("products").select();
+    return _safeMap(
+      rows,
+      (r) => _productFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+  }
+
+  static Product _productFromJson(Map<String, dynamic> j) => Product(
+    id: j["id"] as String,
+    name: j["name"] as String? ?? "",
+    description: j["description"] as String?,
+    priceCents: _asInt(j["priceCents"]) ?? 0,
+    category: j["category"] as String?,
+    archived: j["archived"] as bool? ?? false,
+    photos: ((j["photos"] as List?) ?? const []).whereType<String>().toList(),
+    sizes: ((j["sizes"] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => ProductSize(
+              label: m["label"] as String? ?? "",
+              inventory: _asInt(m["inventory"]) ?? 0,
+            ))
+        .where((sz) => sz.label.isNotEmpty)
+        .toList(),
+  );
+
+  static Future<List<WaiverDoc>> loadWaiverDocs() async {
+    final rows = await client.from("waiver_docs").select();
+    return _safeMap(
+      rows,
+      (r) => _waiverDocFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+  }
+
+  static WaiverDoc _waiverDocFromJson(Map<String, dynamic> j) => WaiverDoc(
+    id: j["id"] as String,
+    title: j["title"] as String? ?? "",
+    body: j["body"] as String? ?? "",
+    scope: j["scope"] as String? ?? "general",
+    planId: j["planId"] as String?,
+    required: j["required"] as bool? ?? true,
+    archived: j["archived"] as bool? ?? false,
+  );
+
+  /// `programs_library` holds both workout and nutrition templates in the
+  /// same table, distinguished by `data.type` — this app's nutrition-side
+  /// library (NutritionLibraryEntry, wrapping the far more complex legacy
+  /// NutritionPlan shape) isn't verified against any real populated row, so
+  /// only `type: "workout"` entries are mapped here for now; a nutrition
+  /// row is skipped rather than guessed.
+  static Future<List<SavedProgram>> loadProgramsLibrary() async {
+    final rows = await client.from("programs_library").select();
+    final out = <SavedProgram>[];
+    for (final row in rows) {
+      try {
+        final data = ((row as Map)["data"] as Map).cast<String, dynamic>();
+        if ((data["type"] as String?) == "nutrition") continue;
+        out.add(_savedProgramFromJson(data));
+      } catch (e) {
+        // ignore: avoid_print
+        print(
+          "[SupabaseService] skipped malformed programs_library row: $e — $row",
+        );
+      }
+    }
+    return out;
+  }
+
+  static SavedProgram _savedProgramFromJson(Map<String, dynamic> j) =>
+      SavedProgram(
+        id: j["id"] as String,
+        name: j["name"] as String? ?? "",
+        status: j["status"] as String? ?? "active",
+        source: j["source"] as String?,
+        // `createdBy` holds the coach's display *name*, not a user id — a
+        // naming quirk carried over verbatim from SaveProgramDialog.jsx's
+        // own entry shape (confirmed against a real row).
+        coachName: j["createdBy"] as String?,
+        programDays: _safeMap(
+          ((j["programDays"] as List?) ?? const []).whereType<Map>(),
+          _programDayFromJson,
+        ),
+        createdAt: j["createdAt"] as String?,
+        modifiedAt: j["modifiedAt"] as String?,
+        assignedClientId: j["assignedClientId"] as String?,
+        assignedClientName: j["assignedClientName"] as String?,
+        programNote: j["programNote"] as String?,
+        suggestedNote: j["suggestedNote"] as String?,
+      );
+
+  static ProgramDay _programDayFromJson(Map<String, dynamic> j) => ProgramDay(
+    id: j["id"] as String,
+    title: j["title"] as String? ?? "",
+    exercises: _safeMap(
+      ((j["exercises"] as List?) ?? const []).whereType<Map>(),
+      _exercisePrescriptionFromJson,
+    ),
+    // Anything that isn't explicitly "suggested" is a committed day, which
+    // is how every program written before suggested days existed reads back.
+    suggested: j["kind"] == "suggested",
+    rationale: j["rationale"] as String?,
+  );
+
+  static ExercisePrescription _exercisePrescriptionFromJson(
+    Map<String, dynamic> j,
+  ) => ExercisePrescription(
+    id: j["id"] as String,
+    name: j["name"] as String? ?? "",
+    exerciseId: j["exerciseId"] as String?,
+    group: j["group"] as String?,
+    sets: _asInt(j["sets"]) ?? 3,
+    reps: _asInt(j["reps"]) ?? 0,
+    weight: j["weight"]?.toString(),
+    time: j["time"]?.toString(),
+    distance: j["distance"]?.toString(),
+    rest: j["rest"]?.toString(),
+    notes: j["notes"] as String?,
+    laterality: j["laterality"] as String? ?? "bilateral",
+    supersetId: j["supersetId"] as String?,
+    clientNoteText: j["clientFlag"] is Map
+        ? (j["clientFlag"] as Map)["note"] as String?
+        : null,
+    clientNoteAt: j["clientFlag"] is Map
+        ? (j["clientFlag"] as Map)["at"] as String?
+        : null,
+  );
+
+  static WorkoutLogEntry _workoutLogFromJson(Map<String, dynamic> j) =>
+      WorkoutLogEntry(
+        id: j["id"]?.toString() ?? "",
+        date: j["date"] as String? ?? "",
+        programId: j["programId"] as String? ?? "",
+        programName: j["programName"] as String? ?? "",
+        dayId: j["dayId"] as String? ?? "",
+        dayTitle: j["dayTitle"] as String? ?? "",
+        exercises: _safeMap(
+          ((j["exercises"] as List?) ?? const []).whereType<Map>(),
+          (m) => _loggedExerciseFromJson(m.cast<String, dynamic>()),
+        ),
+        loggedAt: j["loggedAt"] as String?,
+        loggedBy: j["loggedBy"] as String? ?? "client",
+        coachComment: j["coachComment"] as String?,
+        coachCommentAt: j["coachCommentAt"] as String?,
+      );
+
+  static LoggedExercise _loggedExerciseFromJson(Map<String, dynamic> j) =>
+      LoggedExercise(
+        name: j["name"] as String? ?? "",
+        sets: _safeMap(
+          ((j["sets"] as List?) ?? const []).whereType<Map>(),
+          (m) => _loggedSetFromJson(m.cast<String, dynamic>()),
+        ),
+      );
+
+  static LoggedSet _loggedSetFromJson(Map<String, dynamic> j) => LoggedSet(
+    setNum: _asInt(j["setNum"]) ?? 0,
+    targetReps: _asInt(j["targetReps"]) ?? 0,
+    completedReps: _asInt(j["completedReps"]),
+    completedWeight: (j["completedWeight"] as num?)?.toDouble(),
+    completed: j["completed"] as bool? ?? false,
+  );
+
+  static Future<List<MealDef>> loadCustomMeals() async {
+    final rows = await client.from("custom_meals").select();
+    return _safeMap(
+      rows,
+      (r) => _mealDefFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+  }
+
+  static MealDef _mealDefFromJson(Map<String, dynamic> j) => MealDef(
+    id: j["id"] as String,
+    name: j["name"] as String? ?? "",
+    mealType: j["mealType"] as String? ?? "snacks",
+    calories: _asInt(j["calories"]) ?? 0,
+    protein: (j["protein"] as num?)?.toDouble() ?? 0,
+    carbs: (j["carbs"] as num?)?.toDouble() ?? 0,
+    fats: (j["fats"] as num?)?.toDouble() ?? 0,
+    ingredients: _safeMap(
+      ((j["ingredients"] as List?) ?? const []).whereType<Map>(),
+      _ingredientFromJson,
+    ),
+    instructions: j["instructions"] as String?,
+    notes: j["notes"] as String?,
+    dietTags: ((j["dietTags"] as List?) ?? const [])
+        .whereType<String>()
+        .toList(),
+    isCustom: j["isCustom"] as bool? ?? true,
+  );
+
+  /// Real data's key is `equipmentIds`, not `equipment` (confirmed against a
+  /// real row) — this model's field is named for what it holds, not for the
+  /// wire format. `movementPattern`/`primaryMuscle` values in real data
+  /// ("horizontal-pull", "olympic") also don't match this app's
+  /// kMovementPatterns/kMuscleGroups picklists (built for the mock catalog);
+  /// harmless — the edit form's chip picker just shows nothing pre-selected
+  /// for those two fields until the coach picks one, same as any unrecognized
+  /// value would.
+  static Future<List<ExerciseDef>> loadExercises() async {
+    final rows = await client.from("exercises").select();
+    return _safeMap(
+      rows,
+      (r) => _exerciseDefFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+  }
+
+  static ExerciseDef _exerciseDefFromJson(Map<String, dynamic> j) =>
+      ExerciseDef(
+        id: j["id"] as String,
+        name: j["name"] as String? ?? "",
+        movementPattern: j["movementPattern"] as String? ?? "",
+        primaryMuscle: j["primaryMuscle"] as String? ?? "",
+        equipment: ((j["equipmentIds"] as List?) ?? const [])
+            .whereType<String>()
+            .toList(),
+        setup: j["setup"] as String?,
+        cues: j["cues"] as String?,
+        coachNotes: j["coachNotes"] as String?,
+        videoPath: j["videoPath"] as String?,
+        videoName: j["videoName"] as String?,
+      );
+
+  static Future<List<Challenge>> loadChallenges() async {
+    final rows = await client.from("challenges").select();
+    return _safeMap(rows, _challengeFromRow);
+  }
+
+  /// `description`/`prize` are `not null default ''` on the real table
+  /// (confirmed against a real row) — the model's own UI treats "no prize"
+  /// as `null` (`if (challenge.prize != null)` gates the prize card), so an
+  /// empty string has to be normalized to null on the way in or a real
+  /// challenge with no prize would render a blank prize card.
+  static String? _emptyToNull(dynamic v) =>
+      (v is String && v.isNotEmpty) ? v : null;
+
+  static Challenge _challengeFromRow(Map<String, dynamic> row) => Challenge(
+    id: row["id"] as String,
+    name: row["name"] as String? ?? "",
+    template: row["template"] as String? ?? "",
+    metric: row["metric"] as String? ?? "",
+    startDate: row["start_date"] as String? ?? "",
+    endDate: row["end_date"] as String? ?? "",
+    description: _emptyToNull(row["description"]),
+    prize: _emptyToNull(row["prize"]),
+    participantIds: ((row["participants"] as List?) ?? const [])
+        .whereType<String>()
+        .toList(),
+    winnerClientId: row["winner"] as String?,
+    winnerMode: row["winner_mode"] as String? ?? "auto",
+    rewardPoints: _asInt(row["reward_points"]),
+    rewardProductId: _emptyToNull(row["reward_product_id"]),
+    trainerId: row["trainer_id"] as String?,
+    emoji: _emptyToNull(row["emoji"]),
+    scoringBasis: _emptyToNull(row["scoring_basis"]),
+  );
+
+  /// The gym's own challenge types. Only staff screens read these — a
+  /// challenge carries everything a client needs to see it rendered and
+  /// ranked, so nothing on the client side depends on this list.
+  static Future<List<ChallengeTemplate>> loadChallengeTemplates() async {
+    final rows = await client.from("challenge_templates").select();
+    return _safeMap(rows, _challengeTemplateFromRow);
+  }
+
+  static ChallengeTemplate _challengeTemplateFromRow(Map<String, dynamic> row) => ChallengeTemplate(
+    key: row["key"] as String,
+    emoji: _emptyToNull(row["emoji"]) ?? "\u{1F3C6}",
+    label: row["label"] as String? ?? "",
+    metric: row["metric"] as String? ?? "",
+    description: row["description"] as String? ?? "",
+    basis: row["basis"] as String? ?? "attendance",
+    trainerId: row["trainer_id"] as String?,
+  );
+
+  static Future<void> insertChallengeTemplate(
+    ChallengeTemplate t, {
+    required String createdBy,
+  }) async {
+    await client.from("challenge_templates").insert({
+      "key": t.key,
+      "emoji": t.emoji,
+      "label": t.label,
+      "metric": t.metric,
+      "description": t.description,
+      "basis": t.basis,
+      "trainer_id": t.trainerId,
+      "created_by": createdBy,
+    });
+  }
+
+  /// Removing a type takes it out of the "choose a type" list and nothing
+  /// else: challenges built from it copied its emoji and scorer at creation,
+  /// so they keep rendering and ranking untouched.
+  static Future<void> deleteChallengeTemplate(String key) async {
+    await client.from("challenge_templates").delete().eq("key", key);
+  }
+
+  static Future<List<Squad>> loadSquads() async {
+    final rows = await client.from("squads").select();
+    return _safeMap(rows, _squadFromRow);
+  }
+
+  static Squad _squadFromRow(Map<String, dynamic> row) => Squad(
+    id: row["id"] as String,
+    name: row["name"] as String?,
+    leadId: row["lead_id"] as String,
+    memberIds: ((row["member_ids"] as List?) ?? const [])
+        .whereType<String>()
+        .toList(),
+    memberMeta: ((row["member_meta"] as Map?) ?? const {}).map(
+      (k, v) => MapEntry(
+        k as String,
+        _squadMemberMetaFromJson((v as Map).cast<String, dynamic>()),
+      ),
+    ),
+    maxSize: _asInt(row["max_size"]) ?? kDefaultSquadMax,
+    membership: row["membership"] != null
+        ? _squadMembershipFromJson(
+            (row["membership"] as Map).cast<String, dynamic>(),
+          )
+        : null,
+    pendingInvites: _safeMap(
+      ((row["pending_invites"] as List?) ?? const []).whereType<Map>(),
+      _squadInviteFromJson,
+    ),
+    activity: _safeMap(
+      ((row["activity"] as List?) ?? const []).whereType<Map>(),
+      _squadActivityFromJson,
+    ),
+    billingShared: row["billing_shared"] as bool? ?? true,
+    chat: _safeMap(
+      ((row["chat"] as List?) ?? const []).whereType<Map>(),
+      (m) => _squadChatMessageFromJson(m.cast<String, dynamic>()),
+    ),
+  );
+
+  static SquadMemberMeta _squadMemberMetaFromJson(Map<String, dynamic> j) =>
+      SquadMemberMeta(
+        relationship: j["relationship"] as String? ?? "",
+        status: j["status"] as String? ?? "active",
+        paymentEnabled: j["paymentEnabled"] as bool? ?? false,
+        minBalance: (j["minBalance"] as num?) ?? 0,
+      );
+
+  static SquadInvite _squadInviteFromJson(Map<String, dynamic> j) =>
+      SquadInvite(
+        clientId: j["clientId"] as String,
+        sentAt: j["sentAt"] as String? ?? "",
+        status: j["status"] as String? ?? "pending",
+      );
+
+  /// Real rows nest the human-readable text one level deeper than this
+  /// model does — `activity[i].details.description`, not a flat
+  /// `activity[i].description` (confirmed against a real row).
+  static SquadActivityEntry _squadActivityFromJson(Map<String, dynamic> j) =>
+      SquadActivityEntry(
+        id: j["id"] as String,
+        type: j["type"] as String? ?? "",
+        at: j["at"] as String? ?? "",
+        actorName: j["actorName"] as String?,
+        description: (j["details"] as Map?)?["description"] as String?,
+      );
+
+  static SquadMembership _squadMembershipFromJson(Map<String, dynamic> j) =>
+      SquadMembership(
+        planName: j["planName"] as String? ?? "",
+        kind: j["kind"] as String? ?? "package",
+        sessionsRemaining: _asInt(j["sessionsRemaining"]) ?? 0,
+        sessionsTotal: _asInt(j["sessionsTotal"]) ?? 0,
+        renewalDate: j["renewalDate"] as String?,
+      );
+
+  static SquadChatMessage _squadChatMessageFromJson(Map<String, dynamic> j) =>
+      SquadChatMessage(
+        id: j["id"]?.toString() ?? "",
+        from: j["from"] as String? ?? "",
+        at: j["at"] as String? ?? "",
+        text: j["text"] as String?,
+        type: j["type"] as String? ?? "text",
+        shareKind: j["shareKind"] as String?,
+        payload: (j["payload"] as Map?)?.cast<String, dynamic>(),
+      );
+
+  static Future<List<Charge>> loadCharges() async {
+    final rows = await client.from("charges").select();
+    return _safeMap(rows, _chargeFromRow);
+  }
+
+  /// Owner/coach logging a manual charge against a client (Add Charge) —
+  /// mirrors insertCharge in supabaseData.js. `amount` charges are dollars
+  /// on this trimmed model, matching the `charges.amount` numeric column.
+  static Future<Charge> insertCharge(Charge ch) async {
+    final row = {
+      "client_id": ch.clientId,
+      "client_name": ch.clientName,
+      "type": ch.type,
+      "date": ch.date,
+      "at": ch.at,
+      "amount": ch.amount,
+      "category": ch.category,
+      "description": ch.description,
+      "plan_id": ch.planId,
+      "plan_name": ch.planName,
+      "trainer_id": ch.trainerId,
+      "trainer_name": ch.trainerName,
+    };
+    final data = await client.from("charges").insert(row).select().single();
+    return _chargeFromRow(data);
+  }
+
+  static Charge _chargeFromRow(Map<String, dynamic> row) => Charge(
+    id: row["id"] as String,
+    clientId: row["client_id"] as String,
+    clientName: row["client_name"] as String? ?? "",
+    type: row["type"] as String? ?? "",
+    date: row["date"] as String? ?? "",
+    at: row["at"] as String? ?? "",
+    amount: (row["amount"] as num?)?.toDouble(),
+    category: row["category"] as String?,
+    description: row["description"] as String?,
+    planId: row["plan_id"] as String?,
+    planName: row["plan_name"] as String?,
+    trainerId: row["trainer_id"] as String?,
+    trainerName: row["trainer_name"] as String?,
+    waivedAt: _dateOnly(row["waived_at"] as String?),
+  );
+
+  /// Real `data` blob nests everything under 5 tabs (`access`, `clients`,
+  /// `payments`, `workouts`, `scheduling` — note the coach-related tab is
+  /// called "access" in the database, not "coaches" like the settings
+  /// screen's own UI tab label) and carries several fields this app's
+  /// PlatformSettings model doesn't track at all (customProfileFields,
+  /// requiredProfileFields, feeLabel, businessTimeZone, bookingCoachScope,
+  /// applyToAch/Debit/Credit, feeFlatCents, feeStructure, showFeeLineItem,
+  /// refundFeeOnRefund, checkoutDisclosureText — all confirmed against a
+  /// real row; blockRescheduleInWindow/lateCancellationFeeCents ARE now
+  /// tracked, read-only until Customize Platform grows a control for them).
+  /// Returns
+  /// null if no row exists yet, in which case the caller keeps the model's
+  /// own defaults (same as every other "real, even if absent" domain here).
+  static Future<PlatformSettings?> loadPlatformSettings() async {
+    final row = await client
+        .from("platform_settings")
+        .select("data")
+        .eq("id", "global")
+        .maybeSingle();
+    if (row == null) return null;
+    return _platformSettingsFromJson(
+      (row["data"] as Map).cast<String, dynamic>(),
+    );
+  }
+
+  static PlatformSettings _platformSettingsFromJson(Map<String, dynamic> j) {
+    final access = ((j["access"] as Map?) ?? const {}).cast<String, dynamic>();
+    final clients = ((j["clients"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    final payments = ((j["payments"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    final workouts = ((j["workouts"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    final services = ((j["services"] as Map?) ?? const {}).cast<String, dynamic>();
+    final location = ((j["location"] as Map?) ?? const {}).cast<String, dynamic>();
+    final scheduling = ((j["scheduling"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    const defaults = PlatformSettings();
+    return PlatformSettings(
+      lateCancellationHours:
+          _asInt(scheduling["lateCancellationHours"]) ??
+          defaults.lateCancellationHours,
+      blockRescheduleInWindow:
+          scheduling["blockRescheduleInWindow"] as bool? ??
+          defaults.blockRescheduleInWindow,
+      lateCancellationFeeCents:
+          _asInt(scheduling["lateCancellationFeeCents"]) ??
+          defaults.lateCancellationFeeCents,
+      noShowFeeCents:
+          _asInt(scheduling["noShowFeeCents"]) ?? defaults.noShowFeeCents,
+      maxBookingHorizonDays:
+          _asInt(scheduling["maxBookingHorizonDays"]) ??
+          defaults.maxBookingHorizonDays,
+      minBookingLeadHours:
+          _asInt(scheduling["minBookingLeadHours"]) ??
+          defaults.minBookingLeadHours,
+      bookingCoachScope:
+          scheduling["bookingCoachScope"] as String? ??
+          defaults.bookingCoachScope,
+      semiPrivateCap:
+          _asInt(scheduling["semiPrivateCap"]) ?? defaults.semiPrivateCap,
+      sessionTypeCaps: {
+        for (final e in ((scheduling["sessionTypeCaps"] as Map?) ?? const {}).entries)
+          if (_asInt(e.value) != null) e.key.toString(): _asInt(e.value)!,
+      },
+      singleSessionPriceCents: {
+        for (final e in ((scheduling["singleSession"] as Map?) ?? const {}).entries)
+          if (e.value is Map && _asInt((e.value as Map)["priceCents"]) != null)
+            e.key.toString(): _asInt((e.value as Map)["priceCents"])!,
+      },
+      singleSessionAllowed: {
+        for (final e in ((scheduling["singleSession"] as Map?) ?? const {}).entries)
+          if (e.value is Map) e.key.toString(): (e.value as Map)["allowed"] == true,
+      },
+      twoFactorRequirement:
+          access["twoFactorRequirement"] as String? ??
+          defaults.twoFactorRequirement,
+      coachClientScope:
+          access["coachClientScope"] as String? ?? defaults.coachClientScope,
+      coachCanViewRevenue:
+          access["coachCanViewRevenue"] as bool? ??
+          defaults.coachCanViewRevenue,
+      coachCanSeeOtherSchedules:
+          access["coachCanSeeOtherSchedules"] as bool? ??
+          defaults.coachCanSeeOtherSchedules,
+      coachCanEditClientWorkouts:
+          access["coachCanEditClientWorkouts"] as bool? ??
+          defaults.coachCanEditClientWorkouts,
+      messageIdentity:
+          access["messageIdentity"] as String? ?? defaults.messageIdentity,
+      requiredProfileFields:
+          ((clients["requiredProfileFields"] as List?)
+              ?.whereType<String>()
+              .toList()) ??
+          defaults.requiredProfileFields,
+      customProfileFields: _customProfileFieldsFromJson(
+        clients["customProfileFields"],
+      ),
+      requireWaiverAtSignup:
+          clients["requireWaiverAtSignup"] as bool? ??
+          defaults.requireWaiverAtSignup,
+      clientsCanMessageAnyCoach:
+          clients["clientsCanMessageAnyCoach"] as bool? ??
+          defaults.clientsCanMessageAnyCoach,
+      achOffered: payments["achOffered"] as bool? ?? defaults.achOffered,
+      cardFee: _feeProfileFromJson(payments["cardFee"], defaults.cardFee),
+      achFee: _feeProfileFromJson(payments["achFee"], defaults.achFee),
+      checkoutDisclosureText:
+          payments["checkoutDisclosureText"] as String? ??
+          defaults.checkoutDisclosureText,
+      defaultBillingAnchorDay: _asInt(payments["defaultBillingAnchorDay"]),
+      refundFeeOnRefund:
+          payments["refundFeeOnRefund"] as bool? ?? defaults.refundFeeOnRefund,
+      autoCarryOverLastWeight:
+          workouts["autoCarryOverLastWeight"] as bool? ??
+          defaults.autoCarryOverLastWeight,
+      defaultWeightUnit:
+          workouts["defaultWeightUnit"] as String? ??
+          defaults.defaultWeightUnit,
+      clientsCanSwapExercises:
+          workouts["clientsCanSwapExercises"] as bool? ??
+          defaults.clientsCanSwapExercises,
+      businessTimeZone:
+          workouts["businessTimeZone"] as String? ?? defaults.businessTimeZone,
+      businessName:
+          workouts["businessName"] as String? ?? defaults.businessName,
+      offeredSessionTypes:
+          (services["offeredSessionTypes"] as List?)?.whereType<String>().toList() ?? defaults.offeredSessionTypes,
+      offeredDisciplines:
+          (services["offeredDisciplines"] as List?)?.whereType<String>().toList() ?? defaults.offeredDisciplines,
+      locationName: location["locationName"] as String? ?? defaults.locationName,
+      locationAddress: location["locationAddress"] as String? ?? defaults.locationAddress,
+      locationHint: location["locationHint"] as String? ?? defaults.locationHint,
+      supportPhone: location["supportPhone"] as String? ?? defaults.supportPhone,
+      defaultLocationName: location["defaultLocationName"] as String? ?? defaults.defaultLocationName,
+      locationLat: (location["locationLat"] as num?)?.toDouble(),
+      locationLng: (location["locationLng"] as num?)?.toDouble(),
+      // Every location the gym runs sessions at. The main one above is
+      // always the first, so a gym with one location behaves as before.
+      locations: [
+        for (final l in ((location["locations"] as List?) ?? const []).whereType<Map>())
+          GymLocation(
+            lat: (l["lat"] as num?)?.toDouble(),
+            lng: (l["lng"] as num?)?.toDouble(),
+            name: l["name"] as String? ?? "",
+            address: l["address"] as String? ?? "",
+            hint: l["hint"] as String? ?? "",
+          ),
+      ],
+      meritBadgeProgressWeeks:
+          _asInt(workouts["meritBadgeProgressWeeks"]) ??
+          defaults.meritBadgeProgressWeeks,
+      meritBadgeHabitPercent:
+          _asInt(workouts["meritBadgeHabitPercent"]) ??
+          defaults.meritBadgeHabitPercent,
+      meritBadgeHabitWeeks:
+          _asInt(workouts["meritBadgeHabitWeeks"]) ??
+          defaults.meritBadgeHabitWeeks,
+      badgeFullHouseCents:
+          _asInt(workouts["badgeFullHouseCents"]) ??
+          defaults.badgeFullHouseCents,
+      badgePrFactoryCents:
+          _asInt(workouts["badgePrFactoryCents"]) ??
+          defaults.badgePrFactoryCents,
+      beepSounds: {
+        for (final e in ((workouts["beepSounds"] as Map?) ?? const {}).entries)
+          e.key.toString(): e.value.toString(),
+      },
+      badgeCheckInCents:
+          _asInt(workouts["badgeCheckInCents"]) ?? defaults.badgeCheckInCents,
+      badgeComebackCents:
+          _asInt(workouts["badgeComebackCents"]) ?? defaults.badgeComebackCents,
+      badgeHabitCoachCents:
+          _asInt(workouts["badgeHabitCoachCents"]) ??
+          defaults.badgeHabitCoachCents,
+      badgeChallengeCoachCents:
+          _asInt(workouts["badgeChallengeCoachCents"]) ??
+          defaults.badgeChallengeCoachCents,
+      badgeCoachOfMonthCents:
+          _asInt(workouts["badgeCoachOfMonthCents"]) ??
+          defaults.badgeCoachOfMonthCents,
+    );
+  }
+
+  static FeeProfile _feeProfileFromJson(dynamic raw, FeeProfile fallback) {
+    if (raw is! Map) return fallback;
+    final j = raw.cast<String, dynamic>();
+    return FeeProfile(
+      enabled: j["enabled"] as bool? ?? fallback.enabled,
+      label: j["label"] as String? ?? fallback.label,
+      structure: j["structure"] as String? ?? fallback.structure,
+      percent: (j["percent"] as num?) ?? fallback.percent,
+      flatCents: _asInt(j["flatCents"]) ?? fallback.flatCents,
+    );
+  }
+
+  static Map<String, dynamic> _feeProfileToJson(FeeProfile f) => {
+    "enabled": f.enabled,
+    "label": f.label,
+    "structure": f.structure,
+    "percent": f.percent,
+    "flatCents": f.flatCents,
+  };
+
+  static List<CustomProfileField> _customProfileFieldsFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => CustomProfileField(
+            id: (e["id"] as String?) ?? "",
+            label: (e["label"] as String?) ?? "",
+            type: (e["type"] as String?) ?? "text",
+          ),
+        )
+        .toList();
+  }
+
+  static List<Map<String, dynamic>> _customProfileFieldsToJson(
+    List<CustomProfileField> fields,
+  ) => fields
+      .map((f) => {"id": f.id, "label": f.label, "type": f.type})
+      .toList();
+
+  // ── Write ─────────────────────────────────────────────────────────
+
+  /// A client editing their own profile (name/email/phone live on
+  /// `profiles`, city on `clients`) — mirrors updateClientRow's field split
+  /// in supabaseData.js, trimmed to the fields the app's Edit Profile screen
+  /// actually exposes.
+  /// Turns a unique-index violation on a contact detail into something a
+  /// person can act on. Both indexes are partial and expression-based, so
+  /// the message names the index rather than a column — unreadable as-is.
+  static Never _rethrowContactClash(Object e) {
+    final raw = e.toString();
+    // Both role-scoped phone indexes start with this name (…_client,
+    // …_coach), so one check still covers them. The wording no longer says
+    // "each person needs their own number" — an owner may now share one
+    // with a coach, so that would be wrong as often as it was right.
+    if (raw.contains("profiles_unique_phone_digits_coach")) {
+      throw Exception("That phone number is already on another coach's account.");
+    }
+    if (raw.contains("profiles_unique_phone_digits")) {
+      throw Exception(
+        "That phone number is already on another client's account. "
+        "Texts to it would reach the wrong person.",
+      );
+    }
+    if (raw.contains("profiles_unique_email")) {
+      throw Exception("That email address is already on another account.");
+    }
+    throw e;
+  }
+
+  static Future<void> updateClientRow(
+    String id, {
+    String? name,
+    String? firstName,
+    String? lastName,
+    String? email,
+    String? phone,
+    String? photo,
+    String? city,
+    String? state,
+    String? birthday,
+    String? membershipPlanId,
+    bool? redeemPointsNextRenewal,
+    int? sessionCountOverride,
+    String? sessionCountOverrideMonth,
+    bool clearSessionCountOverride = false,
+  }) async {
+    final profileFields = <String, dynamic>{
+      if (name != null) "name": name,
+      if (firstName != null) "first_name": firstName,
+      if (lastName != null) "last_name": lastName,
+      if (email != null) "email": email,
+      if (phone != null) "phone": phone,
+      if (photo != null) "photo_url": photo,
+    };
+    if (profileFields.isNotEmpty) {
+      try {
+        await client.from("profiles").update(profileFields).eq("id", id);
+      } catch (e) {
+        // A reused phone or email surfaces as a unique-index violation
+        // naming the index; say what actually went wrong instead.
+        _rethrowContactClash(e);
+      }
+    }
+    final clientFields = <String, dynamic>{
+      if (city != null) "city": city,
+      if (state != null) "state": state,
+      if (birthday != null) "birthday": birthday,
+      if (membershipPlanId != null) "membership_plan_id": membershipPlanId,
+      if (redeemPointsNextRenewal != null)
+        "redeem_points_next_renewal": redeemPointsNextRenewal,
+      if (clearSessionCountOverride)
+        "session_count_override": null
+      else if (sessionCountOverride != null)
+        "session_count_override": sessionCountOverride,
+      if (clearSessionCountOverride)
+        "session_count_override_month": null
+      else if (sessionCountOverrideMonth != null)
+        "session_count_override_month": sessionCountOverrideMonth,
+    };
+    if (clientFields.isNotEmpty)
+      await client.from("clients").update(clientFields).eq("profile_id", id);
+  }
+
+  /// Owner/coach freezing a client's membership — mirrors freezeMembership
+  /// in supabaseData.js. Pauses real Stripe billing (resumes automatically
+  /// on `endDate`, server-side, no cron needed) and sets the local
+  /// membership_paused* fields the app reads for display/booking access.
+  static Future<void> freezeMembership(
+    String clientId,
+    String startDate,
+    String endDate,
+  ) => _invokeFunction("freeze-membership", {
+    "clientId": clientId,
+    "startDate": startDate,
+    "endDate": endDate,
+  });
+
+  /// Ends a freeze early — mirrors unfreezeMembership in supabaseData.js.
+  /// Resumes real Stripe billing immediately rather than waiting for the
+  /// originally-scheduled end date.
+  static Future<void> unfreezeMembership(String clientId) =>
+      _invokeFunction("unfreeze-membership", {"clientId": clientId});
+
+  /// Mirrors sendPasswordReset in supabaseData.js — Supabase Auth emails a
+  /// reset link; there's no in-app "change password" for an existing
+  /// account (a brand-new signup sets the initial password directly, see
+  /// signUpClient/signUpCoach).
+  static Future<void> sendPasswordReset(String email) =>
+      client.auth.resetPasswordForEmail(email);
+
+  /// A coach editing their own profile. `locations` is a list on the real
+  /// schema (see `_locationNameFrom`'s doc comment on `bookings.location`
+  /// for the same shape) — the app only edits a single location, so it's
+  /// always written back as a one-item list.
+  static Future<void> updateTrainerRow(
+    String id, {
+    String? name,
+    String? email,
+    String? phone,
+    String? photo,
+    List<String>? disciplines,
+    List<String>? sessionTypes,
+    List<TrainerLocation>? locations,
+    String? locationName,
+    String? locationAddress,
+    String? bio,
+    List<TrainerBeforeAfter>? beforeAfters,
+    List<AvailabilityBlock>? availability,
+    num? commissionRate,
+    bool? reviewedByOwner,
+    String? payoutMode,
+    int? payoutRateCents,
+    num? referralCommissionPercent,
+    List<TrainerUnavailability>? unavailability,
+      String? title,
+  }) async {
+    // Oversized (older, 1600px) photos made this request too big to upload
+    // reliably from a phone — re-encode those before sending.
+    if (beforeAfters != null) {
+      beforeAfters = [
+        for (final ba in beforeAfters)
+          TrainerBeforeAfter(
+            id: ba.id,
+            left: ba.left == null ? null : await shrinkDataUrlImage(ba.left!),
+            right: ba.right == null ? null : await shrinkDataUrlImage(ba.right!),
+          ),
+      ];
+    }
+    final profileFields = <String, dynamic>{
+      if (name != null) "name": name,
+      if (email != null) "email": email,
+      if (phone != null) "phone": phone,
+      if (photo != null) "photo_url": photo,
+    };
+    if (profileFields.isNotEmpty) {
+      try {
+        await client.from("profiles").update(profileFields).eq("id", id);
+      } catch (e) {
+        // A reused phone or email surfaces as a unique-index violation
+        // naming the index; say what actually went wrong instead.
+        _rethrowContactClash(e);
+      }
+    }
+    final trainerFields = <String, dynamic>{
+      if (title != null) "title": title,
+      if (disciplines != null) "disciplines": disciplines,
+      if (sessionTypes != null) "session_types": sessionTypes,
+      if (locations != null)
+        "locations": locations.map(_trainerLocationToJson).toList()
+      else if (locationName != null || locationAddress != null)
+        "locations": [
+          {
+            "id": "loc-main",
+            "name": locationName ?? "",
+            "address": locationAddress ?? "",
+          },
+        ],
+      if (bio != null) "bio": bio,
+      if (beforeAfters != null)
+        "before_afters": beforeAfters.map(_beforeAfterToJson).toList(),
+      if (availability != null)
+        "availability": availability.map(_availabilityToJson).toList(),
+      if (commissionRate != null) "commission_rate": commissionRate,
+      if (reviewedByOwner != null) "reviewed_by_owner": reviewedByOwner,
+      if (payoutMode != null) "payout_mode": payoutMode,
+      if (payoutRateCents != null) "payout_rate_cents": payoutRateCents,
+      if (referralCommissionPercent != null)
+        "referral_commission_percent": referralCommissionPercent,
+      if (unavailability != null)
+        "unavailability": unavailability.map(_unavailabilityToJson).toList(),
+    };
+    if (trainerFields.isNotEmpty)
+      await client.from("trainers").update(trainerFields).eq("profile_id", id);
+  }
+
+  /// Owner-only — Delete/Archive Behavior spec: a deleted coach is "fully
+  /// removed; must sign up and register again from step one as a new
+  /// profile." Runs server-side (delete-coach-account, service-role): nulls
+  /// audit-trail references on other people's rows, deletes this coach's
+  /// own subject-of-record rows, clears every client's dangling
+  /// primary/referred trainer id, then deletes the Auth account itself —
+  /// which cascades away the `trainers` row, their own bookings/blocked
+  /// time, and frees the email for a genuinely fresh signup.
+  static Future<void> deleteCoachAccount(String trainerId) =>
+      _invokeFunction("delete-coach-account", {"trainerId": trainerId});
+
+  /// Coach/owner — Delete/Archive Behavior spec: a deleted client is "fully
+  /// removed; must sign up and register again from step one as a new
+  /// profile." Runs server-side (delete-client-account, service-role):
+  /// nulls audit-trail references on other people's rows, deletes this
+  /// client's own subject-of-record rows, strips them out of every squad
+  /// and challenge they were in, then deletes the Auth account itself —
+  /// which cascades away `clients`/`client_records`, their own bookings,
+  /// and frees the email for a genuinely fresh signup.
+  static Future<void> deleteClientAccount(String clientId) =>
+      _invokeFunction("delete-client-account", {"clientId": clientId});
+
+  static Map<String, dynamic> _trainerLocationToJson(TrainerLocation l) => {
+    "id": l.id,
+    "name": l.name,
+    if (l.address != null) "address": l.address,
+    if (l.hint != null) "hint": l.hint,
+    // Kept so a client can be told how far a coach's own location is. A
+    // location with no coordinates can be shown but never measured.
+    if (l.lat != null) "lat": l.lat,
+    if (l.lng != null) "lng": l.lng,
+  };
+
+  static Map<String, dynamic> _beforeAfterToJson(TrainerBeforeAfter b) => {
+    "id": b.id,
+    if (b.left != null) "left": b.left,
+    if (b.right != null) "right": b.right,
+  };
+
+  static Map<String, dynamic> _unavailabilityToJson(TrainerUnavailability u) =>
+      {
+        "id": u.id,
+        "startDate": u.startDate,
+        "endDate": u.endDate,
+        if (u.note != null) "note": u.note,
+      };
+
+  static Map<String, dynamic> _availabilityToJson(AvailabilityBlock b) => {
+    "sessionType": b.sessionType,
+    "discipline": b.discipline,
+    "byDay": b.byDay.map(
+      (weekday, slots) => MapEntry(weekday.toString(), slots),
+    ),
+    if (b.dates.isNotEmpty) "dates": b.dates,
+    if (b.durationMin != 60) "durationMin": b.durationMin,
+    if (b.locationName != null) "locationName": b.locationName,
+  };
+
+  /// `client_records.data` is a single JSONB column holding many features'
+  /// worth of state (see ClientRecord's own doc comment) — upsert replaces
+  /// the whole column, so every write here re-fetches the current blob and
+  /// merges the patch on top rather than reconstructing it from this app's
+  /// (currently partial) ClientRecord model, to avoid silently dropping
+  /// fields this app doesn't model yet (program/logs/tourSeen/...).
+  static Future<void> upsertClientRecordPatch(
+    String profileId,
+    Map<String, dynamic> patch,
+  ) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", profileId)
+        .maybeSingle();
+    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    final next = {...current, ...patch};
+    await client.from("client_records").upsert({
+      "profile_id": profileId,
+      "data": next,
+    });
+  }
+
+  /// Mirrors HabitSettingsPanel.jsx's toggle/addCustom/removeCustom — all
+  /// three just rewrite the whole `habitSettings` object, so one write
+  /// covers every caller.
+  static Future<void> updateClientHabitSettings(
+    String clientId, {
+    required List<String> enabled,
+    required List<HabitDef> custom,
+  }) => upsertClientRecordPatch(clientId, {
+    "habitSettings": {
+      "enabled": enabled,
+      "custom": custom
+          .map(
+            (h) => {
+              "id": h.id,
+              "label": h.label,
+              "emoji": h.emoji,
+              "custom": true,
+            },
+          )
+          .toList(),
+    },
+  });
+
+  /// Mirrors habitHelpers.js `saveHabitLog` — `client.habitLogs` is a flat
+  /// array keyed by `date`, not a map, so this re-fetches it, replaces
+  /// whichever entry (if any) already exists for [date], and writes the
+  /// whole array back — same shape as upsertClientRecordPatch but the
+  /// array-level merge means it can't just delegate to that helper.
+  static Future<void> updateClientHabitLog(
+    String clientId,
+    String date,
+    HabitLogEntry entry,
+  ) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", clientId)
+        .maybeSingle();
+    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    final logs = ((current["habitLogs"] as List?) ?? const [])
+        .whereType<Map>()
+        .where((m) => m["date"]?.toString() != date)
+        .toList();
+    logs.add({
+      "date": date,
+      "checked": entry.checked,
+      "energy": entry.energy,
+      "motivation": entry.motivation,
+    });
+    await client.from("client_records").upsert({
+      "profile_id": clientId,
+      "data": {...current, "habitLogs": logs},
+    });
+  }
+
+  static Map<String, dynamic> _commMessageToJson(CommMessage m) => {
+    "id": m.id,
+    "who": m.who,
+    "text": m.text,
+    "at": m.at,
+    "trainerId": m.trainerId,
+    "readByCoach": m.readByCoach,
+    "channel": m.channel,
+  };
+
+  static Future<void> updateClientComms(
+    String profileId,
+    List<CommMessage> comms,
+  ) => upsertClientRecordPatch(profileId, {
+    "comms": comms.map(_commMessageToJson).toList(),
+  });
+
+  // ── Chat: the `messages` table ─────────────────────────────────────────
+  // Chat used to be a jsonb blob on `client_records`, rewritten wholesale on
+  // every send. It's a real table now so the content filter and the block
+  // rules are enforced by the database (Apple guideline 1.2) instead of
+  // being a UI-only courtesy anyone could bypass by calling the API.
+
+  static CommMessage _messageFromRow(Map<String, dynamic> r) => CommMessage(
+    id: r["id"] as String,
+    who: r["who"] as String,
+    text: (r["body"] as String?) ?? "",
+    at: stamp(DateTime.tryParse((r["created_at"] as String?) ?? "")?.toLocal()),
+    trainerId: r["trainer_id"] as String?,
+    readByCoach: (r["read_by_coach"] as bool?) ?? false,
+    channel: r["channel"] as String?,
+    createdAt: DateTime.tryParse((r["created_at"] as String?) ?? "")?.toLocal(),
+  );
+
+  /// Turns the database's enforcement errors into something a person can
+  /// act on. The trigger raises `objectionable_content: <words>` or
+  /// `blocked: ...`; neither is fit to show anyone as-is.
+  /// Cheap shape check — enough to keep a sentinel like "owner" or
+  /// "business" out of a uuid column without pulling in a parser.
+  static bool _looksLikeUuid(String? v) =>
+      v != null &&
+      RegExp(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+          .hasMatch(v);
+
+  static Exception _chatError(Object e) {
+    final raw = e.toString();
+    if (raw.contains("objectionable_content")) {
+      return Exception(
+        "That message can't be sent. ONE Fitness has zero tolerance for "
+        "abusive or offensive language — please reword it and try again.",
+      );
+    }
+    if (raw.contains("blocked")) {
+      return Exception("You can't message this person because one of you has blocked the other.");
+    }
+    if (raw.contains("account_suspended")) {
+      return Exception("Your account has been suspended and can no longer send messages.");
+    }
+    // Anything else: say it didn't send without inventing a cause. The real
+    // error is logged so a genuine fault is still diagnosable.
+    // ignore: avoid_print
+    print("[sendMessage] failed: $raw");
+    return Exception("That message didn't send. Please try again.");
+  }
+
+  /// Sends one message. [who] is "client" or "trainer"; the sender is always
+  /// the signed-in user, which the table's own policy also enforces.
+  static Future<CommMessage> sendMessage({
+    required String clientId,
+    required String? trainerId,
+    required String who,
+    required String text,
+    String? channel,
+  }) async {
+    final senderId = currentUser?.id;
+    if (senderId == null) throw Exception("You're signed out — sign in and try again.");
+    // `trainer_id` is a real profiles FK, but the app's trainer-auth state
+    // uses sentinels that aren't ids at all: the owner signs in as the
+    // literal "owner", and the client-side recipient list offers a
+    // pseudo-coach called "business" for messaging the gym itself. Sending
+    // either straight through produced `invalid input syntax for type uuid`,
+    // which surfaced to the user as "check your connection".
+    //
+    // A staff member sending IS the trainer on the message, so their own id
+    // is the right value; anything else non-UUID becomes null (a message to
+    // the gym rather than to one coach).
+    final resolvedTrainerId = who == "trainer"
+        ? senderId
+        : (_looksLikeUuid(trainerId) ? trainerId : null);
+    try {
+      final row = await client.from("messages").insert({
+        "client_id": clientId,
+        "trainer_id": resolvedTrainerId,
+        "sender_id": senderId,
+        "who": who,
+        "body": text,
+        if (channel != null) "channel": channel,
+        "read_by_coach": who == "trainer",
+      }).select().single();
+      return _messageFromRow(row);
+    } catch (e) {
+      throw _chatError(e);
+    }
+  }
+
+  /// Every message in one client's thread, oldest first. Blocked users'
+  /// messages are already excluded by the table's own select policy.
+  static Future<List<CommMessage>> loadMessagesFor(String clientId) async {
+    final rows = await client
+        .from("messages")
+        .select()
+        .eq("client_id", clientId)
+        .order("created_at");
+    return (rows as List).cast<Map<String, dynamic>>().map(_messageFromRow).toList();
+  }
+
+  /// Every thread at once, keyed by client id — what the coach's chat list
+  /// needs on load.
+  static Future<Map<String, List<CommMessage>>> loadAllMessages() async {
+    final rows = await client.from("messages").select().order("created_at");
+    final out = <String, List<CommMessage>>{};
+    for (final r in (rows as List).cast<Map<String, dynamic>>()) {
+      (out[r["client_id"] as String] ??= []).add(_messageFromRow(r));
+    }
+    return out;
+  }
+
+  // ── Reporting and blocking (Apple guideline 1.2) ───────────────────────
+
+  /// Files a report against a piece of content or a user. [contentType] is
+  /// "message" | "profile" | "review" | "post" | "bio"; [excerpt] is a
+  /// snapshot so moderation still works if the original is edited or
+  /// deleted. The owner is notified so it can be acted on within 24 hours.
+  static Future<void> submitReport({
+    required String? reportedUserId,
+    required String contentType,
+    String? contentId,
+    String? excerpt,
+    required String reason,
+    String? note,
+  }) async {
+    final me = currentUser?.id;
+    if (me == null) throw Exception("You're signed out — sign in and try again.");
+    await client.from("reports").insert({
+      "reporter_id": me,
+      "reported_user_id": reportedUserId,
+      "content_type": contentType,
+      if (contentId != null) "content_id": contentId,
+      if (excerpt != null) "content_excerpt": excerpt.length > 500 ? excerpt.substring(0, 500) : excerpt,
+      "reason": reason,
+      if (note != null && note.trim().isNotEmpty) "note": note.trim(),
+    });
+    // Best effort — a failed notification must not lose the report, which
+    // is already safely stored above.
+    try {
+      await client.functions.invoke("notify-moderation", body: {
+        "kind": "report",
+        "reportedUserId": reportedUserId,
+        "contentType": contentType,
+        "reason": reason,
+        "excerpt": excerpt,
+        "note": note,
+      });
+    } catch (_) {}
+  }
+
+  /// Blocks another user. Takes effect immediately: the database stops the
+  /// two of them messaging each other in either direction, and hides the
+  /// blocked user's existing messages from the blocker.
+  static Future<void> blockUser(String blockedId) async {
+    final me = currentUser?.id;
+    if (me == null) throw Exception("You're signed out — sign in and try again.");
+    if (me == blockedId) throw Exception("You can't block yourself.");
+    await client.from("blocks").upsert(
+      {"blocker_id": me, "blocked_id": blockedId},
+      onConflict: "blocker_id,blocked_id",
+    );
+    try {
+      await client.functions.invoke("notify-moderation", body: {
+        "kind": "block",
+        "reportedUserId": blockedId,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> unblockUser(String blockedId) async {
+    final me = currentUser?.id;
+    if (me == null) return;
+    await client.from("blocks").delete().eq("blocker_id", me).eq("blocked_id", blockedId);
+  }
+
+  /// The people this user has blocked, newest first — for the Blocked users
+  /// list in Settings. Returns id -> display name.
+  static Future<List<({String id, String name})>> loadMyBlocks() async {
+    final me = currentUser?.id;
+    if (me == null) return [];
+    final rows = await client
+        .from("blocks")
+        .select("blocked_id, created_at, profiles!blocks_blocked_id_fkey(name)")
+        .eq("blocker_id", me)
+        .order("created_at", ascending: false);
+    return (rows as List).cast<Map<String, dynamic>>().map((r) {
+      final p = r["profiles"];
+      final name = p is Map ? (p["name"] as String?) ?? "Deleted user" : "Deleted user";
+      return (id: r["blocked_id"] as String, name: name);
+    }).toList();
+  }
+
+  /// Ids this user has blocked — used to hide their content from listings
+  /// the database can't filter on its own (coach cards, search results).
+  static Future<Set<String>> loadBlockedIds() async {
+    final me = currentUser?.id;
+    if (me == null) return {};
+    final rows = await client.from("blocks").select("blocked_id").eq("blocker_id", me);
+    return (rows as List).map((r) => r["blocked_id"] as String).toSet();
+  }
+
+  /// Read receipts for the coach viewing a thread.
+  static Future<void> markMessagesRead(String clientId) async {
+    await client
+        .from("messages")
+        .update({"read_by_coach": true})
+        .eq("client_id", clientId)
+        .eq("who", "client")
+        .eq("read_by_coach", false);
+  }
+
+  static Map<String, dynamic> _trainerNoteToJson(TrainerNote n) => {
+    "id": n.id,
+    "flag": n.flag,
+    "title": n.title,
+    "details": n.details,
+    "coachId": n.coachId,
+    "coachName": n.coachName,
+    "createdAt": n.createdAt,
+    "modifiedAt": n.modifiedAt,
+    "status": n.status,
+    "bodyArea": n.bodyArea,
+    "followUpRequired": n.followUpRequired,
+    "resolveBy": n.resolveBy,
+  };
+
+  static Future<void> updateClientTrainerNotes(
+    String profileId,
+    List<TrainerNote> notes,
+  ) => upsertClientRecordPatch(profileId, {
+    "trainerNotes": notes.map(_trainerNoteToJson).toList(),
+  });
+
+  /// Assigning a program to a client (ProgramBuilder.jsx) writes both here
+  /// (this client's own copy) and a separate copy into the shared
+  /// programs_library — see upsertProgramLibraryEntry.
+  static Future<void> updateClientSavedPrograms(
+    String profileId,
+    List<SavedProgram> programs,
+  ) => upsertClientRecordPatch(profileId, {
+    "savedPrograms": programs.map(_savedProgramToJson).toList(),
+  });
+
+  /// The client's live, currently-being-built workout split
+  /// (client.programDays) — mirrors ProgramBuilder.jsx's `persist`, called
+  /// on every single day/exercise edit, not just an explicit "Save".
+  static Future<void> updateClientProgramDays(
+    String profileId,
+    List<ProgramDay> days,
+  ) => upsertClientRecordPatch(profileId, {
+    "programDays": days.map(_programDayToJson).toList(),
+  });
+
+  /// `client_records.data.workoutLogs` — a completed logged session, either
+  /// self-logged by the client (SessionLoggerView via workout_tab.dart) or
+  /// logged on their behalf by a coach (SessionLoggerView via
+  /// trainer_home_screen.dart's Start Session) — see [WorkoutLogEntry.loggedBy].
+  /// Same shape as [updateClientProgramDays]: caller passes the full
+  /// accumulated list, not just the new entry.
+  static Future<void> updateClientWorkoutLogs(
+    String profileId,
+    List<WorkoutLogEntry> logs,
+  ) => upsertClientRecordPatch(profileId, {
+    "workoutLogs": logs.map(_workoutLogToJson).toList(),
+  });
+
+  /// `client_records.data.measurements` — the Body tab's weight/body-fat/
+  /// tape-measurement log (measurements_tab.dart). Same shape as
+  /// [updateClientProgramDays]: caller passes the full accumulated list.
+  static Future<void> updateClientMeasurements(
+    String profileId,
+    List<Measurement> measurements,
+  ) => upsertClientRecordPatch(profileId, {
+    "measurements": measurements.map(_measurementToJson).toList(),
+  });
+
+  /// `client_records.data.photos` — the Photos tab's progress-photo log
+  /// (progress_photos_tab.dart). Each entry's `img` is already a compressed
+  /// data URL (see pickProgressPhotoDataUrl) by the time it gets here.
+  static Future<void> updateClientPhotos(
+    String profileId,
+    List<ProgressPhoto> photos,
+  ) => upsertClientRecordPatch(profileId, {
+    "photos": photos.map(_progressPhotoToJson).toList(),
+  });
+
+  /// `client_records.data.challengeProgress` — keyed by challenge id, each a
+  /// list of manually-logged entries (ClientChallengeDetail.jsx). Not
+  /// verified against a real populated record (every real one seen so far
+  /// is empty here), but it's a simple, single-shape field — unlike the
+  /// program/logs vs savedPrograms/workoutLogs ambiguity that held up Part
+  /// 1, there's no competing second system for this one in the JS source.
+  static Future<void> updateClientChallengeProgress(
+    String profileId,
+    Map<String, List<ChallengeProgressEntry>> progress,
+  ) => upsertClientRecordPatch(profileId, {
+    "challengeProgress": progress.map(
+      (k, v) => MapEntry(
+        k,
+        v.map((e) => {"value": e.value, "loggedAt": e.loggedAt}).toList(),
+      ),
+    ),
+  });
+
+  /// `client_records.data.challengeBadges` — mirrors CoachChallengeDetail.jsx
+  /// `awardBadges`'s direct JSONB patch (deliberately bypasses the
+  /// points-ledger/merit-badge Edge Functions, same as the web source).
+  static Future<void> updateClientChallengeBadges(
+    String profileId,
+    List<ChallengeBadge> badges,
+  ) => upsertClientRecordPatch(profileId, {
+    "challengeBadges": badges
+        .map((b) => {"challengeId": b.challengeId, "name": b.name, "awardedAt": b.awardedAt})
+        .toList(),
+  });
+
+  /// `client_records.data.intake` is itself keyed by assessment
+  /// ("personalTraining" | "nutritional" | ...) — a plain
+  /// upsertClientRecordPatch({"intake": {...}}) would replace that whole
+  /// object and wipe out every other already-submitted form, so this reads
+  /// the current nested map, merges just the one key, and writes the full
+  /// blob back (same fetch-then-merge shape as upsertClientRecordPatch
+  /// itself, one level deeper).
+  /// The private bucket holding intake attachments. Object names are
+  /// `<profile id>/<assessment key>/<uuid>.<ext>` — the first segment is what
+  /// migration 31's policies match on to keep a client inside their own
+  /// folder, so nothing here may write a path shaped any other way.
+  static const kIntakeFilesBucket = "intake-files";
+
+  /// Per-file ceiling. The bucket enforces 10MB itself (migration 31); this
+  /// is the same number said earlier, so a client learns their file is too
+  /// big before waiting for the whole upload to be rejected.
+  static const kIntakeFileMaxBytes = 10 * 1024 * 1024;
+
+  /// Uploads one file and returns the pointer to record on the intake. The
+  /// bytes never touch `client_records`; see [IntakeAttachment].
+  static Future<IntakeAttachment> uploadIntakeFile({
+    required String profileId,
+    required String assessmentKey,
+    required String name,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    final id = const Uuid().v4();
+    final ext = switch (contentType) {
+      "application/pdf" => "pdf",
+      "image/png" => "png",
+      "text/plain" => "txt",
+      _ => "jpg",
+    };
+    final path = "$profileId/$assessmentKey/$id.$ext";
+    await client.storage.from(kIntakeFilesBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(contentType: contentType),
+        );
+    return IntakeAttachment(
+      id: id,
+      name: name,
+      path: path,
+      size: bytes.length,
+      contentType: contentType,
+      uploadedAt: DateTime.now().toIso8601String(),
+    );
+  }
+
+  /// A short-lived URL for opening one attachment. Minted per view rather
+  /// than stored: the bucket is private precisely so that a link to someone's
+  /// bloodwork stops working, and a URL kept in the record would not.
+  static Future<String> signedIntakeFileUrl(String path) =>
+      client.storage.from(kIntakeFilesBucket).createSignedUrl(path, 600);
+
+  static Future<void> deleteIntakeFile(String path) async {
+    await client.storage.from(kIntakeFilesBucket).remove([path]);
+  }
+
+  /// Records the attachment list without touching answers or completion.
+  ///
+  /// Attachments save the moment they're added, rather than waiting for
+  /// "Save & mark complete". A client who uploads a blood panel and then
+  /// closes the app has uploaded it — the bytes are already in the bucket,
+  /// and leaving the record not knowing about them would strand the file
+  /// where nothing could ever reach it or clean it up.
+  static Future<void> updateClientIntakeAttachments(
+    String profileId,
+    String assessmentKey,
+    List<IntakeAttachment> attachments,
+  ) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", profileId)
+        .maybeSingle();
+    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    final intakeField = current["intake"];
+    final currentIntake =
+        intakeField is Map ? intakeField.cast<String, dynamic>() : const <String, dynamic>{};
+    final existing = currentIntake[assessmentKey];
+    final entry = existing is Map ? existing.cast<String, dynamic>() : <String, dynamic>{};
+    await client.from("client_records").upsert({
+      "profile_id": profileId,
+      "data": {
+        ...current,
+        "intake": {
+          ...currentIntake,
+          assessmentKey: {
+            ...entry,
+            "attachments": [for (final a in attachments) a.toJson()],
+          },
+        },
+      },
+    });
+  }
+
+  /// Saves one intake form.
+  ///
+  /// [keepPrevious] archives whatever completed submission is already on the
+  /// row before writing this one, so the earlier answers stay readable — pass
+  /// it when a questionnaire is being submitted. It is off by default because
+  /// the physical assessment re-saves itself with `completed: true` every
+  /// time a coach touches a note, and each of those is the same submission
+  /// being edited, not a new one; archiving them would bury the real
+  /// re-intakes under a pile of near-identical copies.
+  static Future<void> updateClientIntake(
+    String profileId,
+    String assessmentKey,
+    IntakeRecord record, {
+    bool keepPrevious = false,
+  }) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", profileId)
+        .maybeSingle();
+    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    // Some rows carry `intake` as a stale `[]` instead of `{}` (see the same
+    // check in _clientRecordFromJson) — `as Map?` throws on those, so every
+    // save for that client failed silently as "couldn't save".
+    final intakeField = current["intake"];
+    final currentIntake =
+        intakeField is Map ? intakeField.cast<String, dynamic>() : const <String, dynamic>{};
+    // What's on the row right now, which is what gets archived — not
+    // `record.history`. The caller's copy came from a roster load that may be
+    // minutes old; this one was read a line ago, same fetch-then-merge
+    // reasoning as the rest of this method.
+    final priorRaw = currentIntake[assessmentKey];
+    final prior = priorRaw is Map ? priorRaw.cast<String, dynamic>() : null;
+    final priorHistory =
+        ((prior?["history"] as List?) ?? const []).whereType<Map>().toList();
+    final nextHistory = keepPrevious && prior?["completed"] == true
+        ? [
+            {
+              "answers": prior?["answers"] ?? const <String, dynamic>{},
+              "at": prior?["at"],
+              "by": prior?["by"],
+              "attachments": prior?["attachments"] ?? const [],
+            },
+            ...priorHistory,
+          ].take(kMaxIntakeHistory).toList()
+        : priorHistory;
+
+    final nextIntake = {
+      ...currentIntake,
+      assessmentKey: {
+        // Spread first so the modelled fields below always win — `extra` is
+        // only ever the keys this app doesn't model.
+        ...record.extra,
+        "answers": record.answers,
+        "completed": record.completed,
+        "at": record.at,
+        "by": record.by,
+        "attachments": [for (final a in record.attachments) a.toJson()],
+        if (nextHistory.isNotEmpty) "history": nextHistory,
+      },
+    };
+    await client.from("client_records").upsert({
+      "profile_id": profileId,
+      "data": {...current, "intake": nextIntake},
+    });
+  }
+
+  /// `client_records.data.tourSeen` — one-time "seen" flags for the
+  /// Dashboard/Drawer coachmark walkthroughs (Coachmark.jsx), keyed
+  /// {dashboard, drawer} same as the web. Fetch-then-merge for the same
+  /// reason as updateClientIntake: a plain patch would blank out whichever
+  /// of the two flags isn't being set here.
+  static Future<void> updateClientTourSeen(
+    String profileId, {
+    bool? dashboard,
+    bool? drawer,
+  }) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", profileId)
+        .maybeSingle();
+    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+    final tourSeenField = current["tourSeen"];
+    final currentTourSeen =
+        tourSeenField is Map ? tourSeenField.cast<String, dynamic>() : const <String, dynamic>{};
+    final nextTourSeen = {
+      ...currentTourSeen,
+      if (dashboard != null) "dashboard": dashboard,
+      if (drawer != null) "drawer": drawer,
+    };
+    await client.from("client_records").upsert({
+      "profile_id": profileId,
+      "data": {...current, "tourSeen": nextTourSeen},
+    });
+  }
+
+  static Map<String, dynamic> _macroTargetsToJson(MacroTargets t) => t.asMap();
+
+  static Map<String, dynamic> _targetsSplitToJson(DaySplit<MacroTargets> t) => {
+    "training": _macroTargetsToJson(t.training),
+    "rest": _macroTargetsToJson(t.rest),
+  };
+
+  static Map<String, dynamic> _mealBudgetsSplitToJson(
+    DaySplit<Map<String, String>> mb,
+  ) => {"training": mb.training, "rest": mb.rest};
+
+  static Map<String, dynamic> _ingredientToJson(Ingredient i) => i.toJson();
+
+  static Map<String, dynamic> _nutritionMealToJson(NutritionMeal m) => {
+    "id": m.id,
+    "name": m.name,
+    if (m.time != null) "time": m.time,
+    "calories": m.calories,
+    "protein": m.protein,
+    "carbs": m.carbs,
+    "fats": m.fats,
+    if (m.notes != null) "notes": m.notes,
+    if (m.instructions != null) "instructions": m.instructions,
+    "isCustom": m.isCustom,
+    "ingredients": m.ingredients.map(_ingredientToJson).toList(),
+    if (m.targetCalories != null) "targetCalories": m.targetCalories,
+    if (m.scale != null) "scale": m.scale,
+    if (m.scaledIngredients != null)
+      "scaledIngredients": m.scaledIngredients!.map(_ingredientToJson).toList(),
+    if (m.scaledMacros != null) "scaledMacros": m.scaledMacros!.toJson(),
+    if (m.overrides.isNotEmpty)
+      "overrides": m.overrides.map((k, v) => MapEntry(k.toString(), v)),
+  };
+
+  static Map<String, dynamic> _nutritionPlanToJson(NutritionPlan n) => {
+    "targets": _targetsSplitToJson(
+      DaySplit(training: n.trainingTargets, rest: n.restTargets),
+    ),
+    "mealBudgets": _mealBudgetsSplitToJson(n.mealBudgets),
+    "breakfast": n.breakfast.map(_nutritionMealToJson).toList(),
+    "lunch": n.lunch.map(_nutritionMealToJson).toList(),
+    "dinner": n.dinner.map(_nutritionMealToJson).toList(),
+    "snacks": n.snacks.map(_nutritionMealToJson).toList(),
+    "smoothies": n.smoothies.map(_nutritionMealToJson).toList(),
+    if (n.guidelines != null) "guidelines": n.guidelines,
+    if (n.extraGroceryItems != null) "extraGroceryItems": n.extraGroceryItems,
+    "attachments": n.attachments
+        .map(
+          (a) => {
+            "id": a.id,
+            "name": a.name,
+            "dataUrl": a.dataUrl,
+            "size": a.size,
+          },
+        )
+        .toList(),
+  };
+
+  /// `client_records.data.nutrition` — the client's single active nutrition
+  /// program (targets/meal budgets/suggested meals/guidelines). Whole-object
+  /// replace, matching NutritionBuilder.jsx's own `save = (n) => persist({
+  /// ...client, nutrition: n })` — there's nothing else nested under this
+  /// key to preserve.
+  static Future<void> updateClientNutrition(
+    String profileId,
+    NutritionPlan plan,
+  ) => upsertClientRecordPatch(profileId, {
+    "nutrition": _nutritionPlanToJson(plan),
+  });
+
+  /// `client_records.data.myMeals` — the meals a client picked for
+  /// themselves per category, against the calorie budget their coach's
+  /// program set. Written by the client from their own Nutrition tab (they
+  /// may update their own record — see client_records_update_self_or_staff).
+  static Future<void> updateClientChosenMeals(
+    String profileId,
+    Map<String, List<NutritionMeal>> byCategory,
+  ) => upsertClientRecordPatch(profileId, {
+    "myMeals": {
+      for (final e in byCategory.entries) e.key: e.value.map(_nutritionMealToJson).toList(),
+    },
+  });
+
+  /// `client_records.data.savedNutritionPrograms` — the AI-draft review
+  /// queue plus any coach-saved target sets. Whole-list replace (same
+  /// pattern as updateClientSavedPrograms) — callers pass the full list
+  /// including untouched entries.
+  static Future<void> updateClientSavedNutritionPrograms(
+    String profileId,
+    List<NutritionProgramEntry> programs,
+  ) => upsertClientRecordPatch(profileId, {
+    "savedNutritionPrograms": programs
+        .map(
+          (p) => {
+            "id": p.id,
+            "name": p.name,
+            "type": "nutrition",
+            "status": p.status,
+            "source": p.source,
+            "targets": _targetsSplitToJson(
+              DaySplit(training: p.trainingTargets, rest: p.restTargets),
+            ),
+            "mealBudgets": _mealBudgetsSplitToJson(p.mealBudgets),
+            if (p.guidelines != null) "guidelines": p.guidelines,
+            if (p.createdAt != null) "createdAt": p.createdAt,
+            if (p.createdBy != null) "createdBy": p.createdBy,
+          },
+        )
+        .toList(),
+  });
+
+  /// Drafts (or, with forceRegenerate, redrafts) whole-number Training/Rest
+  /// Day calorie & macro targets, water, a per-meal calorie budget split,
+  /// and coaching notes from this client's Nutrition Intake answers via
+  /// Claude — mirrors generateAiNutritionProgram in supabaseData.js. Writes
+  /// straight into client_records server-side (service-role); the caller
+  /// must re-fetch (loadClientRecord) to see the result, same as the web
+  /// app's own refreshClient — nothing here reflects it locally.
+  /// Response is `{ok:true, programId}` or, for an expected non-error
+  /// condition, `{ok:false, reason: "nutrition-intake-incomplete"|"program-exists"}`.
+  /// Adds the signed-in client to a challenge.
+  ///
+  /// Goes through `join_challenge` (migration 34) rather than writing the
+  /// participant list back wholesale: the old read-append-write meant two
+  /// clients joining at once each sent the list as they last saw it, and the
+  /// second write dropped the first one back out again — silently, with
+  /// their Join button simply reappearing.
+  ///
+  /// The function takes the id from `auth.uid()`, so it can only ever enrol
+  /// the caller, and it refuses a challenge that has already ended.
+  static Future<void> joinChallenge(String challengeId) async {
+    await client.rpc("join_challenge", params: {"p_challenge_id": challengeId});
+  }
+
+  /// The ranked standings for one challenge.
+  ///
+  /// Computed server-side because a client may only read their own
+  /// `client_records` row, so the app can work out its own score and nobody
+  /// else's — which is why the challenge screen used to show a leaderboard
+  /// containing exactly one person. Returns the finished standings only:
+  /// names, scores and places, never the records behind them.
+  ///
+  /// Empty for a client who hasn't joined, and for a challenge nobody has.
+  static Future<List<LeaderboardEntry>> loadChallengeLeaderboard(String challengeId) async {
+    final res = await _invokeFunction("challenge-leaderboard", {"challengeId": challengeId});
+    return [
+      for (final e in (res["entries"] as List?) ?? const [])
+        if (e is Map)
+          LeaderboardEntry(
+            clientId: e["clientId"] as String? ?? "",
+            name: e["name"] as String? ?? "Former member",
+            score: (e["score"] as num?)?.toDouble() ?? 0,
+          ),
+    ];
+  }
+
+  static Future<Map<String, dynamic>> generateAiNutritionProgram(
+    String clientId, {
+    bool forceRegenerate = false,
+  }) => _invokeFunction("generate-ai-nutrition-program", {
+    "clientId": clientId,
+    "forceRegenerate": forceRegenerate,
+  });
+
+  /// Claude — mirrors generateAiWorkoutProgram in supabaseData.js. Writes a
+  /// draft straight into client_records.data.savedPrograms server-side
+  /// (service-role, `{source:"ai", status:"draft"}`); the caller must
+  /// re-fetch (loadClientRecord) to see the result. Response is
+  /// `{ok:true, programId}` or `{ok:false, reason: "intakes-incomplete"|"program-exists"}`.
+  static Future<Map<String, dynamic>> generateAiWorkoutProgram(
+    String clientId, {
+    bool forceRegenerate = false,
+  }) => _invokeFunction("generate-ai-workout-program", {
+    "clientId": clientId,
+    "forceRegenerate": forceRegenerate,
+  });
+
+  /// Inserts and returns the server-assigned row (real id, defaults applied)
+  /// — mirrors insertBooking in supabaseData.js. `location` only ever
+  /// round-trips a bare name here since that's all `Booking.locationName`
+  /// carries; see `_locationNameFrom`.
+  static Future<Booking> insertBooking(Booking b) async {
+    final row = {
+      "client_id": b.clientId,
+      "trainer_id": b.trainerId,
+      "date": b.date,
+      "slot_min": b.slot,
+      "session_type": b.sessionType,
+      "discipline": b.discipline,
+      "location": b.locationName != null ? {"name": b.locationName} : null,
+      "is_physical_assessment": b.isPhysicalAssessment,
+      "overridden_by": b.overriddenBy,
+      "overridden_at": b.overriddenAt,
+      "override_reason": b.overrideReason,
+      "plan_id": b.planId,
+      "duration_min": b.durationMin,
+    };
+    final data = await client.from("bookings").insert(row).select().single();
+    return _bookingFromRow(data);
+  }
+
+  /// Cancels a booking and hands the freed slot to whoever is next on the
+  /// waitlist for it.
+  ///
+  /// The slot details are read BEFORE the delete — afterwards the row is
+  /// gone and there'd be nothing left to identify which slot just freed up.
+  /// Offering is best-effort: a waitlist problem must never leave the client
+  /// still holding a booking they just cancelled.
+  ///
+  /// [archive] is true for a real cancellation (not a reschedule): the visit
+  /// is first recorded in `cancelled_visits` as early or late, so it still
+  /// shows in the client's visit history.
+  static Future<void> deleteBooking(String id, {bool archive = false}) async {
+    if (archive) {
+      try {
+        await client.rpc("archive_cancelled_booking", params: {"p_booking_id": id});
+      } catch (_) {
+        // History is best-effort; never block the cancellation itself.
+      }
+    }
+    Map<String, dynamic>? slot;
+    try {
+      slot = await client
+          .from("bookings")
+          .select("trainer_id, date, slot_min")
+          .eq("id", id)
+          .maybeSingle();
+    } catch (_) {
+      slot = null;
+    }
+
+    await client.from("bookings").delete().eq("id", id);
+
+    if (slot != null) {
+      try {
+        await offerWaitlistSlot(
+          trainerId: slot["trainer_id"] as String,
+          date: slot["date"].toString(),
+          slot: _asInt(slot["slot_min"]) ?? 0,
+        );
+      } catch (_) {
+        // Logged server-side; the cancellation itself already succeeded.
+      }
+    }
+  }
+
+  /// Removes a booking WITHOUT offering the slot on to the waitlist.
+  ///
+  /// For a row that never really held a seat: the replacement bookings made
+  /// part-way through a session move that then failed, which are rolled back
+  /// (see session_drag.dart). Those existed for a moment and freed nothing,
+  /// so handing them to the waitlist would offer someone a session that
+  /// isn't there. Everything a client or coach actually cancels goes through
+  /// [deleteBooking] instead.
+  static Future<void> discardBooking(String id) async {
+    await client.from("bookings").delete().eq("id", id);
+  }
+
+  static WaitlistEntry _waitlistFromRow(Map<String, dynamic> row) =>
+      WaitlistEntry(
+        id: row["id"] as String,
+        clientId: row["client_id"] as String,
+        clientName: row["client_name"] as String? ?? "",
+        trainerId: row["trainer_id"] as String,
+        trainerName: row["trainer_name"] as String? ?? "",
+        date: row["date"] as String,
+        slot: _asInt(row["slot"]) ?? 0,
+        sessionType: row["session_type"] as String,
+        discipline: row["discipline"] as String?,
+        status: row["status"] as String,
+        position: _asInt(row["position"]),
+        addedAt: row["added_at"] as String?,
+        requestedAt: row["requested_at"] as String?,
+        seriesId: row["series_id"] as String?,
+        offerExpiresAt: DateTime.tryParse(row["offer_expires_at"]?.toString() ?? ""),
+      );
+
+  static Future<List<WaitlistEntry>> loadWaitlist() async {
+    final rows = await client.from("waitlist").select();
+    return _safeMap(rows, _waitlistFromRow);
+  }
+
+  static Future<WaitlistEntry> insertWaitlistEntry(WaitlistEntry e) async {
+    final row = {
+      "client_id": e.clientId,
+      "client_name": e.clientName,
+      "trainer_id": e.trainerId,
+      "trainer_name": e.trainerName,
+      "date": e.date,
+      "slot": e.slot,
+      "session_type": e.sessionType,
+      "discipline": e.discipline,
+      "status": e.status,
+      "position": e.position,
+      "added_at": e.addedAt,
+      "requested_at": e.requestedAt,
+      "series_id": e.seriesId,
+    };
+    final data = await client.from("waitlist").insert(row).select().single();
+    return _waitlistFromRow(data);
+  }
+
+  /// Offers a freed slot to whoever is next in line for it. Called after a
+  /// cancellation; the server decides who that is.
+  static Future<void> offerWaitlistSlot({
+    required String trainerId,
+    required String date,
+    required int slot,
+  }) =>
+      _invokeFunction("offer-waitlist-slot", {
+        "trainerId": trainerId,
+        "date": date,
+        "slot": slot,
+      });
+
+  /// Answers a "do you want this spot?" offer. Accepting books it; declining
+  /// passes it to the next person waiting.
+  static Future<bool> respondToWaitlistOffer({
+    required String entryId,
+    required bool accept,
+  }) async {
+    final data = await _invokeFunction("respond-waitlist-offer", {
+      "entryId": entryId,
+      "accept": accept,
+    });
+    return data["booked"] == true;
+  }
+
+  static Future<void> deleteWaitlistEntry(String id) async {
+    await client.from("waitlist").delete().eq("id", id);
+  }
+
+  /// `created_by` defaults server-side to auth.uid() — the owner's app-side
+  /// identifier is the literal string "owner", not their real uuid, so it's
+  /// never sent from here (same reasoning as insertBlockedTime's JS
+  /// counterpart).
+  static Future<BlockedTime> insertBlockedTime(BlockedTime bt) async {
+    final row = {
+      "trainer_id": bt.trainerId,
+      "date": bt.date,
+      "start_min": bt.allDay ? null : bt.startMin,
+      "end_min": bt.allDay ? null : bt.endMin,
+      "full_day": bt.allDay,
+      "reason": bt.reason,
+    };
+    final data = await client
+        .from("blocked_time")
+        .insert(row)
+        .select()
+        .single();
+    return _blockedTimeFromRow(data);
+  }
+
+  /// Cancelled visits for one client (they no longer have a booking row).
+  static Future<List<Map<String, dynamic>>> loadCancelledVisits(String clientId) async {
+    final rows = await client
+        .from("cancelled_visits")
+        .select()
+        .eq("client_id", clientId)
+        .order("date", ascending: false);
+    return (rows as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> updateBookingAttendance(String id, String? status) async {
+    await client
+        .from("bookings")
+        .update({"attendance_status": status})
+        .eq("id", id);
+    // Late Cancel / No-Show carry a fee. It is collected server-side, once per
+    // booking, from the saved card; if that fails (or there is no card) the
+    // full amount goes onto the client's balance. Never blocks marking.
+    if (status == "late-cancel" || status == "no-show" || status == "early-cancel") {
+      try {
+        await client.functions.invoke("charge-attendance-fee", body: {"bookingId": id});
+      } catch (e) {
+        // ignore: avoid_print
+        print("[attendance fee] failed: $e");
+      }
+    }
+  }
+
+  /// A client's account balance in cents: negative = they owe the gym,
+  /// positive = credit.
+  static Future<int> loadBalanceCents(String clientId) async {
+    final row = await client
+        .from("clients")
+        .select("balance_cents, has_outstanding_balance")
+        .eq("profile_id", clientId)
+        .maybeSingle();
+    return (row?["balance_cents"] as num?)?.toInt() ?? 0;
+  }
+
+  /// Staff: set a client's balance to an exact amount (cents).
+  static Future<int> setClientBalance(String clientId, int cents) async {
+    final res = await client.rpc("set_client_balance", params: {"p_client": clientId, "p_cents": cents});
+    return (res as num?)?.toInt() ?? cents;
+  }
+
+  /// The owner's activity feed, newest first.
+  ///
+  /// Capped rather than paged: this answers "what happened recently", and a
+  /// gym generates a few hundred entries a month. RLS already refuses it to
+  /// anyone who isn't the owner, so an empty list is the correct answer for
+  /// a coach rather than an error.
+  static Future<List<ActivityEntry>> loadActivityLog({int limit = 300}) async {
+    final rows = await client
+        .from("activity_log")
+        .select()
+        .order("at", ascending: false)
+        .limit(limit);
+    return rows
+        .map((r) => ActivityEntry.fromJson(r.cast<String, dynamic>()))
+        .whereType<ActivityEntry>()
+        .toList();
+  }
+
+  /// Remembers where a client said they are, so distances survive leaving
+  /// the screen.
+  ///
+  /// Their own row, their own position — no elevated path needed. Geocoding
+  /// their city instead answers with the city centre, which is the error
+  /// this removes.
+  static Future<void> updateClientHomePoint(
+    String profileId,
+    double lat,
+    double lng,
+  ) async {
+    await client
+        .from("clients")
+        .update({"home_lat": lat, "home_lng": lng})
+        .eq("profile_id", profileId);
+  }
+
+  /// A client arriving before their booked time and starting anyway.
+  ///
+  /// Their session is at 9pm but they're standing in the gym at six, so
+  /// this checks them in against that same booking rather than inventing a
+  /// new one — the slot they paid for is the slot they're using, just
+  /// earlier. [attendance_marked_at] records when they actually turned up,
+  /// which is what makes an early arrival visible to the coach rather than
+  /// silently rewriting the schedule.
+  static Future<void> checkInToBooking(String bookingId) async {
+    await client
+        .from("bookings")
+        .update({
+          "attendance_status": "checked-in",
+          "attendance_marked_at": DateTime.now().toUtc().toIso8601String(),
+          // What tells this apart from a coach ticking someone present.
+          // Only the client's own early start writes it, and it is what
+          // lets their coach start the session ahead of its time.
+          "client_started_at": DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq("id", bookingId);
+  }
+
+  // ── Live sessions and Beep Your Coach ──────────────────────────────────
+
+  /// Every session currently running. Small by nature — a gym has a handful
+  /// of coaches — and RLS already narrows it to the caller's own sessions
+  /// plus any they're booked into.
+  static Future<List<LiveSession>> loadLiveSessions() async {
+    final rows = await client.from("session_runs").select().isFilter("ended_at", null);
+    return rows
+        .map((r) => LiveSession.fromJson(r.cast<String, dynamic>()))
+        .whereType<LiveSession>()
+        .toList();
+  }
+
+  /// The coach starting a session, which is what switches Beep Your Coach on
+  /// for everyone booked into it.
+  ///
+  /// Re-starting a session already running returns the existing one rather
+  /// than failing: a coach who backs out of the screen and comes back in
+  /// hasn't ended anything, and a second row would split the beeps in two.
+  static Future<LiveSession?> startSessionRun({
+    required String trainerId,
+    required String date,
+    required int slotMin,
+    required String sessionType,
+    int durationMin = 60,
+    String? location,
+  }) async {
+    final existing = await client
+        .from("session_runs")
+        .select()
+        .eq("trainer_id", trainerId)
+        .eq("date", date)
+        .eq("slot_min", slotMin)
+        .isFilter("ended_at", null)
+        .maybeSingle();
+    if (existing != null) {
+      return LiveSession.fromJson(existing.cast<String, dynamic>());
+    }
+
+    final row = await client
+        .from("session_runs")
+        .insert({
+          "trainer_id": trainerId,
+          "date": date,
+          "slot_min": slotMin,
+          "session_type": sessionType,
+          // From the booking, so a 30- or 90-minute session counts down
+          // from its own length rather than an assumed hour.
+          "duration_min": durationMin,
+          "location": location,
+        })
+        .select()
+        .single();
+    return LiveSession.fromJson(row.cast<String, dynamic>());
+  }
+
+  /// Ending the session turns Beep Your Coach off for everyone in it.
+  static Future<void> endSessionRun(String id) async {
+    await client
+        .from("session_runs")
+        .update({"ended_at": DateTime.now().toUtc().toIso8601String()})
+        .eq("id", id);
+  }
+
+  /// Beeps for one running session — the coach's queue, and the client's own
+  /// outstanding requests.
+  static Future<List<Beep>> loadBeepsForRun(String sessionRunId) async {
+    final rows = await client
+        .from("beeps")
+        .select()
+        .eq("session_run_id", sessionRunId)
+        .order("created_at");
+    return rows
+        .map((r) => Beep.fromJson(r.cast<String, dynamic>()))
+        .whereType<Beep>()
+        .toList();
+  }
+
+  /// A client asking for the coach. The insert is direct rather than through
+  /// an Edge Function on purpose: the alert has to be instant, and a row
+  /// landing in `beeps` is what realtime pushes to the coach's open session
+  /// screen. Who may insert what is enforced by RLS, which re-checks that
+  /// the session is live, semi-private, and one this client is booked into.
+  static Future<Beep?> sendBeep({
+    required String sessionRunId,
+    required String trainerId,
+    required BeepKind kind,
+    String? exercise,
+  }) async {
+    final row = await client
+        .from("beeps")
+        .insert({
+          "session_run_id": sessionRunId,
+          "client_id": currentUser?.id,
+          "trainer_id": trainerId,
+          "kind": kind.key,
+          if (exercise != null && exercise.trim().isNotEmpty) "exercise": exercise.trim(),
+        })
+        .select()
+        .single();
+    return Beep.fromJson(row.cast<String, dynamic>());
+  }
+
+  /// The coach's one tap. A database trigger refuses this from anyone but
+  /// the coach it's addressed to, so the client can never make their own
+  /// beep read "Coach is coming".
+  static Future<void> acknowledgeBeep(String id) async {
+    await client
+        .from("beeps")
+        .update({"acknowledged_at": DateTime.now().toUtc().toIso8601String()})
+        .eq("id", id);
+  }
+
+  /// The client taking it back — including an accidental Done, and including
+  /// after the coach has already acknowledged. It clears on the coach's side
+  /// either way.
+  static Future<void> cancelBeep(String id) async {
+    await client
+        .from("beeps")
+        .update({"cancelled_at": DateTime.now().toUtc().toIso8601String()})
+        .eq("id", id);
+  }
+
+  /// Opportunistic no-cron sweep (same shape as [checkGymCitizenExpiry] —
+  /// safe to call speculatively on coach dashboard load, a no-op when
+  /// `bookingIds` is empty) that auto-resolves past bookings nobody ever
+  /// marked attendance for to "no-show", so a coach isn't left reacting to
+  /// sessions that already happened. Reversible like any other attendance
+  /// write — a coach can still change it after.
+  static Future<void> markBookingsNoShow(List<String> bookingIds) async {
+    if (bookingIds.isEmpty) return;
+    await client
+        .from("bookings")
+        .update({"attendance_status": "no-show"})
+        .inFilter("id", bookingIds);
+  }
+
+  /// There is no insert/update/delete RLS policy on `points_ledger` or
+  /// `merit_badges` for any role, by design (see grant-points/index.ts's own
+  /// doc comment) — every write to either table has to go through one of
+  /// these Edge Functions, which run under the service role after doing
+  /// their own auth/role/cap checks server-side. `FunctionsHttpException`'s
+  /// `details` is already-decoded JSON (unlike supabase-js, which hands
+  /// back a raw Response the caller has to parse), so unwrapping the
+  /// function's own `{error: "..."}` body is a lot less code than
+  /// supabaseData.js's `invokeFunctionOrThrow` needs.
+  static Future<Map<String, dynamic>> _invokeFunction(
+    String name,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final res = await client.functions.invoke(name, body: body);
+      final data = res.data;
+      return data is Map ? data.cast<String, dynamic>() : <String, dynamic>{};
+    } on FunctionException catch (e) {
+      final details = e.details;
+      final detail = details is Map ? details["error"]?.toString() : null;
+      throw Exception(detail ?? e.reasonPhrase ?? "Request failed.");
+    }
+  }
+
+  /// Coach/owner discretionary grant — amount must be 1, 3, or 5; reason
+  /// required (min 5 chars). Server enforces the 5/month/coach/client cap.
+  static Future<void> grantPoints(String clientId, int amount, String reason) =>
+      _invokeFunction("grant-points", {
+        "clientId": clientId,
+        "amount": amount,
+        "reason": reason,
+      });
+
+  /// Voids one specific prior earn/grant row. reason required.
+  static Future<void> voidPoints(String ledgerRowId, String reason) =>
+      _invokeFunction("void-points", {
+        "ledgerRowId": ledgerRowId,
+        "reason": reason,
+      });
+
+  /// Owner-only general point removal (FIFO, no specific row targeted).
+  static Future<void> deductPoints(
+    String clientId,
+    int amount,
+    String reason,
+  ) => _invokeFunction("deduct-points", {
+    "clientId": clientId,
+    "amount": amount,
+    "reason": reason,
+  });
+
+  /// Redeems points against an ALREADY-ACTIVE Stripe subscription — fails
+  /// with a clear message for any client without one (package/program
+  /// plans, or a membership plan never actually checked out through
+  /// real Stripe), which is expected until Part 8 wires real payments.
+  static Future<Map<String, dynamic>> redeemPoints(String clientId) =>
+      _invokeFunction("redeem-points", {"clientId": clientId});
+
+  /// Client-triggered automatic eligibility check — mirrors awardMeritBadge
+  /// in supabaseData.js. Safe to call speculatively/repeatedly (idempotent
+  /// server-side); returns `{ok:true, badgeKey}` on a genuinely fresh award
+  /// or `{ok:true, alreadyEarned:true}`/an error otherwise — callers treat a
+  /// thrown error as "not eligible yet", not a failure worth surfacing.
+  static Future<Map<String, dynamic>> awardMeritBadge(
+    String clientId,
+    String badgeKey, {
+    String? sourceRefId,
+  }) => _invokeFunction("award-merit-badge", {
+    "clientId": clientId,
+    "badgeKey": badgeKey,
+    if (sourceRefId != null) "sourceRefId": sourceRefId,
+  });
+
+  /// Coach/owner manual award — badgeKey must be one of MERIT_BADGES'
+  /// category:"coach" entries (Record Breaker, Gym Citizen).
+  static Future<Map<String, dynamic>> grantMeritBadge(
+    String clientId,
+    String badgeKey,
+    String? note,
+  ) => _invokeFunction("grant-merit-badge", {
+    "clientId": clientId,
+    "badgeKey": badgeKey,
+    if (note != null) "note": note,
+  });
+
+  /// Owner-only override — any of the 11 catalog badges, bypassing all
+  /// eligibility checks.
+  static Future<Map<String, dynamic>> forceAwardMeritBadge(
+    String clientId,
+    String badgeKey,
+    String? note,
+  ) => _invokeFunction("force-award-merit-badge", {
+    "clientId": clientId,
+    "badgeKey": badgeKey,
+    if (note != null) "note": note,
+  });
+
+  /// Coach/owner-only removal — only ever allowed for a coach-awarded badge;
+  /// the server re-verifies this itself. Soft-delete (revoked_at set).
+  static Future<void> revokeMeritBadge(String badgeId) =>
+      _invokeFunction("revoke-merit-badge", {"badgeId": badgeId});
+
+  /// Opportunistic 6-month expiry sweep for Gym Citizen's 10 sub-badges —
+  /// safe to call speculatively on every dashboard/profile/badges-tab load;
+  /// a no-op when nothing's actually stale. Returns `{expiredCount}`.
+  static Future<Map<String, dynamic>> checkGymCitizenExpiry(String clientId) =>
+      _invokeFunction("check-gym-citizen-expiry", {"clientId": clientId});
+
+  /// Owner-only real Stripe refund (test-mode key in this project) — only
+  /// valid for a `type: "purchase"` charge with a linked
+  /// stripe_payment_intent_id. Inserts a new negative-amount "refund" row
+  /// rather than modifying the original charge, so the caller should
+  /// re-fetch (loadCharges) rather than mutate the refunded row locally.
+  static Future<Map<String, dynamic>> refundCharge(String chargeId) =>
+      _invokeFunction("refund-charge", {"chargeId": chargeId});
+
+  /// Owner-only — only valid for a `type: "early_termination_fee"` charge;
+  /// marks the existing row waived in place (unlike refund, no new row).
+  static Future<void> waiveCharge(String chargeId) =>
+      _invokeFunction("waive-charge", {"chargeId": chargeId});
+
+  /// Real email, sent server-side via the send-email Edge Function (SMTP —
+  /// see supabase/EMAIL_SETUP.md). Any authenticated caller may invoke this
+  /// (Comms.jsx/CoachChat.jsx's "Email"/"Both" channel is available to both
+  /// clients and coaches) — there's no role restriction to enforce here.
+  static Future<void> sendEmail({
+    required String to,
+    required String subject,
+    required String text,
+  }) => _invokeFunction("send-email", {
+    "to": to,
+    "subject": subject,
+    "text": text,
+  });
+
+  /// Every automation email (owner only; RLS refuses anyone else), in list order.
+  static Future<List<Map<String, dynamic>>> loadEmailTemplates() async {
+    final rows = await client.from("email_templates").select().order("sort_order").order("name");
+    return rows.map((r) => r.cast<String, dynamic>()).toList();
+  }
+
+  /// Saves an automation email. The database validates every {{variable}} and
+  /// rejects the save, naming the token, if one can't be resolved.
+  static Future<void> saveEmailTemplate(
+    String key, {
+    required String subject,
+    required String body,
+    required bool enabled,
+  }) async {
+    await client.from("email_templates").update({"subject": subject, "body": body, "enabled": enabled}).eq("key", key);
+  }
+
+  /// The Welcome automation email for a just-created client profile, rendered
+  /// from the owner-editable template.
+  static Future<void> sendWelcomeEmail({required String toEmail}) =>
+      _invokeFunction("send-welcome-email", {"toEmail": toEmail});
+
+  /// Asks the server to email ONE confirmation for the sessions just booked
+  /// in a single checkout/submit. The server guarantees a session is never
+  /// confirmed twice. Best-effort: a failed email must never undo a booking.
+  static Future<void> sendBookingConfirmation(List<String> bookingIds) async {
+    if (bookingIds.isEmpty) return;
+    try {
+      await _invokeFunction("send-booking-confirmation", {"bookingIds": bookingIds});
+    } catch (_) {}
+  }
+
+  /// Everyone who can be messaged in Team Chat: coaches and the owner.
+  static Future<List<Map<String, dynamic>>> loadStaffDirectory() async {
+    final rows = await client.from("profiles").select("id, name, email, phone, role").inFilter("role", ["coach", "owner"]);
+    return rows.map((r) => r.cast<String, dynamic>()).toList();
+  }
+
+  /// Staff messages the signed-in person may see (RLS narrows it), oldest first.
+  static Future<List<Map<String, dynamic>>> loadStaffMessages() async {
+    final rows = await client.from("staff_messages").select().order("created_at");
+    return rows.map((r) => r.cast<String, dynamic>()).toList();
+  }
+
+  /// [recipientId] null addresses the business (ONE Fitness Marketplace).
+  static Future<void> sendStaffMessage({String? recipientId, required String body, String? channel}) async {
+    final me = currentUser?.id;
+    if (me == null) throw Exception("You're signed out — sign in and try again.");
+    await client.from("staff_messages").insert({
+      "sender_id": me,
+      "recipient_id": recipientId,
+      "body": body,
+      if (channel != null) "channel": channel,
+    });
+  }
+
+  /// Real SMS via the send-sms Edge Function (Twilio) — the "SMS" chat
+  /// channel. Throws with a readable message when Twilio isn't configured,
+  /// so the sender learns the text didn't go rather than assuming it did.
+  static Future<void> sendSms({required String to, required String text}) =>
+      _invokeFunction("send-sms", {"to": to, "text": text});
+
+  /// What would happen if staff cancelled this client's membership —
+  /// whether the paid-for period can be run out, and when it ends. Asked
+  /// before showing the choice so the dialog states real dates rather than
+  /// offering an option that turns out not to apply.
+  static Future<Map<String, dynamic>> adminCancelMembershipPreview(String clientId) async {
+    final res = await client.functions.invoke(
+      "admin-cancel-membership",
+      body: {"clientId": clientId, "preview": true},
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// Staff ending a client's membership. [mode] is "period_end" (billing
+  /// stops now, sessions continue to the end of the period already paid
+  /// for) or "immediate" (access ends at once).
+  static Future<Map<String, dynamic>> adminCancelMembership({
+    required String clientId,
+    required String mode,
+  }) async {
+    final res = await client.functions.invoke(
+      "admin-cancel-membership",
+      body: {"clientId": clientId, "mode": mode},
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
+    if (res.status != 200) throw Exception("Couldn't cancel that membership. Please try again.");
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// Owner setting a new password for a client or coach by hand — the desk
+  /// case, when the person can't reach their email. Owner only, enforced
+  /// server-side: a coach able to set another account's password could take
+  /// over the owner's account.
+  static Future<void> adminSetPassword({
+    required String profileId,
+    required String password,
+  }) async {
+    final res = await client.functions.invoke(
+      "admin-set-password",
+      body: {"profileId": profileId, "password": password},
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
+    if (res.status != 200) throw Exception("Couldn't set that password. Please try again.");
+  }
+
+  /// Takes the late-cancellation fee from the client's saved card. The
+  /// server decides the amount from platform settings and re-checks the
+  /// window against the booking's own time, so the app can't influence what
+  /// is charged. Returns {charged, feeCents, failure}.
+  static Future<Map<String, dynamic>> chargeLateCancellation({
+    required String bookingId,
+  }) async {
+    final res = await client.functions.invoke(
+      "charge-late-cancellation",
+      body: {"bookingId": bookingId},
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// Confirms a waitlist join by push, SMS and email. Server-side because it
+  /// reads the client's phone and SMS preference, and because joining used
+  /// to send nothing at all — the client saw a row appear and heard nothing.
+  static Future<void> notifyWaitlistJoined({
+    required String date,
+    required int slot,
+    int? position,
+  }) =>
+      _invokeFunction("notify-waitlist-joined", {
+        "date": date,
+        "slot": slot,
+        if (position != null) "position": position,
+      });
+
+  /// Enrolls in a FREE plan (paid ones go through createCheckoutSession and
+  /// are granted by stripe-webhook once payment confirms). Server-side
+  /// because `clients.plans` is a grant — it decides which intake forms are
+  /// unlocked — so prevent_membership_self_grant reverts any client-side
+  /// write to it. [clientId] enrolls someone else and is staff-only,
+  /// enforced by the function.
+  static Future<void> enrollFreePlan(
+    String planId, {
+    String? clientId,
+    /// ISO yyyy-MM-dd the access stops. Staff only — the server refuses it
+    /// from a client enrolling themselves.
+    String? accessExpiresAt,
+  }) =>
+      _invokeFunction("enroll-free-plan", {
+        "planId": planId,
+        if (clientId != null) "clientId": clientId,
+        if (accessExpiresAt != null) "accessExpiresAt": accessExpiresAt,
+      });
+
+  /// In-app payment — everything Stripe's native Payment Sheet needs to
+  /// collect and confirm a purchase without leaving the app. Card details go
+  /// straight from the sheet to Stripe using the returned client secret;
+  /// nothing card-shaped passes through this app or our servers.
+  ///
+  /// [paymentMethod] only selects which processing-fee profile applies
+  /// ("card" or "ach") — the sheet still decides what the client can pick
+  /// from, bounded by the server's per-product-type rules.
+  static Future<Map<String, dynamic>> createPaymentIntent({
+    required String planId,
+    String? couponCode,
+    String? targetClientId,
+    String paymentMethod = "card",
+    /// A staff-set price in cents, replacing the plan's own. For a
+    /// membership this becomes the recurring amount too, not just the first
+    /// charge. The server refuses it from anyone who isn't a coach or owner.
+    int? priceOverrideCents,
+    /// ISO yyyy-MM-dd the access stops. Staff only, same as above.
+    String? accessExpiresAt,
+  }) =>
+      _invokeFunction("create-payment-intent", {
+        "planId": planId,
+        "paymentMethod": paymentMethod,
+        if (couponCode != null && couponCode.trim().isNotEmpty) "couponCode": couponCode.trim(),
+        if (targetClientId != null) "targetClientId": targetClientId,
+        if (priceOverrideCents != null) "priceOverrideCents": priceOverrideCents,
+        if (accessExpiresAt != null) "accessExpiresAt": accessExpiresAt,
+      });
+
+  /// Coach/owner creates a client account in person. Returns the new
+  /// client's id plus a temporary password to hand over — the server
+  /// re-checks the caller is staff before creating anything.
+  static Future<Map<String, dynamic>> createClientAccount({
+    required String name,
+    required String email,
+    String? firstName,
+    String? lastName,
+    String? phone,
+    String? city,
+    String? state,
+    String? birthday,
+    String? password,
+    String? photo,
+    String? coachCode,
+    String? primaryTrainerId,
+  }) =>
+      _invokeFunction("create-client-account", {
+        "name": name,
+        "email": email,
+        if (password != null && password.isNotEmpty) "password": password,
+        if (photo != null && photo.isNotEmpty) "photo": photo,
+        if (coachCode != null && coachCode.trim().isNotEmpty) "coachCode": coachCode.trim(),
+        if (firstName != null && firstName.trim().isNotEmpty) "firstName": firstName.trim(),
+        if (lastName != null && lastName.trim().isNotEmpty) "lastName": lastName.trim(),
+        if (phone != null && phone.trim().isNotEmpty) "phone": phone.trim(),
+        if (city != null && city.trim().isNotEmpty) "city": city.trim(),
+        if (state != null && state.trim().isNotEmpty) "state": state.trim(),
+        if (birthday != null && birthday.trim().isNotEmpty) "birthday": birthday.trim(),
+        if (primaryTrainerId != null) "primaryTrainerId": primaryTrainerId,
+      });
+
+  /// Merchandise orders. RLS scopes the result by itself — a client gets
+  /// their own, staff get everyone's — so both sides call the same method.
+  static Future<List<Order>> loadOrders() async {
+    final rows = await client.from("orders").select().order("created_at", ascending: false);
+    return _safeMap(rows, (r) {
+      final m = r.cast<String, dynamic>();
+      return Order(
+        id: m["id"] as String,
+        clientId: m["client_id"] as String? ?? "",
+        clientName: m["client_name"] as String? ?? "",
+        productId: m["product_id"] as String? ?? "",
+        productName: m["product_name"] as String? ?? "",
+        size: m["size"] as String?,
+        quantity: _asInt(m["quantity"]) ?? 1,
+        amountCents: _asInt(m["amount_cents"]) ?? 0,
+        status: m["status"] as String? ?? "paid",
+        createdAt: DateTime.tryParse(m["created_at"]?.toString() ?? ""),
+      );
+    });
+  }
+
+  /// Staff-only in practice — the orders_update_staff_only policy rejects
+  /// this from a client, so there's no client-side role check to duplicate.
+  static Future<void> updateOrderStatus(String orderId, String status) async {
+    await client
+        .from("orders")
+        .update({"status": status, "updated_at": DateTime.now().toUtc().toIso8601String()})
+        .eq("id", orderId);
+  }
+
+  /// Merchandise purchase. Separate from [createPaymentIntent] because a
+  /// product grants no access and has stock to check — the server validates
+  /// price and availability from the catalogue, never from this call.
+  /// Intent for paying off the signed-in client's negative balance. The server
+  /// decides the amount; stripe-webhook credits the balance when it succeeds.
+  static Future<Map<String, dynamic>> createBalancePayment() =>
+      _invokeFunction("create-balance-payment", {});
+
+  // ── Single (one-off) sessions ─────────────────────────────────────────────
+  // Price, the Allowed flag and eligibility are all decided server-side.
+
+  /// The signed-in client's single-session credits (own rows only, by RLS).
+  static Future<List<SingleSessionCredit>> loadSingleCredits(String clientId) async {
+    final rows = await client
+        .from("single_session_credits")
+        .select()
+        .eq("client_id", clientId)
+        .order("purchased_at", ascending: false);
+    return [for (final r in rows) SingleSessionCredit.fromRow((r as Map).cast<String, dynamic>())];
+  }
+
+  /// Payment intent for ONE session. Nothing is reserved until it succeeds.
+  static Future<Map<String, dynamic>> createSingleSessionPayment({
+    required String sessionType,
+    required String trainerId,
+    required String date,
+    required int slot,
+    required String discipline,
+    String? locationName,
+  }) =>
+      _invokeFunction("create-single-session-payment", {
+        "sessionType": sessionType,
+        "trainerId": trainerId,
+        "date": date,
+        "slot": slot,
+        "discipline": discipline,
+        "locationName": locationName ?? "",
+      });
+
+  /// After the payment sheet: the server verifies the payment with Stripe, then
+  /// credits and books it (refunding automatically if the session filled).
+  static Future<SingleSessionOutcome> confirmSingleSession(String paymentIntentId) async =>
+      SingleSessionOutcome.fromJson(await _invokeFunction("confirm-single-session", {"paymentIntentId": paymentIntentId}));
+
+  /// Coach/owner booking a client who has no plan: [charge] true takes the
+  /// single-session price from the client's card on file, false books it free.
+  static Future<SingleSessionOutcome> staffSingleSession({
+    required String clientId,
+    required bool charge,
+    required String sessionType,
+    required String trainerId,
+    required String date,
+    required int slot,
+    required String discipline,
+    String? locationName,
+  }) async =>
+      SingleSessionOutcome.fromJson(await _invokeFunction("staff-single-session", {
+        "clientId": clientId,
+        "mode": charge ? "charge" : "free",
+        "sessionType": sessionType,
+        "trainerId": trainerId,
+        "date": date,
+        "slot": slot,
+        "discipline": discipline,
+        "locationName": locationName ?? "",
+      }));
+
+  /// One booking by id (used to pick up the session the server just created).
+  static Future<Booking?> loadBookingById(String id) async {
+    final row = await client.from("bookings").select().eq("id", id).maybeSingle();
+    return row == null ? null : _bookingFromRow(row);
+  }
+
+  static Future<Map<String, dynamic>> createProductPayment({
+    required String productId,
+    required String size,
+    int quantity = 1,
+  }) =>
+      _invokeFunction("create-product-payment", {
+        "productId": productId,
+        "size": size,
+        "quantity": quantity,
+      });
+
+  /// The caller's private calendar-feed URL, for subscribing to their own
+  /// schedule in Google Calendar (or Apple Calendar / Outlook — it's a plain
+  /// iCalendar feed, not a Google-specific integration). Minted on first
+  /// call; [regenerate] issues a fresh one, which immediately invalidates
+  /// any copy of the old URL already handed out.
+  static Future<String> getCalendarFeedUrl({bool regenerate = false}) async {
+    final data = await _invokeFunction("get-calendar-link", {
+      if (regenerate) "regenerate": true,
+    });
+    final url = data["url"] as String?;
+    if (url == null) throw Exception("Couldn't create your calendar link.");
+    return url;
+  }
+
+  /// Notifications spec — registers/refreshes this device's FCM token
+  /// (register-device-token). Safe to call even before Firebase is set up
+  /// on the client — there's simply no token to pass yet, so callers should
+  /// no-op rather than call this until a real token exists.
+  static Future<void> registerDeviceToken(String token, String platform) =>
+      _invokeFunction("register-device-token", {"token": token, "platform": platform});
+
+  /// Notifications spec — push counterpart to [sendEmail], for events that
+  /// happen inside a live app session (booking confirmation, reschedule,
+  /// cancellation, a new coach DM, low session balance). Same "any
+  /// authenticated caller" posture as sendEmail — see send-push/index.ts.
+  /// Silently a no-op end-to-end until the recipient has a registered
+  /// device token, which won't exist until Firebase is configured.
+  ///
+  /// [sms] also texts the recipient, but only a client who opted in to
+  /// texts — the server checks (see _shared/notifySms.ts).
+  static Future<void> sendPushNotification({
+    required String profileId,
+    required String title,
+    required String body,
+    Map<String, String>? data,
+    bool sms = false,
+  }) => _invokeFunction("send-push", {
+    "profileId": profileId,
+    "title": title,
+    "body": body,
+    if (data != null) "data": data,
+    if (sms) "sms": true,
+  });
+
+  /// LEGACY — the hosted-Checkout redirect, no longer used by any screen.
+  /// Purchases now run through [createPaymentIntent] and Stripe's native
+  /// Payment Sheet so card entry happens inside the app with no browser.
+  ///
+  /// Kept (along with the "onefitness://checkout-return" deep link and the
+  /// create-checkout-session function) as a working fallback: it still grants
+  /// correctly, since stripe-webhook handles both checkout.session.completed
+  /// and payment_intent.succeeded through the same code path. Delete all
+  /// three together if the redirect flow is ever formally retired.
+  static Future<String> createCheckoutSession({
+    required String planId,
+    String? returnUrl,
+    String? couponCode,
+    String? targetClientId,
+  }) async {
+    final data = await _invokeFunction("create-checkout-session", {
+      "planId": planId,
+      if (returnUrl != null) "returnUrl": returnUrl,
+      "paymentMethod": "card",
+      if (couponCode != null && couponCode.trim().isNotEmpty) "couponCode": couponCode.trim(),
+      // Coach/owner "Purchase for Client" flow — server re-checks the
+      // caller's role before honoring this; see create-checkout-session's
+      // own targetClientId branch.
+      if (targetClientId != null) "targetClientId": targetClientId,
+    });
+    final url = data["url"] as String?;
+    if (url == null) throw Exception("Couldn't start checkout.");
+    return url;
+  }
+
+  /// Client's own membership cancellation — mirrors cancelMembership in
+  /// supabaseData.js. preview:true returns what WOULD happen
+  /// ({feeCents, renewsAt, noticeDaysRequired}) without actually canceling,
+  /// so the UI can show the early-termination fee before the client confirms.
+  /// A real (non-preview) call returns {ok:true, feeCents}.
+  /// [planId] targets one of several plans a client holds; omitted means
+  /// the primary membership.
+  static Future<Map<String, dynamic>> cancelMembership({
+    bool preview = false,
+    bool resume = false,
+    String? planId,
+  }) => _invokeFunction("cancel-membership", {
+        "preview": preview,
+        "resume": resume,
+        if (planId != null) "planId": planId,
+      });
+
+  /// Client's own upgrade/downgrade of an EXISTING paid subscription —
+  /// mirrors changeMembershipPlan in supabaseData.js. timing: "immediate"
+  /// (real Stripe proration, applied right now), "immediate_reset" (no
+  /// proration — resets the billing cycle to start today at the new
+  /// plan's full price), or "end_of_cycle" (switches automatically at the
+  /// next renewal via a Stripe Subscription Schedule — returns an
+  /// `effectiveAt` date). Only valid when the client already has a real
+  /// Stripe subscription and the new plan is also a paid subscription —
+  /// MembershipHubScreen gates this itself before calling.
+  static Future<Map<String, dynamic>> changeMembershipPlan({
+    required String newPlanId,
+    required String timing,
+  }) => _invokeFunction("change-membership-plan", {
+    "newPlanId": newPlanId,
+    "timing": timing,
+  });
+
+  static Map<String, Map<String, dynamic>> _platformSettingsTabPatch(
+    PlatformSettings s,
+  ) => {
+    "access": {
+      "messageIdentity": s.messageIdentity,
+      "coachClientScope": s.coachClientScope,
+      "coachCanViewRevenue": s.coachCanViewRevenue,
+      "twoFactorRequirement": s.twoFactorRequirement,
+      "coachCanSeeOtherSchedules": s.coachCanSeeOtherSchedules,
+      "coachCanEditClientWorkouts": s.coachCanEditClientWorkouts,
+    },
+    "clients": {
+      "requiredProfileFields": s.requiredProfileFields,
+      "customProfileFields": _customProfileFieldsToJson(s.customProfileFields),
+      "requireWaiverAtSignup": s.requireWaiverAtSignup,
+      "clientsCanMessageAnyCoach": s.clientsCanMessageAnyCoach,
+    },
+    "payments": {
+      "achOffered": s.achOffered,
+      "cardFee": _feeProfileToJson(s.cardFee),
+      "achFee": _feeProfileToJson(s.achFee),
+      "checkoutDisclosureText": s.checkoutDisclosureText,
+      "defaultBillingAnchorDay": s.defaultBillingAnchorDay,
+      "refundFeeOnRefund": s.refundFeeOnRefund,
+    },
+    "services": {
+      "offeredSessionTypes": s.offeredSessionTypes,
+      "offeredDisciplines": s.offeredDisciplines,
+    },
+    "location": {
+      "locationName": s.locationName,
+      "locationAddress": s.locationAddress,
+      "locationHint": s.locationHint,
+      "locations": [
+        for (final l in s.locations)
+          {
+            "name": l.name,
+            "address": l.address,
+            "hint": l.hint,
+            // Cached so the nearest-gym distance needs no lookup at runtime.
+            if (l.lat != null) "lat": l.lat,
+            if (l.lng != null) "lng": l.lng,
+          },
+      ],
+      "supportPhone": s.supportPhone,
+      "defaultLocationName": s.defaultLocationName,
+      if (s.locationLat != null) "locationLat": s.locationLat,
+      if (s.locationLng != null) "locationLng": s.locationLng,
+    },
+    "workouts": {
+      "businessName": s.businessName,
+      "businessTimeZone": s.businessTimeZone,
+      "defaultWeightUnit": s.defaultWeightUnit,
+      "autoCarryOverLastWeight": s.autoCarryOverLastWeight,
+      "clientsCanSwapExercises": s.clientsCanSwapExercises,
+      "meritBadgeProgressWeeks": s.meritBadgeProgressWeeks,
+      "meritBadgeHabitPercent": s.meritBadgeHabitPercent,
+      "meritBadgeHabitWeeks": s.meritBadgeHabitWeeks,
+      "badgeFullHouseCents": s.badgeFullHouseCents,
+      "badgePrFactoryCents": s.badgePrFactoryCents,
+      "beepSounds": s.beepSounds,
+      "badgeCheckInCents": s.badgeCheckInCents,
+      "badgeComebackCents": s.badgeComebackCents,
+      "badgeHabitCoachCents": s.badgeHabitCoachCents,
+      "badgeChallengeCoachCents": s.badgeChallengeCoachCents,
+      "badgeCoachOfMonthCents": s.badgeCoachOfMonthCents,
+    },
+    "scheduling": {
+      "semiPrivateCap": s.semiPrivateCap,
+      "minBookingLeadHours": s.minBookingLeadHours,
+      "lateCancellationHours": s.lateCancellationHours,
+      "lateCancellationFeeCents": s.lateCancellationFeeCents,
+      "noShowFeeCents": s.noShowFeeCents,
+      "blockRescheduleInWindow": s.blockRescheduleInWindow,
+      "maxBookingHorizonDays": s.maxBookingHorizonDays,
+      "bookingCoachScope": s.bookingCoachScope,
+      // Class size per session type — read back by capFor in the app and by
+      // enforce_booking_limits in the database, so both agree.
+      "sessionTypeCaps": s.sessionTypeCaps,
+      // One-off session price (cents) + whether clients with no plan may buy
+      // one, per session type. Read server-side by create-single-session-payment.
+      "singleSession": {
+        for (final t in {...s.singleSessionPriceCents.keys, ...s.singleSessionAllowed.keys})
+          t: {
+            "priceCents": s.singleSessionPriceCents[t] ?? 0,
+            "allowed": s.singleSessionAllowed[t] ?? false,
+          },
+      },
+    },
+  };
+
+  /// Owner-only. Merges this model's ~17 fields into whatever tab maps
+  /// already exist in the real blob (re-fetched fresh, same reasoning as
+  /// upsertClientRecordPatch) rather than overwriting `data` outright — the
+  /// real row carries ~15 additional fields this app doesn't model, and a
+  /// blind overwrite would silently delete them. Also inserts one audit row
+  /// per leaf that actually changed, matching savePlatformSettings.js's own
+  /// diff-and-log behavior (visible only in the web app — no audit-log
+  /// screen exists here — but the two apps share one database/history).
+  static Future<void> savePlatformSettings(
+    PlatformSettings prev,
+    PlatformSettings next,
+  ) async {
+    final row = await client
+        .from("platform_settings")
+        .select("data")
+        .eq("id", "global")
+        .maybeSingle();
+    final current = ((row?["data"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    final nextPatch = _platformSettingsTabPatch(next);
+    final merged = {...current};
+    for (final tab in nextPatch.keys) {
+      final currentTab = ((current[tab] as Map?) ?? const {})
+          .cast<String, dynamic>();
+      merged[tab] = {...currentTab, ...nextPatch[tab]!};
+    }
+
+    final userId = currentUser?.id;
+    await client.from("platform_settings").upsert({
+      "id": "global",
+      "data": merged,
+      "updated_at": DateTime.now().toUtc().toIso8601String(),
+      if (userId != null) "updated_by": userId,
+    });
+
+    final prevPatch = _platformSettingsTabPatch(prev);
+    final auditRows = <Map<String, dynamic>>[];
+    for (final tab in nextPatch.keys) {
+      final prevTab = prevPatch[tab]!;
+      final nextTab = nextPatch[tab]!;
+      for (final key in nextTab.keys) {
+        if (prevTab[key] != nextTab[key]) {
+          auditRows.add({
+            "changed_by": userId,
+            "setting_key": "$tab.$key",
+            "old_value": prevTab[key],
+            "new_value": nextTab[key],
+          });
+        }
+      }
+    }
+    if (auditRows.isNotEmpty) {
+      await client.from("platform_settings_audit").insert(auditRows);
+    }
+  }
+
+  static Map<String, dynamic> _couponToJson(Coupon c) => {
+    "id": c.id,
+    "code": c.code,
+    "type": c.type,
+    "percentOff": c.percentOff,
+    "flatOffCents": c.flatOffCents,
+    "archived": c.archived,
+  };
+
+  static Coupon _couponFromJson(Map<String, dynamic> j) => Coupon(
+    id: j["id"] as String,
+    code: j["code"] as String? ?? "",
+    type: j["type"] as String? ?? "percent",
+    percentOff: _asInt(j["percentOff"]) ?? 0,
+    flatOffCents: _asInt(j["flatOffCents"]) ?? 0,
+    archived: j["archived"] as bool? ?? false,
+  );
+
+  static Future<List<Coupon>> loadCoupons() async {
+    final rows = await client.from("coupons").select();
+    return _safeMap(
+      rows,
+      (r) => _couponFromJson((r["data"] as Map).cast<String, dynamic>()),
+    );
+  }
+
+  static Future<void> upsertCoupon(Coupon c) =>
+      _mergeJsonbUpsert("coupons", c.id, _couponToJson(c));
+
+  static Future<void> deleteCoupon(String id) async {
+    await client.from("coupons").delete().eq("id", id);
+  }
+
+  static Map<String, dynamic> _productToJson(Product p) => {
+    "id": p.id,
+    "name": p.name,
+    "description": p.description,
+    "priceCents": p.priceCents,
+    "category": p.category,
+    "archived": p.archived,
+    "photos": p.photos,
+    // Per-size counts only — totalInventory is derived on read, so there's
+    // no stored copy that can disagree with them.
+    "sizes": p.sizes.map((sz) => {"label": sz.label, "inventory": sz.inventory}).toList(),
+  };
+
+  /// Shared by every jsonb-blob table write below (products, waiver_docs,
+  /// membership_plans, programs_library, custom_meals, exercises). Real
+  /// rows carry fields none of this app's models track at all — confirmed
+  /// the hard way: a membership_plans row turned out to also hold `public`,
+  /// `sharing`, `category`, `expiration`, `paymentType`, `stripePriceId`,
+  /// `stripeProductId`, and more. A blind `{"id": id, "data": modeledJson}`
+  /// upsert (this file's original approach for these 6 tables) would
+  /// silently delete all of that — including the real Stripe linkage — the
+  /// moment a coach edited any OTHER field through this app. Re-fetches
+  /// fresh and merges the modeled patch on top instead, same as
+  /// upsertClientRecordPatch/savePlatformSettings.
+  static Future<void> _mergeJsonbUpsert(
+    String table,
+    String id,
+    Map<String, dynamic> patch,
+  ) async {
+    final row = await client
+        .from(table)
+        .select("data")
+        .eq("id", id)
+        .maybeSingle();
+    final current = ((row?["data"] as Map?) ?? const {})
+        .cast<String, dynamic>();
+    await client.from(table).upsert({
+      "id": id,
+      "data": {...current, ...patch},
+    });
+  }
+
+  static Future<void> upsertProduct(Product p) =>
+      _mergeJsonbUpsert("products", p.id, _productToJson(p));
+
+  static Future<void> deleteProduct(String id) async {
+    await client.from("products").delete().eq("id", id);
+  }
+
+  /// Shared category catalog — mirrors `loadPackageCategories`/
+  /// `insertPackageCategory` in supabaseData.js. Used by both Products and
+  /// membership-package category pickers, so a category typed in one place
+  /// shows up in the other.
+  static Future<List<String>> loadPackageCategories() async {
+    final rows = await client
+        .from("package_categories")
+        .select("name")
+        // The owner's own order, not when each row happened to be written.
+        // Name breaks a tie so two categories added in the same breath
+        // can't swap places between loads.
+        .order("sort_order")
+        .order("name");
+    return rows.map((r) => r["name"] as String).toList();
+  }
+
+  /// Writes the whole list's positions in one go, in the order given.
+  ///
+  /// Spaced by 10 so a later insert between two of them doesn't need the
+  /// rest renumbering. Sent as one upsert rather than a write per row, so a
+  /// half-applied order can't survive a dropped connection.
+  static Future<void> savePackageCategoryOrder(List<String> namesInOrder) async {
+    if (namesInOrder.isEmpty) return;
+    await client.from("package_categories").upsert(
+      [
+        for (var i = 0; i < namesInOrder.length; i++)
+          {"name": namesInOrder[i], "sort_order": (i + 1) * 10},
+      ],
+      onConflict: "name",
+    );
+  }
+
+  /// Renames a category and re-tags everything that referenced it.
+  ///
+  /// A plan stores its category as text, not an id, so a plain rename would
+  /// leave every plan in that category pointing at a name that no longer
+  /// exists. The database does both together — see migration 28.
+  static Future<void> renamePackageCategory(String oldName, String newName) =>
+      client.rpc("rename_package_category", params: {
+        "p_old": oldName,
+        "p_new": newName,
+      });
+
+  /// Add-only — a duplicate name is a no-op (unique constraint), matching
+  /// the web's own "23505 = unique_violation, ignore" handling.
+  static Future<void> insertPackageCategory(String name) async {
+    try {
+      await client.from("package_categories").insert({"name": name});
+    } on PostgrestException catch (e) {
+      if (e.code != "23505") rethrow;
+    }
+  }
+
+  /// Removes a category from the shared catalogue. Plans already tagged
+  /// with it keep their `category` string — this only stops it being
+  /// offered for new ones, so an in-use category is blocked at the UI layer
+  /// rather than silently orphaning what points at it.
+  static Future<void> deletePackageCategory(String name) async {
+    await client.from("package_categories").delete().eq("name", name);
+  }
+
+  /// Equipment Library — same shape as the category catalog: a table of
+  /// names, readable by everyone signed in, added to by staff.
+  static Future<List<String>> loadEquipment() async {
+    final rows = await client.from("equipment").select("name").order("created_at");
+    return rows.map((r) => r["name"] as String).toList();
+  }
+
+  static Future<void> insertEquipment(String name) async {
+    try {
+      await client.from("equipment").insert({"name": name});
+    } on PostgrestException catch (e) {
+      if (e.code != "23505") rethrow;
+    }
+  }
+
+  static Future<void> deleteEquipment(String name) async {
+    await client.from("equipment").delete().eq("name", name);
+  }
+
+  /// Every version of every gym-defined intake form, newest version first.
+  ///
+  /// All versions, not just the current one: a submission is rendered against
+  /// the version it was filled against, so reading back a two-year-old intake
+  /// needs the questions as they stood then. See migration 37.
+  static Future<List<IntakeFormTemplate>> loadIntakeFormTemplates() async {
+    final rows = await client
+        .from("intake_form_templates")
+        .select()
+        .order("key")
+        .order("version", ascending: false);
+    return rows
+        .map((r) => IntakeFormTemplate.fromJson(r.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// Writes a new version of [template] and returns it.
+  ///
+  /// Always an insert, never an update: the row for a version that clients
+  /// have already answered must not change underneath their answers. The
+  /// version is computed from what's on the table rather than from the
+  /// caller's copy, which may be a catalogue load old.
+  static Future<IntakeFormTemplate> saveIntakeFormTemplate(
+    IntakeFormTemplate template,
+  ) async {
+    final existing = await client
+        .from("intake_form_templates")
+        .select("version")
+        .eq("key", template.key)
+        .order("version", ascending: false)
+        .limit(1);
+    final nextVersion = existing.isEmpty
+        ? 1
+        : ((existing.first["version"] as num).toInt() + 1);
+
+    final next = template.copyWith(version: nextVersion);
+    await client.from("intake_form_templates").insert(next.toJson());
+    return next;
+  }
+
+  /// Retires a form, or brings it back.
+  ///
+  /// Applied to every version of the key, so the form stops being offered
+  /// whichever version a client last answered. Nothing is deleted: the
+  /// answers already given stay readable, which is the whole point of
+  /// archiving rather than removing.
+  static Future<void> setIntakeFormArchived(String key, bool archived) async {
+    await client
+        .from("intake_form_templates")
+        .update({"archived": archived})
+        .eq("key", key);
+  }
+
+  static Map<String, dynamic> _waiverDocToJson(WaiverDoc w) => {
+    "id": w.id,
+    "title": w.title,
+    "body": w.body,
+    "scope": w.scope,
+    "planId": w.planId,
+    "required": w.required,
+    "archived": w.archived,
+  };
+
+  static Future<void> upsertWaiverDoc(WaiverDoc w) =>
+      _mergeJsonbUpsert("waiver_docs", w.id, _waiverDocToJson(w));
+
+  static Future<void> deleteWaiverDoc(String id) async {
+    await client.from("waiver_docs").delete().eq("id", id);
+  }
+
+  /// Variable & Signature Capture spec — records one e-signature event.
+  /// Runs server-side (sign-waiver, service-role): re-derives every merge
+  /// token itself (never trusts a client-submitted resolved-text blob),
+  /// hashes the current document version, validates completeness (one
+  /// initials image per `{{initial}}` token, a signature, the guardian
+  /// block if the client is a minor), captures IP/device/session, generates
+  /// the completion-certificate PDF, and merges the result into
+  /// `client_records.data.signatures`. [initialsImages]/[signatureImage]/
+  /// [guardianSignatureImage] are data URLs from [SignaturePad].
+  /// Submits a completed waiver to sign-waiver, which validates it,
+  /// builds and emails the signed PDF, and stores the immutable record.
+  /// Returns the lightweight summary the Signatures list shows.
+  static Future<({SignedDocument summary, String? emailedTo})> signWaiver({
+    required String waiverId,
+    required List<Map<String, dynamic>> sections,
+    String? signatureImage,
+    required String signatureMethod,
+    String? signatureAt,
+    String? guardianName,
+    String? guardianSignatureImage,
+    String? guardianSignedAt,
+    required bool photoVideoRelease,
+    required String consentAt,
+    required String deviceInfo,
+    String? emergencyContactName,
+    String? emergencyContactPhone,
+    bool adoptInitials = true,
+    bool adoptSignature = true,
+  }) async {
+    final res = await _invokeFunction("sign-waiver", {
+      "waiverId": waiverId,
+      "sections": sections,
+      "signatureImage": signatureImage,
+      "signatureMethod": signatureMethod,
+      "signatureAt": signatureAt,
+      "guardianName": guardianName,
+      "guardianSignatureImage": guardianSignatureImage,
+      "guardianSignedAt": guardianSignedAt,
+      "photoVideoRelease": photoVideoRelease,
+      "consentAcknowledged": true,
+      "consentAt": consentAt,
+      "deviceInfo": deviceInfo,
+      "emergencyContactName": emergencyContactName,
+      "emergencyContactPhone": emergencyContactPhone,
+      "adoptInitials": adoptInitials,
+      "adoptSignature": adoptSignature,
+    });
+    final s = (res["signature"] as Map).cast<String, dynamic>();
+    return (
+      summary: SignedDocument(
+        id: s["id"]?.toString() ?? "",
+        docId: s["docId"] as String?,
+        title: s["title"] as String? ?? "",
+        signedAt: s["signedAt"] as String? ?? "",
+        documentVersionHash: s["documentVersionHash"] as String?,
+        photoVideoOptOut: s["photoVideoOptOut"] as bool?,
+      ),
+      emailedTo: res["emailedTo"] as String?,
+    );
+  }
+
+  /// Signed waivers — the client's own, or (for staff) any client's. RLS
+  /// decides what's visible. The PDF column is left out; see
+  /// [loadWaiverSignaturePdf].
+  static Future<List<WaiverSignatureRecord>> loadWaiverSignatures({String? clientId}) async {
+    var q = client.from("waiver_signatures").select(
+          "id, client_id, doc_id, doc_title, signed_at, signer_role, document_version_hash, guardian_name, photo_video_release, emailed_to, signer_ip",
+        );
+    if (clientId != null) q = q.eq("client_id", clientId);
+    final rows = await q.order("signed_at", ascending: false);
+    return rows.map((r) => WaiverSignatureRecord.fromRow(r.cast<String, dynamic>())).toList();
+  }
+
+  /// The signed PDF for one signature, as a data URL for DownloadPdfButton.
+  static Future<String?> loadWaiverSignaturePdf(String signatureId) async {
+    final row = await client.from("waiver_signatures").select("pdf_base64").eq("id", signatureId).maybeSingle();
+    final b64 = row?["pdf_base64"] as String?;
+    return b64 == null ? null : "data:application/pdf;base64,$b64";
+  }
+
+  static Map<String, dynamic> _membershipPlanToJson(MembershipPlan p) => {
+    "id": p.id,
+    "name": p.name,
+    "kind": p.kind.name,
+    "description": p.description,
+    "startDate": p.startDate,
+    "endDate": p.endDate,
+    "renewalDay": p.renewalDay,
+    "maxSessions": p.maxSessions,
+    "termMonths": p.termMonths,
+    "allowedTypes": p.allowedTypes,
+    "priceCents": p.priceCents,
+    "archived": p.archived,
+    "feeItemProductId": p.feeItemProductId,
+    "category": p.category,
+    "sortOrder": p.sortOrder,
+    "allowGuests": p.allowGuests,
+    "guestFeeCents": p.guestFeeCents,
+    "rollover": {
+      "enabled": p.rolloverEnabled,
+      "maxVisits": p.rolloverMaxVisits,
+    },
+    "cancellationNoticeDays": p.cancellationNoticeDays,
+    "earlyTerminationFeeCents": p.earlyTerminationFeeCents,
+    "serviceBalanceEnabled": p.serviceBalanceEnabled,
+    "sharing": {
+      "enabled": p.sharingEnabled,
+      "maxAccounts": p.sharingMaxAccounts,
+    },
+    "public": p.public,
+    "limitOnePerAccount": p.limitOnePerAccount,
+    "expiration": {"enabled": p.expirationEnabled, "days": p.expirationDays},
+  };
+
+  static Future<void> upsertMembershipPlan(MembershipPlan p) =>
+      _mergeJsonbUpsert("membership_plans", p.id, _membershipPlanToJson(p));
+
+  /// Owner-only — a plan with zero active members can be permanently
+  /// removed (ManageMemberships.jsx's `removeOrArchive`); one with members
+  /// gets archived instead (`upsertMembershipPlan` with `archived: true`).
+  static Future<void> deleteMembershipPlan(String id) async {
+    await client.from("membership_plans").delete().eq("id", id);
+  }
+
+  static Map<String, dynamic> _savedProgramToJson(SavedProgram p) => {
+    "id": p.id,
+    "name": p.name,
+    "type": "workout",
+    "status": p.status,
+    "source": p.source,
+    "createdBy": p.coachName,
+    "programDays": p.programDays.map(_programDayToJson).toList(),
+    "createdAt": p.createdAt,
+    "modifiedAt": p.modifiedAt,
+    "assignedClientId": p.assignedClientId,
+    "assignedClientName": p.assignedClientName,
+    // Carried back through every save, so a coach approving or editing an AI
+    // draft doesn't strip the explanation of how it was built.
+    if (p.programNote != null) "programNote": p.programNote,
+    if (p.suggestedNote != null) "suggestedNote": p.suggestedNote,
+  };
+
+  static Map<String, dynamic> _programDayToJson(ProgramDay d) => {
+    "id": d.id,
+    "title": d.title,
+    "exercises": d.exercises.map(_exercisePrescriptionToJson).toList(),
+    // Written on every day, not just suggested ones, so a coach editing and
+    // re-saving an AI draft can't quietly turn its suggested days into
+    // committed ones by round-tripping them through the builder.
+    "kind": d.suggested ? "suggested" : "committed",
+    if (d.rationale != null) "rationale": d.rationale,
+  };
+
+  static Map<String, dynamic> _exercisePrescriptionToJson(
+    ExercisePrescription e,
+  ) => {
+    "id": e.id,
+    "name": e.name,
+    "exerciseId": e.exerciseId,
+    "group": e.group,
+    "sets": e.sets,
+    "reps": e.reps,
+    "weight": e.weight,
+    "time": e.time,
+    "distance": e.distance,
+    "rest": e.rest,
+    "notes": e.notes,
+    "laterality": e.laterality,
+    "supersetId": e.supersetId,
+    "clientFlag": e.clientNoteText != null
+        ? {"note": e.clientNoteText, "at": e.clientNoteAt}
+        : null,
+  };
+
+  static Map<String, dynamic> _workoutLogToJson(WorkoutLogEntry w) => {
+    "id": w.id,
+    "date": w.date,
+    "programId": w.programId,
+    "programName": w.programName,
+    "dayId": w.dayId,
+    "dayTitle": w.dayTitle,
+    "exercises": w.exercises.map(_loggedExerciseToJson).toList(),
+    "loggedAt": w.loggedAt,
+    "loggedBy": w.loggedBy,
+    "coachComment": w.coachComment,
+    "coachCommentAt": w.coachCommentAt,
+  };
+
+  static Map<String, dynamic> _loggedExerciseToJson(LoggedExercise e) => {
+    "name": e.name,
+    "sets": e.sets.map(_loggedSetToJson).toList(),
+  };
+
+  static Map<String, dynamic> _loggedSetToJson(LoggedSet s) => {
+    "setNum": s.setNum,
+    "targetReps": s.targetReps,
+    "completedReps": s.completedReps,
+    "completedWeight": s.completedWeight,
+    "completed": s.completed,
+  };
+
+  static Map<String, dynamic> _measurementToJson(Measurement m) => {
+    "id": m.id,
+    "date": m.date,
+    "weight": m.weight,
+    "bodyfat": m.bodyfat,
+    "chest": m.chest,
+    "waist": m.waist,
+    "hips": m.hips,
+    "arms": m.arms,
+    "thighs": m.thighs,
+    "coachComment": m.coachComment,
+    "coachCommentAt": m.coachCommentAt,
+  };
+
+  static Measurement _measurementFromJson(Map<String, dynamic> j) => Measurement(
+    id: j["id"]?.toString() ?? "",
+    date: j["date"] as String? ?? "",
+    weight: j["weight"] as String?,
+    bodyfat: j["bodyfat"] as String?,
+    chest: j["chest"] as String?,
+    waist: j["waist"] as String?,
+    hips: j["hips"] as String?,
+    arms: j["arms"] as String?,
+    thighs: j["thighs"] as String?,
+    coachComment: j["coachComment"] as String?,
+    coachCommentAt: j["coachCommentAt"] as String?,
+  );
+
+  static Map<String, dynamic> _progressPhotoToJson(ProgressPhoto p) => {
+    "id": p.id,
+    "date": p.date,
+    "img": p.img,
+    "coachComment": p.coachComment,
+    "coachCommentAt": p.coachCommentAt,
+    if (p.addedBy != null) "addedBy": p.addedBy,
+  };
+
+  static ProgressPhoto _progressPhotoFromJson(Map<String, dynamic> j) => ProgressPhoto(
+    id: j["id"]?.toString() ?? "",
+    date: j["date"] as String? ?? "",
+    img: j["img"] as String? ?? "",
+    coachComment: j["coachComment"] as String?,
+    coachCommentAt: j["coachCommentAt"] as String?,
+    addedBy: j["addedBy"] as String?,
+  );
+
+  static Future<void> upsertProgramLibraryEntry(SavedProgram p) =>
+      _mergeJsonbUpsert("programs_library", p.id, _savedProgramToJson(p));
+
+  static Future<void> deleteProgramLibraryEntry(String id) async {
+    await client.from("programs_library").delete().eq("id", id);
+  }
+
+  /// Nutrition templates share programs_library with workouts, tagged
+  /// `type: "nutrition"` (which loadProgramsLibrary skips). Until this
+  /// existed the nutrition library lived only in memory and vanished on
+  /// every restart.
+  static Future<List<NutritionLibraryEntry>> loadNutritionLibrary() async {
+    final rows = await client.from("programs_library").select();
+    final out = <NutritionLibraryEntry>[];
+    for (final row in rows) {
+      try {
+        final data = ((row as Map)["data"] as Map).cast<String, dynamic>();
+        if ((data["type"] as String?) != "nutrition") continue;
+        final plan = _nutritionPlanFromJson(data["plan"]);
+        if (plan == null) continue;
+        out.add(NutritionLibraryEntry(id: data["id"] as String? ?? row["id"] as String, name: data["name"] as String? ?? "", plan: plan));
+      } catch (e) {
+        // ignore: avoid_print
+        print("[SupabaseService] skipped malformed nutrition library row: $e");
+      }
+    }
+    return out;
+  }
+
+  static Future<void> upsertNutritionLibraryEntry(NutritionLibraryEntry e) =>
+      _mergeJsonbUpsert("programs_library", e.id, {
+        "id": e.id,
+        "name": e.name,
+        "type": "nutrition",
+        "plan": _nutritionPlanToJson(e.plan),
+      });
+
+  static Map<String, dynamic> _mealDefToJson(MealDef m) => {
+    "id": m.id,
+    "name": m.name,
+    "mealType": m.mealType,
+    "calories": m.calories,
+    "protein": m.protein,
+    "carbs": m.carbs,
+    "fats": m.fats,
+    "ingredients": m.ingredients.map(_ingredientToJson).toList(),
+    "instructions": m.instructions,
+    "notes": m.notes,
+    "dietTags": m.dietTags,
+    "isCustom": m.isCustom,
+  };
+
+  static Future<void> insertCustomMeal(MealDef m) =>
+      _mergeJsonbUpsert("custom_meals", m.id, _mealDefToJson(m));
+
+  static Map<String, dynamic> _exerciseDefToJson(ExerciseDef e) => {
+    "id": e.id,
+    "name": e.name,
+    "movementPattern": e.movementPattern,
+    "primaryMuscle": e.primaryMuscle,
+    "equipmentIds": e.equipment,
+    "setup": e.setup,
+    "cues": e.cues,
+    "coachNotes": e.coachNotes,
+    "videoPath": e.videoPath,
+    "videoName": e.videoName,
+  };
+
+  static Future<void> upsertExercise(ExerciseDef e) =>
+      _mergeJsonbUpsert("exercises", e.id, _exerciseDefToJson(e));
+
+  static Future<void> deleteExercise(String id) async {
+    await client.from("exercises").delete().eq("id", id);
+  }
+
+  /// The bucket holding exercise demo clips (migration 36). Public to read —
+  /// a clip of a squat is not a client's private data, and a public URL
+  /// cannot expire halfway through playback the way a signed one can.
+  /// Writing is staff-only, enforced by the bucket's policies.
+  static const kExerciseVideosBucket = "exercise-videos";
+
+  /// Per-file ceiling, the same number migration 36 set on the bucket, so a
+  /// coach hears "too large" before sitting through a doomed upload.
+  static const kExerciseVideoMaxBytes = 150 * 1024 * 1024;
+
+  /// Media types the bucket accepts. Kept beside the limit above for the same
+  /// reason: the rejection should come from the picker, not from the server
+  /// after a long wait.
+  static const kExerciseVideoTypes = <String, String>{
+    "mp4": "video/mp4",
+    "mov": "video/quicktime",
+    "m4v": "video/mp4",
+    "webm": "video/webm",
+  };
+
+  /// Uploads a demo clip and returns its object name, to be stored on the
+  /// exercise as `videoPath`.
+  ///
+  /// Takes a stream so the file never has to be held whole: see
+  /// [uploadStreamWithProgress], which is also where [onProgress] comes from
+  /// and why this does not go through `storage.uploadBinary`.
+  static Future<String> uploadExerciseVideo({
+    required String exerciseId,
+    required Stream<List<int>> bytes,
+    required int length,
+    required String contentType,
+    UploadProgress? onProgress,
+  }) async {
+    // An exercise id is derived from its name, so it can hold anything a
+    // coach can type. Storage object keys cannot, so the folder segment is
+    // reduced to what is always safe; the uuid keeps it unique regardless.
+    final folder = exerciseId
+        .replaceAll(RegExp(r"[^A-Za-z0-9_-]+"), "-")
+        .replaceAll(RegExp(r"^-+|-+$"), "");
+    final ext = kExerciseVideoTypes.entries
+        .firstWhere(
+          (e) => e.value == contentType,
+          orElse: () => const MapEntry("mp4", "video/mp4"),
+        )
+        .key;
+    final path = "${folder.isEmpty ? "exercise" : folder}/${const Uuid().v4()}.$ext";
+    await uploadStreamWithProgress(
+      bucket: kExerciseVideosBucket,
+      path: path,
+      body: bytes,
+      length: length,
+      contentType: contentType,
+      onProgress: onProgress,
+    );
+    return path;
+  }
+
+  /// The URL a player can stream [path] from. Derived rather than stored, so
+  /// a project moving to a different storage host doesn't strand every clip.
+  static String exerciseVideoUrl(String path) =>
+      client.storage.from(kExerciseVideosBucket).getPublicUrl(path);
+
+  static Future<void> deleteExerciseVideo(String path) async {
+    await client.storage.from(kExerciseVideosBucket).remove([path]);
+  }
+
+  /// `status`/`created_at` are left to the table's own defaults ('upcoming',
+  /// '') — this app's Challenge model derives active/upcoming/ended purely
+  /// from date comparisons (same as the web source's list screen) rather
+  /// than reading `status` back, so there's nothing to send for those two.
+  static Future<void> insertChallenge(
+    Challenge c, {
+    required String createdBy,
+  }) async {
+    final row = {
+      "id": c.id,
+      "template": c.template,
+      "name": c.name,
+      "description": c.description ?? "",
+      "prize": c.prize ?? "",
+      "metric": c.metric,
+      "winner_mode": c.winnerMode,
+      "start_date": c.startDate,
+      "end_date": c.endDate,
+      "created_by": createdBy,
+      "participants": c.participantIds,
+      "reward_points": c.rewardPoints,
+      "reward_product_id": c.rewardProductId,
+      "trainer_id": c.trainerId,
+      // Copied from the type rather than referenced, so deleting a type
+      // can't change how a challenge renders or ranks. Null for the eight
+      // built-in types, which supply both from code.
+      "emoji": c.emoji,
+      "scoring_basis": c.scoringBasis,
+    };
+    await client.from("challenges").insert(row);
+  }
+
+  /// Covers both a client self-joining (appending their own id) and a coach
+  /// picking a winner — the only two challenge mutations either role's UI
+  /// actually performs.
+  static Future<void> updateChallengeRow(
+    String id, {
+    List<String>? participantIds,
+    String? winnerClientId,
+  }) async {
+    final row = <String, dynamic>{
+      if (participantIds != null) "participants": participantIds,
+      if (winnerClientId != null) "winner": winnerClientId,
+    };
+    if (row.isEmpty) return;
+    await client.from("challenges").update(row).eq("id", id);
+  }
+
+  static Future<void> deleteChallenge(String id) async {
+    await client.from("challenges").delete().eq("id", id);
+  }
+
+  static Map<String, dynamic> _squadMemberMetaToJson(SquadMemberMeta m) => {
+    "relationship": m.relationship,
+    "status": m.status,
+    "paymentEnabled": m.paymentEnabled,
+    "minBalance": m.minBalance,
+  };
+
+  static Map<String, dynamic> _squadInviteToJson(SquadInvite i) => {
+    "clientId": i.clientId,
+    "sentAt": i.sentAt,
+    "status": i.status,
+  };
+
+  static Map<String, dynamic> _squadActivityToJson(SquadActivityEntry a) => {
+    "id": a.id,
+    "type": a.type,
+    "at": a.at,
+    "actorName": a.actorName,
+    "details": {"description": a.description},
+  };
+
+  static Map<String, dynamic> _squadChatMessageToJson(SquadChatMessage m) => {
+    "id": m.id,
+    "from": m.from,
+    "at": m.at,
+    "text": m.text,
+    "type": m.type,
+    "shareKind": m.shareKind,
+    "payload": m.payload,
+  };
+
+  static Future<void> insertSquad(Squad squad) async {
+    final row = {
+      "id": squad.id,
+      "name": squad.name,
+      "lead_id": squad.leadId,
+      "member_ids": squad.memberIds,
+      "member_meta": squad.memberMeta.map(
+        (k, v) => MapEntry(k, _squadMemberMetaToJson(v)),
+      ),
+      "max_size": squad.maxSize,
+      "pending_invites": squad.pendingInvites.map(_squadInviteToJson).toList(),
+      "activity": squad.activity.map(_squadActivityToJson).toList(),
+      "billing_shared": squad.billingShared,
+      "chat": squad.chat.map(_squadChatMessageToJson).toList(),
+    };
+    await client.from("squads").insert(row);
+  }
+
+  /// Deletion is coach/owner-only (squads_delete_staff_only) — a client,
+  /// including the Squad's own Lead, can never delete the row, so
+  /// "Dissolve Squad" on the client side has to mean "log an activity
+  /// entry" rather than an actual delete (matches the real schema's own
+  /// documented intent). See deleteSquad below for the coach-side version.
+  static Future<void> updateSquadRow(
+    String id, {
+    String? name,
+    List<String>? memberIds,
+    Map<String, SquadMemberMeta>? memberMeta,
+    int? maxSize,
+    List<SquadInvite>? pendingInvites,
+    List<SquadActivityEntry>? activity,
+    bool? billingShared,
+    List<SquadChatMessage>? chat,
+  }) async {
+    final row = <String, dynamic>{
+      if (name != null) "name": name,
+      if (memberIds != null) "member_ids": memberIds,
+      if (memberMeta != null)
+        "member_meta": memberMeta.map(
+          (k, v) => MapEntry(k, _squadMemberMetaToJson(v)),
+        ),
+      if (maxSize != null) "max_size": maxSize,
+      if (pendingInvites != null)
+        "pending_invites": pendingInvites.map(_squadInviteToJson).toList(),
+      if (activity != null)
+        "activity": activity.map(_squadActivityToJson).toList(),
+      if (billingShared != null) "billing_shared": billingShared,
+      if (chat != null) "chat": chat.map(_squadChatMessageToJson).toList(),
+    };
+    if (row.isEmpty) return;
+    await client.from("squads").update(row).eq("id", id);
+  }
+
+  static Future<void> deleteSquad(String id) async {
+    await client.from("squads").delete().eq("id", id);
+  }
+
+  // ── Row mappers (snake_case DB -> the app's existing Dart models) ──
+
+  /// Maps every row, but a single malformed row (unexpected null/shape in
+  /// real, organically-grown test data) is skipped with a logged warning
+  /// rather than aborting the whole list — the alternative is one bad
+  /// row anywhere in ~50+ rows silently blanking the entire app back to
+  /// mock data (see loadAndSeedCoreData's own outer catch).
+  static List<T> _safeMap<T>(
+    Iterable<dynamic> rows,
+    T Function(Map<String, dynamic>) mapper,
+  ) {
+    final out = <T>[];
+    for (final row in rows) {
+      try {
+        out.add(mapper((row as Map).cast<String, dynamic>()));
+      } catch (e) {
+        // ignore: avoid_print
+        print("[SupabaseService] skipped malformed row: $e — $row");
+      }
+    }
+    return out;
+  }
+
+  /// Real data isn't always as strongly typed as the schema intends — an
+  /// ExercisePrescription's `sets`/`reps` inside a saved program have shown
+  /// up as an empty-string placeholder rather than a number or null
+  /// (confirmed against a real row, which `_safeMap` was silently dropping
+  /// entirely because `as num?` throws — not returns null — on a String).
+  /// A number casts directly; a string is parsed if it looks like one and
+  /// treated as absent otherwise, falling through to the caller's `??`.
+  static int? _asInt(dynamic v) {
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v.trim());
+    return null;
+  }
+
+  static ClientInfo _clientInfoFromRow(
+    Map<String, dynamic> profile,
+    Map<String, dynamic> c,
+  ) {
+    final plansRaw = (c["plans"] as List?) ?? const [];
+    return ClientInfo(
+      id: profile["id"] as String,
+      name: (profile["name"] as String?) ?? "",
+      email: profile["email"] as String?,
+      phone: profile["phone"] as String?,
+      photo: profile["photo_url"] as String?,
+      city: c["city"] as String?,
+      state: c["state"] as String?,
+      homeLat: (c["home_lat"] as num?)?.toDouble(),
+      homeLng: (c["home_lng"] as num?)?.toDouble(),
+      birthday: c["birthday"] as String?,
+      membershipPlanId: c["membership_plan_id"] as String?,
+      plans: _safeMap(
+        plansRaw.whereType<Map>(),
+        (p) => ClientPlanEnrollment(
+          planId: p["planId"] as String? ?? "",
+          status: p["status"] as String? ?? "active",
+          startDate: p["startDate"] as String? ?? "",
+          termMonths: _asInt(p["termMonths"]),
+          subscriptionId: p["subscriptionId"] as String?,
+          cancelsAt: p["cancelsAt"] as String?,
+          rolloverSessions: _asInt(p["rolloverSessions"]) ?? 0,
+          rolloverMonth: p["rolloverMonth"] as String?,
+          endsAt: p["endsAt"] as String?,
+          priceCents: _asInt(p["priceCents"]),
+        ),
+      ),
+      membershipPaused: c["membership_paused"] as bool? ?? false,
+      membershipPausedAt: c["membership_paused_at"] as String?,
+      membershipFreezeEndsAt: c["membership_freeze_ends_at"] as String?,
+      sessionCountOverride: _asInt(c["session_count_override"]),
+      sessionCountOverrideMonth: c["session_count_override_month"] as String?,
+      primaryTrainerId: c["primary_trainer_id"] as String?,
+      hasOutstandingBalance: c["has_outstanding_balance"] as bool? ?? false,
+      stripeSubscriptionId: c["stripe_subscription_id"] as String?,
+      pendingPlanId: c["pending_plan_id"] as String?,
+      pendingPlanEffectiveAt: c["pending_plan_effective_at"] as String?,
+      membershipCancelsAt: c["membership_cancels_at"] as String?,
+      redeemPointsNextRenewal:
+          c["redeem_points_next_renewal"] as bool? ?? false,
+      referredByTrainerId: c["referred_by_trainer_id"] as String?,
+      coachCodeAlertSeen: c["coach_code_alert_seen"] as bool? ?? false,
+      // Defaults to false, not true: a client who never actively opted
+      // in has not consented, and texting them would be a carrier
+      // violation (A2P 10DLC / CTIA express consent).
+      smsOptIn: c["sms_opt_in"] as bool? ?? false,
+      pushOptIn: profile["push_opt_in"] as bool? ?? true,
+      billingAnchorDay: _asInt(c["billing_anchor_day"]),
+      bookingLocation: c["booking_location"] as String?,
+    );
+  }
+
+  /// "Change Location" on the booking screen — where this client books
+  /// from from now on. Never touches clients.city: that stays their home.
+  static Future<void> updateBookingLocation(String clientId, String location) =>
+      client.from("clients").update({"booking_location": location}).eq("profile_id", clientId);
+
+  /// Notifications spec — the client's own SMS opt-in toggle (Profile
+  /// Settings → Notification Preferences).
+  static Future<void> updateSmsOptIn(String clientId, bool optIn) =>
+      client.from("clients").update({
+        "sms_opt_in": optIn,
+        // Evidence of express consent: when, and to what wording. Cleared
+        // on opt-out so a stale timestamp can't imply consent that was
+        // withdrawn.
+        "sms_opt_in_at": optIn ? DateTime.now().toUtc().toIso8601String() : null,
+        "sms_consent_text": optIn ? smsConsentRecord() : null,
+      }).eq("profile_id", clientId);
+
+  /// App (push) notifications on/off — sendPush skips anyone with this off.
+  static Future<void> updatePushOptIn(String profileId, bool optIn) =>
+      client.from("profiles").update({"push_opt_in": optIn}).eq("id", profileId);
+
+  /// The billing address saved on a client's profile, or null when none yet.
+  static Future<BillingAddress?> loadBillingAddress(String clientId) async {
+    final row = await client.from("clients").select("billing_address").eq("profile_id", clientId).maybeSingle();
+    return BillingAddress.fromJson(row?["billing_address"]);
+  }
+
+  /// Saves (or replaces) the billing address on a client's profile.
+  static Future<void> saveBillingAddress(String clientId, BillingAddress address) async {
+    await client.from("clients").update({"billing_address": address.toJson()}).eq("profile_id", clientId);
+  }
+
+  /// What Stripe's Payment Sheet needs to save a card without charging it
+  /// (Payment Details → Add card).
+  static Future<Map<String, dynamic>> createSetupIntent({String? clientId}) async {
+    final res = await client.functions.invoke(
+      "create-setup-intent",
+      body: clientId == null ? const {} : {"clientId": clientId},
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"]);
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  /// Cards / bank accounts saved on the client's Stripe Customer — saved
+  /// automatically when they pay for a membership or package. Pass
+  /// [removeId] to remove one first; the updated list comes back either way.
+  static Future<List<SavedPaymentMethod>> loadPaymentMethods({String? removeId, String? clientId}) async {
+    final res = await client.functions.invoke(
+      "list-payment-methods",
+      body: {
+        if (removeId != null) "action": "remove",
+        if (removeId != null) "id": removeId,
+        // Staff managing a client's methods; the server re-checks the role.
+        if (clientId != null) "clientId": clientId,
+      },
+    );
+    final data = res.data;
+    if (data is Map && data["error"] != null) throw Exception(data["error"]);
+    final list = (data is Map ? data["methods"] as List? : null) ?? const [];
+    return list.whereType<Map>().map((m) => SavedPaymentMethod.fromJson(Map<String, dynamic>.from(m))).toList();
+  }
+
+  /// Billing Cycle Anchor Date spec §3 — read-only preview, owner-only.
+  /// Never writes anything; safe to call repeatedly while the owner picks a
+  /// date. Response shape: `{hasActiveSubscription, proratedAmountCents?,
+  /// currency?, nextChargeDate?, message?}`.
+  static Future<Map<String, dynamic>> previewBillingAnchorChange({
+    required String clientId,
+    required int newAnchorDay,
+  }) => _invokeFunction("preview-billing-anchor-change", {
+    "clientId": clientId,
+    "newAnchorDay": newAnchorDay,
+  });
+
+  /// Billing Cycle Anchor Date spec §3 — actually applies the change:
+  /// updates the live Stripe subscription (with proration) if one exists,
+  /// persists clients.billing_anchor_day, and writes a
+  /// client_billing_anchor_history row. Owner-only; rejects with a clear
+  /// message if this client's anchor was already changed within the last
+  /// 90 days.
+  static Future<Map<String, dynamic>> changeBillingAnchor({
+    required String clientId,
+    required int newAnchorDay,
+  }) => _invokeFunction("change-billing-anchor", {
+    "clientId": clientId,
+    "newAnchorDay": newAnchorDay,
+  });
+
+  /// Staff only (the database reverts it for anyone else): replaces the list
+  /// of plans a client holds — used to change when access to one expires.
+  static Future<void> updateClientPlans(String clientId, List<ClientPlanEnrollment> plans) async {
+    await client.from("clients").update({"plans": plans.map((e) => e.toJson()).toList()}).eq("profile_id", clientId);
+  }
+
+  /// Owner-only: read or override what a client's membership renews at, when
+  /// it renews and when it ends. [action] is "get" or "update".
+  static Future<Map<String, dynamic>> ownerSubscriptionTerms({
+    required String clientId,
+    String action = "get",
+    int? renewalPriceCents,
+    String? renewalDate,
+    String? endsOn,
+    bool clearEnd = false,
+  }) => _invokeFunction("owner-subscription-terms", {
+    "clientId": clientId,
+    "action": action,
+    if (renewalPriceCents != null) "renewalPriceCents": renewalPriceCents,
+    if (renewalDate != null) "renewalDate": renewalDate,
+    if (endsOn != null) "endsOn": endsOn,
+    if (clearEnd) "clearEnd": true,
+  });
+
+  static BillingAnchorHistoryEntry _billingAnchorHistoryFromRow(Map<String, dynamic> row) => BillingAnchorHistoryEntry(
+        id: row["id"] as String,
+        oldValue: _asInt(row["old_value"]),
+        newValue: _asInt(row["new_value"]) ?? 0,
+        changedAt: row["changed_at"] as String? ?? "",
+        changedByName: (row["profiles"] as Map?)?["name"] as String?,
+        proratedAmountCents: _asInt(row["prorated_amount_cents"]),
+        nextChargeDate: row["next_charge_date"] as String?,
+      );
+
+  /// Owner-only (RLS-enforced — see the table's select policy). Newest
+  /// first.
+  static Future<List<BillingAnchorHistoryEntry>> loadBillingAnchorHistory(String clientId) async {
+    final rows = await client
+        .from("client_billing_anchor_history")
+        .select("id, old_value, new_value, changed_at, prorated_amount_cents, next_charge_date, profiles!changed_by(name)")
+        .eq("client_id", clientId)
+        .order("changed_at", ascending: false);
+    return _safeMap(rows, _billingAnchorHistoryFromRow);
+  }
+
+  static Trainer _trainerFromRow(
+    Map<String, dynamic> profile,
+    Map<String, dynamic> t,
+  ) {
+    final locations = _trainerLocationsFromJson(t["locations"]);
+    final firstLocation = locations.isNotEmpty ? locations.first : null;
+    return Trainer(
+      id: profile["id"] as String,
+      name: (profile["name"] as String?) ?? "",
+      title: t["title"] as String?,
+      photo: profile["photo_url"] as String?,
+      phone: profile["phone"] as String?,
+      email: profile["email"] as String?,
+      locationName: (firstLocation != null && firstLocation.name.isNotEmpty)
+          ? firstLocation.name
+          : null,
+      locationAddress: firstLocation?.address,
+      locations: locations,
+      bio: t["bio"] as String?,
+      beforeAfters: _beforeAftersFromJson(t["before_afters"]),
+      availability: _availabilityFromJson(t["availability"]),
+      commissionRate: (t["commission_rate"] as num?) ?? 0,
+      disciplines: ((t["disciplines"] as List?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      sessionTypes: ((t["session_types"] as List?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      reviewedByOwner: (t["reviewed_by_owner"] as bool?) ?? true,
+      signupAt: t["signup_at"] as String?,
+      payoutMode: t["payout_mode"] as String? ?? "perSession",
+      payoutRateCents: _asInt(t["payout_rate_cents"]) ?? 0,
+      referralCommissionPercent:
+          (t["referral_commission_percent"] as num?) ?? 0,
+      coachCode: t["coach_code"] as String?,
+      unavailability: _unavailabilityFromJson(t["unavailability"]),
+    );
+  }
+
+  static List<TrainerLocation> _trainerLocationsFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => TrainerLocation(
+            id: (e["id"] as String?) ?? "",
+            name: (e["name"] as String?) ?? "",
+            address: e["address"] as String?,
+            hint: e["hint"] as String?,
+            lat: (e["lat"] as num?)?.toDouble(),
+            lng: (e["lng"] as num?)?.toDouble(),
+          ),
+        )
+        .toList();
+  }
+
+  static List<TrainerBeforeAfter> _beforeAftersFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => TrainerBeforeAfter(
+            id: (e["id"] as String?) ?? "",
+            left: e["left"] as String?,
+            right: e["right"] as String?,
+          ),
+        )
+        .toList();
+  }
+
+  static List<TrainerUnavailability> _unavailabilityFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => TrainerUnavailability(
+            id: (e["id"] as String?) ?? "",
+            startDate: (e["startDate"] as String?) ?? "",
+            endDate:
+                (e["endDate"] as String?) ?? (e["startDate"] as String?) ?? "",
+            note: e["note"] as String?,
+          ),
+        )
+        .toList();
+  }
+
+  static List<AvailabilityBlock> _availabilityFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    const dayNameToIndex = {
+      "sun": 0,
+      "mon": 1,
+      "tue": 2,
+      "wed": 3,
+      "thu": 4,
+      "fri": 5,
+      "sat": 6,
+    };
+    final out = <AvailabilityBlock>[];
+    for (final block in raw) {
+      try {
+        if (block is! Map) continue;
+        final byDayRaw = (block["byDay"] as Map?) ?? const {};
+        final byDay = <int, List<int>>{};
+        byDayRaw.forEach((key, value) {
+          final slots =
+              (value as List?)
+                  ?.whereType<num>()
+                  .map((n) => n.toInt())
+                  .toList() ??
+              const <int>[];
+          if (slots.isEmpty) return;
+          final k = key.toString().toLowerCase();
+          final weekday =
+              int.tryParse(k) ??
+              dayNameToIndex[k.substring(0, k.length < 3 ? k.length : 3)];
+          if (weekday != null) byDay[weekday] = slots;
+        });
+        final dates = <String, List<int>>{};
+        ((block["dates"] as Map?) ?? const {}).forEach((key, value) {
+          final slots = (value as List?)?.whereType<num>().map((n) => n.toInt()).toList() ?? const <int>[];
+          if (slots.isNotEmpty) dates[key.toString()] = slots;
+        });
+        out.add(
+          AvailabilityBlock(
+            sessionType: block["sessionType"] as String? ?? "",
+            discipline: block["discipline"] as String? ?? "",
+            byDay: byDay,
+            dates: dates,
+            durationMin: _asInt(block["durationMin"]) ?? 60,
+            locationName: block["locationName"] as String?,
+          ),
+        );
+      } catch (e) {
+        // ignore: avoid_print
+        print(
+          "[SupabaseService] skipped malformed availability block: $e — $block",
+        );
+      }
+    }
+    return out;
+  }
+
+  static Booking _bookingFromRow(Map<String, dynamic> row) {
+    return Booking(
+      id: row["id"] as String,
+      clientId: row["client_id"] as String,
+      trainerId: row["trainer_id"] as String,
+      date: row["date"] as String,
+      slot: _asInt(row["slot_min"]) ?? 0,
+      sessionType: row["session_type"] as String? ?? "",
+      discipline: row["discipline"] as String? ?? "",
+      attendanceStatus: row["attendance_status"] as String?,
+      clientStartedAt: row["client_started_at"]?.toString(),
+      locationName: _locationNameFrom(row["location"]),
+      isPhysicalAssessment: row["is_physical_assessment"] as bool? ?? false,
+      overriddenBy: row["overridden_by"] as String?,
+      overriddenAt: row["overridden_at"] as String?,
+      overrideReason: row["override_reason"] as String?,
+      planId: row["plan_id"] as String?,
+      durationMin: _asInt(row["duration_min"]) ?? 60,
+    );
+  }
+
+  /// `bookings.location` is a JSON object (`{id, name, address, hint}`),
+  /// not a plain string like this model's field name suggests — confirmed
+  /// against real data. Handle a bare string too in case older rows (or a
+  /// future schema change) ever store it that way.
+  static String? _locationNameFrom(dynamic raw) {
+    if (raw is String) return raw;
+    if (raw is Map) return raw["name"] as String?;
+    return null;
+  }
+
+  static ClientRecord _clientRecordFromJson(String id, Map<String, dynamic> j) {
+    // Defensive: this JSONB blob is the client's own free-form app state
+    // (grew organically across ~20 schema phases), so every field is
+    // optional here — an older or partially-populated record just falls
+    // back to this model's own defaults for whatever isn't present.
+    //
+    // savedPrograms/programDays confirmed against programHelpers.js
+    // (getProgramDays reads client.programDays, falling back to the legacy
+    // singular client.program only for pre-migration records — that legacy
+    // shape isn't modeled here since nothing in this app still writes it)
+    // and SaveProgramDialog.jsx's client.savedPrograms entry shape.
+    // sessionFeedback/habitLogByDate/etc. are still NOT parsed here —
+    // open gaps beyond this pass's scope, tracked for a future audit of
+    // this parser. trainerNotes/challengeProgress WERE missing here too
+    // (silently always empty on every load, regardless of what was really
+    // saved — the write side worked fine, so notes/progress genuinely
+    // persisted, they just never came back) until this pass added them.
+    final commsRaw = (j["comms"] as List?) ?? const [];
+    // Real roster data is messier than any one test account suggests — some
+    // client_records rows carry `intake` as an empty array (a stale/older
+    // shape) instead of an object, which `as Map?` would throw on. Checked
+    // with `is` rather than cast so those rows degrade to "no intake" for
+    // that one client instead of crashing the whole roster load (fatal for
+    // a coach signing in, since this parses every client's record).
+    final intakeField = j["intake"];
+    final intakeRaw = intakeField is Map
+        ? intakeField.cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final habitSettingsField = j["habitSettings"];
+    final habitSettingsRaw = habitSettingsField is Map
+        ? habitSettingsField.cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final habitLogsRaw = (j["habitLogs"] as List?) ?? const [];
+    return ClientRecord(
+      id: id,
+      habits: ((habitSettingsRaw["enabled"] as List?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      customHabits: _safeMap(
+        ((habitSettingsRaw["custom"] as List?) ?? const []).whereType<Map>(),
+        (m) => HabitDef(
+          id: m["id"]?.toString() ?? "",
+          label: m["label"] as String? ?? "",
+          emoji: m["emoji"] as String? ?? "⭐",
+        ),
+      ),
+      habitLogByDate: Map.fromEntries(
+        habitLogsRaw.whereType<Map>().where((m) => m["date"] != null).map((m) {
+          final checkedField = m["checked"];
+          return MapEntry(
+            m["date"].toString(),
+            HabitLogEntry(
+              checked: checkedField is Map
+                  ? checkedField.map(
+                      (k, v) => MapEntry(k.toString(), v == true),
+                    )
+                  : const {},
+              energy: (m["energy"] as num?)?.toInt(),
+              motivation: (m["motivation"] as num?)?.toInt(),
+            ),
+          );
+        }),
+      ),
+      comms: _safeMap(
+        commsRaw.whereType<Map>(),
+        (m) => CommMessage(
+          id: m["id"]?.toString() ?? "",
+          who: m["who"] as String? ?? "client",
+          text: m["text"] as String? ?? "",
+          at: m["at"] as String? ?? "",
+          trainerId: m["trainerId"] as String?,
+          readByCoach: m["readByCoach"] as bool? ?? false,
+          channel: m["channel"] as String?,
+        ),
+      ),
+      intake: Map.fromEntries(
+        intakeRaw.entries.where((e) => e.value is Map).map((e) {
+          final m = (e.value as Map).cast<String, dynamic>();
+          final answersField = m["answers"];
+          return MapEntry(
+            e.key,
+            IntakeRecord(
+              answers: answersField is Map
+                  ? answersField.cast<String, dynamic>()
+                  : const <String, dynamic>{},
+              completed: m["completed"] as bool? ?? false,
+              at: m["at"] as String?,
+              by: m["by"] as String?,
+              attachments: ((m["attachments"] as List?) ?? const [])
+                  .whereType<Map>()
+                  .map((a) => IntakeAttachment.fromJson(a.cast<String, dynamic>()))
+                  .whereType<IntakeAttachment>()
+                  .toList(),
+              // Submissions this one replaced. Absent on every record written
+              // before re-filling kept history, and on anything the web app
+              // writes — an empty list is the right reading of both.
+              history: ((m["history"] as List?) ?? const [])
+                  .whereType<Map>()
+                  .map((h) => IntakeSubmission.fromJson(h.cast<String, dynamic>()))
+                  .toList(),
+              // The physical assessment's own fields, and anything else the
+              // web app writes here — kept so a save from this app can put
+              // them back instead of dropping them.
+              extra: {
+                for (final e in m.entries)
+                  if (!IntakeRecord.knownKeys.contains(e.key)) e.key: e.value,
+              },
+            ),
+          );
+        }),
+      ),
+      nutrition: _nutritionPlanFromJson(j["nutrition"]),
+      myMeals: {
+        for (final e in ((j["myMeals"] as Map?) ?? const {}).entries)
+          e.key.toString(): _nutritionMealListFromJson(e.value),
+      },
+      savedNutritionPrograms: _safeMap(
+        ((j["savedNutritionPrograms"] as List?) ?? const [])
+            .whereType<Map>()
+            .where((m) => m["type"] == "nutrition"),
+        (m) => _nutritionProgramEntryFromJson(m.cast<String, dynamic>()),
+      ),
+      savedPrograms: _safeMap(
+        ((j["savedPrograms"] as List?) ?? const []).whereType<Map>(),
+        (m) => _savedProgramFromJson(m.cast<String, dynamic>()),
+      ),
+      programDays: _safeMap(
+        ((j["programDays"] as List?) ?? const []).whereType<Map>(),
+        (m) => _programDayFromJson(m.cast<String, dynamic>()),
+      ),
+      workoutLogs: _safeMap(
+        ((j["workoutLogs"] as List?) ?? const []).whereType<Map>(),
+        (m) => _workoutLogFromJson(m.cast<String, dynamic>()),
+      ),
+      measurements: _safeMap(
+        ((j["measurements"] as List?) ?? const []).whereType<Map>(),
+        (m) => _measurementFromJson(m.cast<String, dynamic>()),
+      ),
+      photos: _safeMap(
+        ((j["photos"] as List?) ?? const []).whereType<Map>(),
+        (m) => _progressPhotoFromJson(m.cast<String, dynamic>()),
+      ),
+      // Not a persisted field in its own right — derived from workoutLogs
+      // (union of logged dates), same as the legacy web-only `client.logs`
+      // free-text path this port doesn't model.
+      loggedDates: _safeMap(
+        ((j["workoutLogs"] as List?) ?? const []).whereType<Map>(),
+        (m) => m["date"] as String?,
+      ).whereType<String>().toSet().toList(),
+      tourSeenDashboard: j["tourSeen"] is Map
+          ? (j["tourSeen"] as Map)["dashboard"] as bool? ?? false
+          : false,
+      tourSeenDrawer: j["tourSeen"] is Map
+          ? (j["tourSeen"] as Map)["drawer"] as bool? ?? false
+          : false,
+      signatures: _safeMap(
+        ((j["signatures"] as List?) ?? const []).whereType<Map>(),
+        (m) => SignedDocument(
+          id: m["id"]?.toString() ?? "",
+          docId: m["docId"] as String?,
+          title: m["title"] as String? ?? "",
+          signedAt: m["signedAt"] as String? ?? "",
+          summary: m["summary"] as String?,
+          signedBodyText: m["signedBodyText"] as String?,
+          documentVersionHash: m["documentVersionHash"] as String?,
+          initialsImages: ((m["initialsImages"] as List?) ?? const []).whereType<String>().toList(),
+          initialsTimestamps: ((m["initialsTimestamps"] as List?) ?? const []).whereType<String>().toList(),
+          signatureImage: m["signatureImage"] as String?,
+          guardianName: m["guardianName"] as String?,
+          guardianSignatureImage: m["guardianSignatureImage"] as String?,
+          photoVideoOptOut: m["photoVideoOptOut"] as bool?,
+          consentCheckboxAt: m["consentCheckboxAt"] as String?,
+          ipAddress: m["ipAddress"] as String?,
+          userAgent: m["userAgent"] as String?,
+          sessionId: m["sessionId"] as String?,
+          pdfDataUrl: m["pdfDataUrl"] as String?,
+        ),
+      ),
+      adoptedSignatureImage: j["adoptedSignatureImage"] as String?,
+      adoptedInitialsImage: j["adoptedInitialsImage"] as String?,
+      photoVideoOptOut: j["photoVideoOptOut"] as bool? ?? false,
+      guardianName: j["guardianName"] as String?,
+      trainerNotes: _safeMap(
+        ((j["trainerNotes"] as List?) ?? const []).whereType<Map>(),
+        (m) => TrainerNote(
+          id: m["id"]?.toString() ?? "",
+          flag: m["flag"] as String? ?? "yellow",
+          title: m["title"] as String?,
+          details: m["details"] as String? ?? "",
+          coachId: m["coachId"] as String? ?? "",
+          coachName: m["coachName"] as String? ?? "",
+          createdAt: m["createdAt"] as String? ?? "",
+          modifiedAt: m["modifiedAt"] as String?,
+          status: m["status"] as String? ?? "active",
+          bodyArea: m["bodyArea"] as String?,
+          followUpRequired: m["followUpRequired"] as bool? ?? false,
+          resolveBy: m["resolveBy"] as String?,
+        ),
+      ),
+      challengeBadges: _safeMap(
+        ((j["challengeBadges"] as List?) ?? const []).whereType<Map>(),
+        (m) => ChallengeBadge(
+          challengeId: m["challengeId"] as String? ?? "",
+          name: m["name"] as String? ?? "",
+          awardedAt: m["awardedAt"] as String? ?? "",
+        ),
+      ),
+      challengeProgress: j["challengeProgress"] is Map
+          ? (j["challengeProgress"] as Map).map(
+              (k, v) => MapEntry(
+                k.toString(),
+                _safeMap(
+                  ((v as List?) ?? const []).whereType<Map>(),
+                  (m) => ChallengeProgressEntry(
+                    value: (m["value"] as num?)?.toDouble() ?? 0,
+                    loggedAt: m["loggedAt"] as String? ?? "",
+                  ),
+                ),
+              ),
+            )
+          : const {},
+    );
+  }
+
+  static MacroTargets _macroTargetsFromJson(dynamic j) => j is Map
+      ? MacroTargets.fromJson(j.cast<String, dynamic>())
+      : const MacroTargets();
+
+  /// Mirrors nutritionHelpers.js `getNutritionTargets` / NutritionBuilder.jsx
+  /// `isSplitMealBudgets`/`dayMealBudgets` — older saved data has no
+  /// training/rest split at all (just the flat values directly), treated
+  /// as the Training Day entry so nothing already set is lost.
+  static DaySplit<MacroTargets> _targetsSplitFromJson(dynamic j) {
+    if (j is! Map)
+      return const DaySplit(training: MacroTargets(), rest: MacroTargets());
+    final m = j.cast<String, dynamic>();
+    if (m["training"] != null || m["rest"] != null) {
+      return DaySplit(
+        training: _macroTargetsFromJson(m["training"]),
+        rest: _macroTargetsFromJson(m["rest"]),
+      );
+    }
+    if (m.isNotEmpty)
+      return DaySplit(
+        training: _macroTargetsFromJson(m),
+        rest: const MacroTargets(),
+      );
+    return const DaySplit(training: MacroTargets(), rest: MacroTargets());
+  }
+
+  static Map<String, String> _mealBudgetMapFromJson(dynamic j) {
+    if (j is! Map) return const {};
+    return j.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ""));
+  }
+
+  static const _mealBudgetKeys = {
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snacks",
+    "smoothies",
+  };
+
+  static DaySplit<Map<String, String>> _mealBudgetsSplitFromJson(dynamic j) {
+    if (j is! Map) return const DaySplit(training: {}, rest: {});
+    final m = j.cast<String, dynamic>();
+    if (m.containsKey("training") || m.containsKey("rest")) {
+      return DaySplit(
+        training: _mealBudgetMapFromJson(m["training"]),
+        rest: _mealBudgetMapFromJson(m["rest"]),
+      );
+    }
+    // Flat legacy shape: only treat it as meal-budget keys (not some other
+    // unrelated map) before assuming it's the Training Day budget.
+    if (m.keys.any(_mealBudgetKeys.contains))
+      return DaySplit(training: _mealBudgetMapFromJson(m), rest: const {});
+    return const DaySplit(training: {}, rest: {});
+  }
+
+  static Ingredient _ingredientFromJson(Map j) =>
+      Ingredient.fromJson(j.cast<String, dynamic>());
+
+  static NutritionMeal? _nutritionMealFromJson(dynamic j) {
+    if (j is! Map) return null;
+    final m = j.cast<String, dynamic>();
+    final overridesRaw = m["overrides"];
+    return NutritionMeal(
+      id: m["id"]?.toString() ?? "",
+      name: m["name"] as String? ?? "",
+      time: m["time"] as String?,
+      calories: _asInt(m["calories"]) ?? 0,
+      protein: (m["protein"] as num?)?.toDouble() ?? 0,
+      carbs: (m["carbs"] as num?)?.toDouble() ?? 0,
+      fats: (m["fats"] as num?)?.toDouble() ?? 0,
+      notes: m["notes"] as String?,
+      instructions: m["instructions"] as String?,
+      isCustom: m["isCustom"] as bool? ?? false,
+      ingredients: _safeMap(
+        ((m["ingredients"] as List?) ?? const []).whereType<Map>(),
+        _ingredientFromJson,
+      ),
+      targetCalories: _asInt(m["targetCalories"]),
+      scale: (m["scale"] as num?)?.toDouble(),
+      scaledIngredients: m["scaledIngredients"] is List
+          ? _safeMap(
+              (m["scaledIngredients"] as List).whereType<Map>(),
+              _ingredientFromJson,
+            )
+          : null,
+      scaledMacros: MacroSnapshot.fromJson(m["scaledMacros"]),
+      overrides: overridesRaw is Map
+          ? overridesRaw.map(
+              (k, v) => MapEntry(int.tryParse(k.toString()) ?? 0, v.toString()),
+            )
+          : const {},
+    );
+  }
+
+  static List<NutritionMeal> _nutritionMealListFromJson(dynamic j) => j is List
+      ? j.map(_nutritionMealFromJson).whereType<NutritionMeal>().toList()
+      : const [];
+
+  /// `client.nutrition` — real data is either absent entirely (client.nutrition
+  /// == null, no plan assigned) or the shape NutritionBuilder.jsx writes.
+  static NutritionPlan? _nutritionPlanFromJson(dynamic j) {
+    if (j is! Map) return null;
+    final m = j.cast<String, dynamic>();
+    final targets = _targetsSplitFromJson(m["targets"]);
+    return NutritionPlan(
+      trainingTargets: targets.training,
+      restTargets: targets.rest,
+      mealBudgets: _mealBudgetsSplitFromJson(m["mealBudgets"]),
+      breakfast: _nutritionMealListFromJson(m["breakfast"]),
+      lunch: _nutritionMealListFromJson(m["lunch"]),
+      dinner: _nutritionMealListFromJson(m["dinner"]),
+      snacks: _nutritionMealListFromJson(m["snacks"]),
+      smoothies: _nutritionMealListFromJson(m["smoothies"]),
+      guidelines: m["guidelines"] as String?,
+      extraGroceryItems: m["extraGroceryItems"] as String?,
+      attachments: _safeMap(
+        ((m["attachments"] as List?) ?? const []).whereType<Map>(),
+        (a) => NutritionAttachment(
+          id: a["id"]?.toString() ?? "",
+          name: a["name"] as String? ?? "",
+          dataUrl: a["dataUrl"] as String? ?? "",
+          size: _asInt(a["size"]) ?? 0,
+        ),
+      ),
+    );
+  }
+
+  /// One `client.savedNutritionPrograms` entry — see
+  /// generate-ai-nutrition-program's `entry` shape (AI-drafted) or
+  /// SaveProgramDialog's manual-save shape (coach-authored).
+  static NutritionProgramEntry _nutritionProgramEntryFromJson(
+    Map<String, dynamic> j,
+  ) {
+    final targets = _targetsSplitFromJson(j["targets"]);
+    return NutritionProgramEntry(
+      id: j["id"]?.toString() ?? "",
+      name: j["name"] as String? ?? "",
+      status: j["status"] as String? ?? "draft",
+      source: j["source"] as String? ?? "coach",
+      trainingTargets: targets.training,
+      restTargets: targets.rest,
+      mealBudgets: _mealBudgetsSplitFromJson(j["mealBudgets"]),
+      guidelines: j["guidelines"] as String?,
+      createdAt: j["createdAt"] as String?,
+      createdBy: j["createdBy"] as String?,
+    );
+  }
+
+  static MembershipPlan _membershipPlanFromJson(Map<String, dynamic> j) {
+    const kindByName = {
+      "membership": PlanKind.membership,
+      "package": PlanKind.package,
+      // "program" stays the personalized *training* program, so every plan
+      // created before nutrition programs existed keeps its meaning.
+      "program": PlanKind.program,
+      // Written as `kind.name` (see _membershipPlanToJson); the snake_case
+      // spelling is accepted too in case a row is ever authored by hand or
+      // by the web app rather than through this client.
+      "nutritionProgram": PlanKind.nutritionProgram,
+      "nutrition_program": PlanKind.nutritionProgram,
+    };
+    return MembershipPlan(
+      id: j["id"] as String,
+      name: j["name"] as String? ?? "",
+      kind: kindByName[j["kind"] as String?] ?? PlanKind.package,
+      description: j["description"] as String?,
+      startDate: j["startDate"] as String?,
+      endDate: j["endDate"] as String?,
+      renewalDay: _asInt(j["renewalDay"]),
+      maxSessions: _asInt(j["maxSessions"]),
+      termMonths: _asInt(j["termMonths"]),
+      allowedTypes: ((j["allowedTypes"] as List?) ?? const [])
+          .whereType<String>()
+          .toList(),
+      priceCents: _asInt(j["priceCents"]) ?? 0,
+      archived: j["archived"] as bool? ?? false,
+      paymentType: j["paymentType"] as String?,
+      feeItemProductId: j["feeItemProductId"] as String?,
+      category: j["category"] as String?,
+      sortOrder: _asInt(j["sortOrder"]),
+      allowGuests: j["allowGuests"] as bool? ?? false,
+      guestFeeCents: _asInt(j["guestFeeCents"]) ?? 0,
+      rolloverEnabled: (j["rollover"] as Map?)?["enabled"] as bool? ?? false,
+      rolloverMaxVisits: _asInt((j["rollover"] as Map?)?["maxVisits"]) ?? 0,
+      cancellationNoticeDays: _asInt(j["cancellationNoticeDays"]) ?? 0,
+      earlyTerminationFeeCents: _asInt(j["earlyTerminationFeeCents"]) ?? 0,
+      serviceBalanceEnabled: j["serviceBalanceEnabled"] as bool? ?? false,
+      sharingEnabled: (j["sharing"] as Map?)?["enabled"] as bool? ?? false,
+      sharingMaxAccounts: _asInt((j["sharing"] as Map?)?["maxAccounts"]) ?? 1,
+      public: j["public"] as bool? ?? true,
+      limitOnePerAccount: j["limitOnePerAccount"] as bool? ?? false,
+      expirationEnabled:
+          (j["expiration"] as Map?)?["enabled"] as bool? ?? false,
+      expirationDays: _asInt((j["expiration"] as Map?)?["days"]),
+    );
+  }
+}

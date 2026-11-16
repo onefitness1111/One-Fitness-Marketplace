@@ -1,0 +1,655 @@
+import "package:flutter/gestures.dart";
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/calendar_sync_section.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "../challenges/coach_challenges_screen.dart";
+import "../chat/coach_chat_screen.dart";
+import "../clients/clients_screen.dart";
+import "../dashboard/self_book_screen.dart";
+import "../dashboard/trainer_home_screen.dart";
+import "../exercises/equipment_library_screen.dart";
+import "../exercises/exercises_screen.dart";
+import "../memberships/manage_memberships_screen.dart";
+import "../memberships/manage_products_screen.dart";
+import "../memberships/manage_waivers_screen.dart";
+import "../programs/program_library_page.dart";
+import "../reports/reports_hub_screen.dart";
+import "../schedule/schedule_screen.dart";
+import "../schedule/waitlist_screen.dart";
+import "../settings/customize_platform_screen.dart";
+import "../staff/coach_merit_badges_screen.dart";
+import "../staff/coaches_overview_screen.dart";
+import "../staff/my_pay_screen.dart";
+import "../staff/my_profile_screen.dart";
+import "../staff/staff_screen.dart";
+import "trainer_shell_state.dart";
+
+class _NavItem {
+  const _NavItem(this.key, this.label, this.icon);
+  final String key;
+  final String label;
+  final IconData icon;
+}
+
+const _bottomItemsBase = [
+  _NavItem("dashboard", "Dashboard", LucideIcons.dumbbell),
+  _NavItem("clients", "Clients", LucideIcons.users),
+  _NavItem("chat", "Chat", LucideIcons.messageSquare),
+  _NavItem("schedule", "Schedule", LucideIcons.calendar),
+];
+const _staffBottomItem = _NavItem("staff", "Staff settings", LucideIcons.user);
+
+const _titles = {
+  "dashboard": "Dashboard",
+  "clients": "Clients",
+  "schedule": "Scheduling",
+  "chat": "Chat",
+  "teamchat": "Team Chat",
+  "staff": "Staff settings",
+  "selfbook": "Book Session",
+  "challenges": "Challenges",
+  "myprofile": "My Profile",
+  "calendarsync": "Calendar Sync",
+  "products": "Products",
+  "reports": "Reports",
+  "waitlist": "Waitlist",
+  "memberships": "Access Hub",
+  "waivers": "Waivers & Contracts",
+  "coaches": "Coaches",
+  "platformSettings": "Customize Platform",
+  "coachbadges": "Merit Badges",
+  "mypay": "My Pay",
+  "exercises": "Exercises",
+  "equipment": "Equipment Library",
+  "builderWorkout": "Build Workout Program",
+  "builderNutrition": "Build Nutrition Program",
+  "support": "Support",
+};
+
+/// Mirrors App.jsx's trainer-side chrome: top bar (hamburger + title),
+/// permission-gated hamburger drawer, and a bottom nav (Staff tab only for
+/// the owner). Each `trainerMode` destination routes to its own screen.
+/// "selfbook" has no drawer/bottom-nav entry of its own; the dashboard's
+/// "Book session · Lead by example" strip that opened it has been removed,
+/// so it's currently unreachable (kept so it can be brought back).
+class TrainerShell extends ConsumerStatefulWidget {
+  const TrainerShell({super.key});
+
+  @override
+  ConsumerState<TrainerShell> createState() => _TrainerShellState();
+}
+
+class _TrainerShellState extends ConsumerState<TrainerShell> {
+  // Closes the drawer directly (bypassing Navigator.pop) so it doesn't get
+  // swallowed by the PopScope below, which intercepts pop attempts whenever
+  // canPop is false to run its own back-history logic instead.
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+  Offset? _dragStart;
+
+  // The single source of truth for "what does back mean right now" —
+  // used by the top-bar back button, the swipe gesture, and system back/
+  // OS edge-swipe alike, so all three always agree. Order matters: an
+  // open drawer wins, then any open local sub-view (a form, a detail
+  // drilled into — see local_back_stack.dart), then — only once neither
+  // applies — the shell's own mode history.
+  void _handleBack() {
+    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+      _scaffoldKey.currentState!.closeDrawer();
+      return;
+    }
+    final local = ref.read(localBackStackProvider.notifier).top;
+    if (local != null) {
+      local();
+      return;
+    }
+    // Back retraces the screens actually visited, one at a time, for bottom
+    // tabs and drawer screens alike.
+    final nav = ref.read(trainerModeProvider.notifier);
+    if (nav.canGoBack) {
+      nav.goBack();
+      return;
+    }
+    // Nothing left to retrace and not on Dashboard — back goes home rather
+    // than doing nothing. On Dashboard the PopScope lets it exit the app.
+    if (ref.read(trainerModeProvider) != "dashboard") nav.go("dashboard");
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    // A touch drawing a signature is never a swipe-back.
+    if (SignaturePad.drawingPointers.contains(e.pointer)) {
+      _dragStart = null;
+      return;
+    }
+    if (e.buttons == kPrimaryButton || e.kind != PointerDeviceKind.mouse) {
+      _dragStart = e.position;
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    final start = _dragStart;
+    _dragStart = null;
+    if (start == null) return;
+    final delta = e.position - start;
+    // Ignore drags starting inside the Drawer's own left-edge-swipe-to-
+    // open hitbox (Scaffold's default drawerEdgeDragWidth) so the two
+    // gestures never fight over the same swipe; require a deliberate,
+    // mostly-horizontal, rightward motion.
+    if (start.dx > 24 &&
+        delta.dx > 80 &&
+        delta.dx.abs() > delta.dy.abs() * 1.5) {
+      _handleBack();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mode = ref.watch(trainerModeProvider);
+    final trainerAuth = ref.watch(trainerAuthProvider);
+    final isOwner = trainerAuth == "owner";
+
+    void go(String key) {
+      ref.read(trainerModeProvider.notifier).go(key);
+      _scaffoldKey.currentState?.closeDrawer();
+    }
+
+    final bottomItems = [..._bottomItemsBase, if (isOwner) _staffBottomItem];
+
+    final canGoBack = ref.read(trainerModeProvider.notifier).canGoBack;
+    // Watched, not read: a sub-view opening or closing must re-evaluate
+    // whether system back should exit the app.
+    final hasLocalBack = ref.watch(localBackStackProvider).isNotEmpty;
+
+    // A page other than Dashboard always has somewhere to go back to — home
+    // at worst — so back only exits the app from Dashboard itself.
+    final showBack = mode != "dashboard" || canGoBack || hasLocalBack;
+
+    return PopScope(
+      canPop: mode == "dashboard" && !canGoBack && !hasLocalBack,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: AppColors.bg,
+        drawer: _TrainerDrawer(mode: mode, isOwner: isOwner, onGo: go),
+        body: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _onPointerDown,
+          onPointerUp: _onPointerUp,
+          child: SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    border: Border(bottom: BorderSide(color: AppColors.line)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 11,
+                    ),
+                    child: Row(
+                      children: [
+                        // Both of these used to be 22x22 hit areas sitting
+                        // 6px apart — roughly 3.5mm on a real phone, with a
+                        // 1mm gap between two different actions. Taps landed
+                        // on nothing, or opened the drawer when back was
+                        // meant, which read as "back is broken". Same fix as
+                        // ClientShell's top bar.
+                        Builder(
+                          builder: (context) => IconButton(
+                            onPressed: () => Scaffold.of(context).openDrawer(),
+                            icon: Icon(
+                              LucideIcons.menu,
+                              size: 22,
+                              color: AppColors.gold,
+                            ),
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.standard,
+                            constraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                          ),
+                        ),
+                        if (showBack) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: _handleBack,
+                            tooltip: "Back",
+                            icon: Icon(
+                              LucideIcons.chevronLeft,
+                              size: 24,
+                              color: AppColors.gold,
+                            ),
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.standard,
+                            constraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        Text(
+                          _titles[mode] ?? "",
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                            color: AppColors.txt,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: AnimatedScreenSwitcher(
+                    screenKey: mode,
+                    child: switch (mode) {
+                      "dashboard" => const TrainerHomeScreen(),
+                      "clients" => const ClientsScreen(),
+                      "chat" => const CoachChatScreen(),
+                      "schedule" => const ScheduleScreen(),
+                      "waitlist" => const WaitlistScreen(),
+                      "exercises" => const ExercisesScreen(),
+                      "equipment" => const EquipmentLibraryScreen(),
+                      "builderWorkout" => const ProgramLibraryPage(kind: LibraryKind.workout),
+                      "builderNutrition" => const ProgramLibraryPage(kind: LibraryKind.nutrition),
+                      "staff" when isOwner => const StaffScreen(),
+                      // Owner-only like the rest below — this is where the
+                      // coach approval code is generated. It was the one
+                      // owner page without the guard, which is how a stale
+                      // mode could put it in front of a freshly signed-up
+                      // coach.
+                      "coaches" when isOwner => const CoachesOverviewScreen(),
+                      "myprofile" => const MyProfileScreen(),
+                      "calendarsync" when !isOwner => const SingleChildScrollView(
+                        padding: EdgeInsets.all(18),
+                        child: CalendarSyncSection(),
+                      ),
+                      "coachbadges" when !isOwner => const CoachMeritBadgesScreen(),
+                      "mypay" => const MyPayScreen(),
+                      "reports" when isOwner => const ReportsHubScreen(),
+                      "memberships" when isOwner => const ManageMembershipsScreen(),
+                      "products" when isOwner => const ManageProductsScreen(),
+                      "waivers" when isOwner => const ManageWaiversScreen(),
+                      "platformSettings" when isOwner => const CustomizePlatformScreen(),
+                      "challenges" => const CoachChallengesScreen(),
+                      "selfbook" => const SelfBookScreen(),
+                      "support" => const SupportScreen(),
+                      _ => PlaceholderScreen(title: _titles[mode] ?? mode),
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        bottomNavigationBar: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.bottomBarBg,
+            border: Border(top: BorderSide(color: AppColors.line)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 58,
+                  child: Row(
+                    children: bottomItems.map((item) {
+                      final on = mode == item.key;
+                      return Expanded(
+                        child: InkWell(
+                          onTap: () => go(item.key),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 9, bottom: 11),
+                            child: AnimatedTabIcon(
+                              icon: item.icon,
+                              label: item.label,
+                              selected: on,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerEntry {
+  const _DrawerEntry(this.icon, this.label, this.key, this.visible, {this.children = const []});
+
+  /// Shown as a dropdown under this entry — Reports groups the owner's
+  /// admin pages beneath it.
+  final List<_DrawerEntry> children;
+  final IconData icon;
+  final String label;
+  final String key;
+  final bool visible;
+}
+
+class _TrainerDrawer extends ConsumerWidget {
+  const _TrainerDrawer({
+    required this.mode,
+    required this.isOwner,
+    required this.onGo,
+  });
+
+  final String mode;
+  final bool isOwner;
+  final void Function(String) onGo;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final newCoachCount = ref
+        .watch(trainersProvider)
+        .where((t) => !t.reviewedByOwner)
+        .length;
+    // Admin (owner) hamburger order follows a fixed spec exactly: Dashboard,
+    // Chat, Build Workout Program, Build Nutrition Program, Exercises,
+    // Challenges, Waitlist, Access/Memberships, Products, Coaches, Reports
+    // (kept — it has no other entry point in the app), Staff Settings,
+    // Customize Platform, Waivers & Contracts. Coach (non-owner) menu is a
+    // separate list, unchanged from before.
+    final entries = isOwner
+        ? [
+            _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
+            _DrawerEntry(LucideIcons.messageSquare, "Chat", "chat", true),
+            _DrawerEntry(
+              LucideIcons.clipboardList,
+              "Build Workout Program",
+              "builderWorkout",
+              true,
+            ),
+            _DrawerEntry(
+              LucideIcons.apple,
+              "Build Nutrition Program",
+              "builderNutrition",
+              true,
+            ),
+            _DrawerEntry(LucideIcons.dumbbell, "Exercises", "exercises", true),
+            _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
+            _DrawerEntry(LucideIcons.trophy, "Challenges", "challenges", true),
+            _DrawerEntry(LucideIcons.clock, "Waitlist", "waitlist", true),
+            _DrawerEntry(
+              LucideIcons.clipboardList,
+              "Access Hub",
+              "memberships",
+              true,
+            ),
+            _DrawerEntry(LucideIcons.package, "Products", "products", true),
+            _DrawerEntry(
+              LucideIcons.clipboardCheck,
+              "Reports",
+              "reports",
+              true,
+              children: [
+                _DrawerEntry(
+                  LucideIcons.users,
+                  newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches",
+                  "coaches",
+                  true,
+                ),
+                const _DrawerEntry(
+                  LucideIcons.slidersHorizontal,
+                  "Customize Platform",
+                  "platformSettings",
+                  true,
+                ),
+                const _DrawerEntry(
+                  LucideIcons.fileSignature,
+                  "Waivers & Contracts",
+                  "waivers",
+                  true,
+                ),
+              ],
+            ),
+            _DrawerEntry(LucideIcons.phone, "Support", "support", true),
+          ]
+        : [
+            _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
+            _DrawerEntry(LucideIcons.users, "Clients", "clients", true),
+            _DrawerEntry(LucideIcons.calendar, "Scheduling", "schedule", true),
+            _DrawerEntry(LucideIcons.clock, "Waitlist", "waitlist", true),
+            _DrawerEntry(LucideIcons.dumbbell, "Exercises", "exercises", true),
+            _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
+            _DrawerEntry(LucideIcons.trophy, "Challenges", "challenges", true),
+            _DrawerEntry(LucideIcons.messageSquare, "Chat", "chat", true),
+            _DrawerEntry(LucideIcons.user, "My Profile", "myprofile", true),
+            _DrawerEntry(LucideIcons.calendar, "Calendar Sync", "calendarsync", true),
+            _DrawerEntry(LucideIcons.award, "Merit Badges", "coachbadges", true),
+            _DrawerEntry(LucideIcons.clipboardCheck, "My Pay", "mypay", true),
+            _DrawerEntry(LucideIcons.phone, "Support", "support", true),
+          ];
+
+    return Drawer(
+      backgroundColor: AppColors.card,
+      width: 288,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: AppColors.line)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.dumbbell,
+                        size: 18,
+                        color: AppColors.gold,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          "ONE Fitness",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17,
+                          ),
+                        ),
+                      ),
+                      // Light/dark here as well as in My Profile: the full
+                      // picker is the right home for the setting, but nobody
+                      // walks to Profile mid-session to dim a screen.
+                      const ThemeModeToggleButton(),
+                      IconButton(
+                        onPressed: () => Scaffold.of(context).closeDrawer(),
+                        tooltip: "Close menu",
+                        icon: Icon(
+                          LucideIcons.x,
+                          size: 20,
+                          color: AppColors.mute,
+                        ),
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.standard,
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: entries
+                    .map(
+                      (e) => e.children.isNotEmpty
+                          ? _DrawerGroup(entry: e, current: mode, onGo: onGo)
+                          : InkWell(
+                        onTap: () => onGo(e.key),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 15,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(color: AppColors.line),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(e.icon, size: 17, color: AppColors.gold),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Text(
+                                  e.label,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.txt,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            InkWell(
+              onTap: () {
+                SupabaseService.signOut();
+                ref.read(trainerAuthProvider.notifier).signOut();
+              },
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                child: Row(
+                  children: [
+                    Icon(
+                      LucideIcons.lock,
+                      size: 17,
+                      color: AppColors.errorText,
+                    ),
+                    SizedBox(width: 14),
+                    Text(
+                      "Sign out",
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.errorText,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A drawer entry with a dropdown. Tapping the label opens its own page;
+/// the chevron shows or hides the pages beneath it. Starts open when the
+/// current screen is one of them, so the owner can see where they are.
+class _DrawerGroup extends StatefulWidget {
+  const _DrawerGroup({required this.entry, required this.current, required this.onGo});
+  final _DrawerEntry entry;
+  final String current;
+  final void Function(String) onGo;
+
+  @override
+  State<_DrawerGroup> createState() => _DrawerGroupState();
+}
+
+class _DrawerGroupState extends State<_DrawerGroup> {
+  late bool _open = widget.entry.children.any((c) => c.key == widget.current);
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.entry;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => widget.onGo(e.key),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 15, 8, 15),
+                    child: Row(
+                      children: [
+                        Icon(e.icon, size: 17, color: AppColors.gold),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(e.label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.txt)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              InkWell(
+                onTap: () => setState(() => _open = !_open),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+                  child: Icon(_open ? LucideIcons.chevronUp : LucideIcons.chevronDown, size: 17, color: AppColors.mute),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_open)
+          for (final c in e.children)
+            InkWell(
+              onTap: () => widget.onGo(c.key),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(44, 13, 20, 13),
+                decoration: BoxDecoration(
+                  color: Color(0x08FFFFFF),
+                  border: Border(bottom: BorderSide(color: AppColors.line)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(c.icon, size: 15, color: AppColors.gold),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(c.label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.txt)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+      ],
+    );
+  }
+}

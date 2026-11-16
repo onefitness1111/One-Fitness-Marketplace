@@ -1,0 +1,1041 @@
+import "package:flutter/material.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "dart:async";
+import "package:supabase_flutter/supabase_flutter.dart";
+import "../../core/live_log/live_log_sync.dart";
+import "../../core/navigation/local_back_stack.dart";
+import "../../core/supabase/supabase_service.dart";
+import "../../core/theme/app_colors.dart";
+import "../../core/utils/date_utils.dart";
+import "../../core/utils/program_utils.dart";
+import "../../core/widgets/widgets.dart";
+import "../../data/models/client_record.dart";
+import "../../data/models/exercise_prescription.dart";
+import "../../data/models/program_day.dart";
+import "../../data/models/saved_program.dart";
+import "../../data/models/workout_log.dart";
+import "../client/plans/exercise_set_grid.dart";
+import "live_log_widgets.dart";
+
+/// The session-logging state machine — active-programs list -> day list
+/// with "Start workout" -> active-day ExerciseSetGrids -> Save -> "Session
+/// logged!" confirmation.
+///
+/// That button picks which DAY of the program is being logged; it is not a
+/// second "start the session". The coach's own Start Session, on the
+/// dashboard, is what opens the session and switches Beep Your Coach on —
+/// the two were both labelled "Start Session", which read as the first one
+/// having failed. Extracted out of what used to be
+/// `WorkoutTab`'s private state so a coach logging a session *for* a
+/// client (trainer_home_screen.dart's Start Session) runs through the
+/// exact same logic a client logging their own session does
+/// (workout_tab.dart) — not a parallel reimplementation that could drift.
+///
+/// Deliberately takes [client] as a plain snapshot rather than reading a
+/// provider itself: the two callers watch different providers
+/// (`clientRecordProvider` for a client logging themselves,
+/// `trainerClientRecordsProvider` for a coach logging on a client's
+/// behalf) and persist to different local state — that's entirely the
+/// caller's job via [onSave]. [loggedBy] and [onSave] together let each
+/// caller decide who's logging and how the result gets saved (both real
+/// backend + local state), rather than baking that into this widget.
+class SessionLoggerView extends StatefulWidget {
+  const SessionLoggerView({
+    super.key,
+    required this.client,
+    required this.onSave,
+    this.loggedBy = "client",
+    this.emptyProgramText =
+        "No active workout program yet. Your coach will assign one to your profile.",
+    this.exerciseFooterBuilder,
+    this.footer,
+    this.beepBarBuilder,
+    this.authorName,
+    this.authorRole,
+    this.initialDayId,
+    this.liveSync = true,
+  });
+
+  final ClientRecord client;
+
+  /// Shared live log: what the coach, client and owner enter during the
+  /// session is one log, synced in real time (and queued while offline).
+  final bool liveSync;
+
+  /// Name / role (client | coach | owner) attached to notes written here.
+  final String? authorName;
+  final String? authorRole;
+
+  /// Open straight into this program day (e.g. a coach joining a client who
+  /// is already working out).
+  final String? initialDayId;
+
+  /// Pinned under the program — used for the health-guidance citations that
+  /// App Review guideline 1.4.1 requires alongside a training program.
+  final Widget? footer;
+
+  /// "client" (self-logged) | "coach" (logged on the client's behalf).
+  final String loggedBy;
+
+  /// Persists the newly-completed entry (real backend write + the
+  /// caller's own local provider update) — throw to signal failure, which
+  /// this widget surfaces as a SnackBar without losing the in-progress
+  /// session.
+  final Future<void> Function(WorkoutLogEntry entry) onSave;
+
+  final String emptyProgramText;
+
+  /// Beep Your Coach, rendered directly under the view toggle and above
+  /// the first exercise. Only the client's own view supplies one — a
+  /// coach logging on someone's behalf has no one to beep. Given the
+  /// day's exercises and where the client is in them, so "Done" can name
+  /// the right one.
+  final Widget Function(List<String> exerciseNames, int focusIndex, bool fullView)?
+      beepBarBuilder;
+
+  /// Optional extra content rendered under each exercise's set grid — used
+  /// by the client's own view to show/edit a per-exercise note to their
+  /// coach (not offered when a coach is logging on a client's behalf,
+  /// since there's no one to notify).
+  final Widget Function(
+    SavedProgram prog,
+    ProgramDay day,
+    ExercisePrescription ex,
+  )?
+  exerciseFooterBuilder;
+
+  @override
+  State<SessionLoggerView> createState() => _SessionLoggerViewState();
+}
+
+class _SessionLoggerViewState extends State<SessionLoggerView> {
+  String? _selectedProgId;
+  String? _dayId;
+  bool _sessionStarted = false;
+  final Map<String, SetDraft> _sessionData = {};
+  bool _saved = false;
+  bool _saving = false;
+
+  // ── shared live log ──────────────────────────────────────────────────────
+  LiveLogController? _live;
+  int _syncTick = 0;
+  Set<String> _liveDays = {};
+  RealtimeChannel? _activity;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.liveSync && widget.client.id.isNotEmpty) {
+      _refreshLiveDays();
+      try {
+        _activity = LiveActivity.watch(clientId: widget.client.id, onChange: _refreshLiveDays);
+      } catch (_) {}
+    }
+    final initial = widget.initialDayId;
+    if (initial != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startDay(initial);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _live?.dispose();
+    final a = _activity;
+    if (a != null) SupabaseService.client.removeChannel(a);
+    super.dispose();
+  }
+
+  Future<void> _refreshLiveDays() async {
+    try {
+      final rows = await LiveActivity.recent(clientId: widget.client.id);
+      final today = isoToday();
+      final days = {
+        for (final r in rows)
+          if (r["log_date"]?.toString() == today) r["day_id"].toString(),
+      };
+      if (mounted) setState(() => _liveDays = days);
+    } catch (_) {}
+  }
+
+  SavedProgram? _currentProgram() {
+    final programs = widget.client.savedPrograms.where((p) => p.status == "active").toList();
+    if (programs.isEmpty) return null;
+    return programs.firstWhere((p) => p.id == _selectedProgId, orElse: () => programs.first);
+  }
+
+  void _detachLive() {
+    _live?.dispose();
+    _live = null;
+  }
+
+  void _attachLive(SavedProgram prog, String dayId) {
+    _detachLive();
+    if (!widget.liveSync || widget.client.id.isEmpty || dayId.isEmpty) return;
+    final role = widget.authorRole ?? widget.loggedBy;
+    final c = LiveLogController(
+      clientId: widget.client.id,
+      date: isoToday(),
+      dayId: dayId,
+      programId: prog.id,
+      myName: widget.authorName ?? (role == "client" ? "Client" : "Coach"),
+      myRole: role,
+    );
+    _live = c;
+    c.remoteTick.addListener(() => _applyLive(c));
+    unawaited(c.start());
+  }
+
+  /// Someone else's change (or the first load) arrived — fold it into the
+  /// drafts the grid shows.
+  void _applyLive(LiveLogController c) {
+    if (!mounted || _live != c) return;
+    setState(() {
+      c.sets.forEach((k, v) {
+        final existing = _sessionData[k];
+        if (existing == null && v.reps == null && v.weight == null) return;
+        final d = existing ?? (_sessionData[k] = SetDraft());
+        d.reps = v.reps;
+        d.weight = v.weight;
+      });
+      _syncTick++;
+    });
+  }
+
+  void _leaveDay() {
+    _detachLive();
+    setState(() => _sessionStarted = false);
+  }
+
+  /// Which exercise the one-at-a-time view is showing.
+  int _focusIndex = 0;
+
+  /// Clients can switch to seeing the whole day at once. Deliberately NOT
+  /// persisted anywhere: the spec calls for every new session to start in
+  /// the focused view, so this is plain widget state that dies with the
+  /// session rather than a saved preference.
+  bool _fullView = false;
+
+  void _startDay(String dayId) {
+    setState(() {
+      _dayId = dayId;
+      _sessionStarted = true;
+      _sessionData.clear();
+      // Both reset per session — a client who switched to full view last time
+      // still starts focused this time.
+      _focusIndex = 0;
+      _fullView = false;
+    });
+    final prog = _currentProgram();
+    if (prog != null) _attachLive(prog, dayId);
+  }
+
+  // Mutating _sessionData alone doesn't tell this State to rebuild — the
+  // Save button's `if (_sessionData.isNotEmpty)` check below only
+  // re-evaluates on a real setState. ExerciseSetGrid already calls its
+  // own local setState per keystroke (to redraw its own hit/PR
+  // highlighting), but that only rebuilds itself, not this parent.
+  void _onSetChange(
+    String exerciseName,
+    int setNum,
+    String field,
+    Object? value,
+  ) {
+    setState(() {
+      final key = "${exerciseName}__$setNum";
+      final draft = _sessionData.putIfAbsent(key, () => SetDraft());
+      if (field == "reps") draft.reps = value as int?;
+      if (field == "weight") draft.weight = value as double?;
+    });
+    // Shared with the other side right away (queued if offline).
+    _live?.setField(exerciseName, setNum, field, value);
+  }
+
+  Future<void> _saveSession(SavedProgram prog, ProgramDay day) async {
+    final exercises = day.exercises.map((ex) {
+      final sets = List.generate(ex.sets > 0 ? ex.sets : 3, (i) {
+        final setNum = i + 1;
+        final d = _sessionData["${ex.name}__$setNum"];
+        return LoggedSet(
+          setNum: setNum,
+          targetReps: ex.reps,
+          completedReps: d?.reps,
+          completedWeight: d?.weight,
+          completed: d?.reps != null || d?.weight != null,
+        );
+      });
+      return LoggedExercise(name: ex.name, sets: sets);
+    }).toList();
+
+    final entry = WorkoutLogEntry(
+      // One live session = one saved entry. Coach and client may both press
+      // Save; the same id means the second save replaces the first instead of
+      // logging the workout twice.
+      id: widget.liveSync
+          ? "live-${isoToday()}-${day.id}"
+          : DateTime.now().microsecondsSinceEpoch.toString(),
+      date: isoToday(),
+      programId: prog.id,
+      programName: prog.name,
+      dayId: day.id,
+      dayTitle: day.title,
+      loggedAt: DateTime.now().toIso8601String(),
+      exercises: exercises,
+      loggedBy: widget.loggedBy,
+    );
+
+    setState(() => _saving = true);
+    try {
+      await widget.onSave(entry);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't save — check your connection and try again.",
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    // The workout is done — it stops showing as "working out now".
+    unawaited(LiveActivity.end(widget.client.id, isoToday()));
+    if (!mounted) return;
+    _detachLive();
+    setState(() {
+      _saving = false;
+      _sessionData.clear();
+      _saved = true;
+      _sessionStarted = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final client = widget.client;
+    final programs = client.savedPrograms
+        .where((p) => p.status == "active")
+        .toList();
+
+    if (programs.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(18),
+        child: HintBox(text: widget.emptyProgramText),
+      );
+    }
+
+    final prog = programs.firstWhere(
+      (p) => p.id == _selectedProgId,
+      orElse: () => programs.first,
+    );
+    final days = prog.programDays;
+    final activeDay = days.firstWhere(
+      (d) => d.id == _dayId,
+      orElse: () =>
+          days.isNotEmpty ? days.first : const ProgramDay(id: "", title: ""),
+    );
+
+    if (_saved) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _saved = false),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              const Text("\u{1F4AA}", style: TextStyle(fontSize: 44)),
+              const SizedBox(height: 10),
+              const Text(
+                "Session logged!",
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 20),
+              BtnGold(
+                onPressed: () => setState(() => _saved = false),
+                full: true,
+                child: const Text("Back to Days"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return LocalBackScope(
+      isOpen: _sessionStarted,
+      onBack: _leaveDay,
+      // In Full view the Beep bar is pinned over the scrolling content, so
+      // a client part-way down a long day can still reach their coach
+      // without scrolling back to the top.
+      child: Stack(
+        children: [
+      SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.beepBarBuilder != null && _fullView)
+            const SizedBox(height: 58),
+          if (programs.length > 1)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+              child: SizedBox(
+                height: 34,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: programs.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 6),
+                  itemBuilder: (context, i) {
+                    final p = programs[i];
+                    final on = p.id == prog.id;
+                    return _Chip(
+                      label: p.name,
+                      selected: on,
+                      onTap: () {
+                        _detachLive();
+                        setState(() {
+                          _selectedProgId = p.id;
+                          _dayId = null;
+                          _sessionStarted = false;
+                          _sessionData.clear();
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          if (!_sessionStarted) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+              child: Builder(
+                builder: (context) {
+                  final cycleCompleted = getCurrentCycleCompletedDays(
+                    client,
+                    days,
+                  );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          prog.name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                      if (days.isEmpty)
+                        const HintBox(text: "No days in this program yet."),
+                      if (_liveDays.isNotEmpty && days.any((d) => _liveDays.contains(d.id)))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: AppCard(
+                            child: Row(
+                              children: [
+                                Icon(LucideIcons.radio, size: 16, color: AppColors.grn),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    "A workout is being logged right now.",
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () => _startDay(days.firstWhere((d) => _liveDays.contains(d.id)).id),
+                                  child: const Text("Follow live"),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      // Committed days first, then the suggested ones under
+                      // their own heading. Interleaving them would bury the
+                      // distinction the client most needs to see: which days
+                      // they committed to, and which are extra.
+                      ...[
+                        for (final d in days.where((d) => !d.suggested)) d,
+                        for (final d in days.where((d) => d.suggested)) d,
+                      ].map((d) {
+                        final completed = cycleCompleted.contains(d.id);
+                        final exCount = d.exercises.length;
+                        final firstSuggested = d.suggested &&
+                            days.where((x) => x.suggested).firstOrNull?.id == d.id;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (firstSuggested)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 6, bottom: 10),
+                                child: _SuggestedHeading(),
+                              ),
+                            AppCard(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            d.title,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 15,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (d.suggested) ...[
+                                          const SizedBox(width: 6),
+                                          const Tag(text: "Suggested"),
+                                        ],
+                                        if (_liveDays.contains(d.id)) ...[
+                                          const SizedBox(width: 6),
+                                          const Tag(text: "Live now"),
+                                        ],
+                                        if (completed) ...[
+                                          const SizedBox(width: 6),
+                                          Icon(
+                                            LucideIcons.check,
+                                            size: 14,
+                                            color: AppColors.grn,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      "$exCount exercise${exCount != 1 ? 's' : ''}",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.mute,
+                                      ),
+                                    ),
+                                    if (d.rationale != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Text(
+                                          d.rationale!,
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: AppColors.mute,
+                                            height: 1.4,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              ElevatedButton(
+                                onPressed: () => _startDay(d.id),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.gold,
+                                  foregroundColor: AppColors.onGold,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 9,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: Text(
+                                  d.suggested ? "Start" : "Start workout",
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                            ),
+                          ],
+                        );
+                      }),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ] else ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _leaveDay,
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.mute,
+                          padding: EdgeInsets.zero,
+                        ),
+                        icon: const Icon(LucideIcons.chevronLeft, size: 15),
+                        label: const Text(
+                          "Days",
+                          style: TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          activeDay.title,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (days.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4, bottom: 14),
+                      child: Builder(
+                        builder: (context) {
+                          final cycleCompleted = getCurrentCycleCompletedDays(
+                            client,
+                            days,
+                          );
+                          return SizedBox(
+                            height: 34,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: days.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(width: 6),
+                              itemBuilder: (context, i) {
+                                final d = days[i];
+                                return _Chip(
+                                  label: d.title,
+                                  selected: activeDay.id == d.id,
+                                  trailingCheck: cycleCompleted.contains(d.id),
+                                  onTap: () {
+                                    setState(() {
+                                      _dayId = d.id;
+                                      _sessionData.clear();
+                                      _focusIndex = 0;
+                                    });
+                                    _attachLive(prog, d.id);
+                                  },
+                                );
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  if (_live != null)
+                    LiveSyncBanner(otherParty: widget.loggedBy == "client" ? "your coach" : "your client"),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 6,
+                    children: [
+                      _LegendDot(
+                        color: AppColors.grn,
+                        label: "Hit target reps",
+                      ),
+                      _LegendDot(color: Color(0xFF00E676), label: "Weight PR"),
+                      _LegendDot(color: AppColors.mute, label: "Same weight"),
+                      _LegendDot(
+                        color: AppColors.danger,
+                        label: "Weight dropped",
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  // One exercise at a time is the default for everyone. A
+                  // client can switch to the whole-day view; a coach cannot —
+                  // they move between clients instead, and each client's
+                  // screen stays focused on a single exercise.
+                  if (widget.loggedBy == "client" && activeDay.exercises.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _ViewToggleOption(
+                              icon: LucideIcons.square,
+                              label: "One at a time",
+                              selected: !_fullView,
+                              onTap: () => setState(() => _fullView = false),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _ViewToggleOption(
+                              icon: LucideIcons.list,
+                              label: "Full view",
+                              selected: _fullView,
+                              onTap: () => setState(() => _fullView = true),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // In the focused view the bar sits in the flow, directly
+                  // under the toggle. In Full view it is pinned instead (see
+                  // the Stack below), so it must not also appear here.
+                  if (widget.beepBarBuilder != null && !_fullView)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: widget.beepBarBuilder!(
+                        [for (final e in activeDay.exercises) e.name],
+                        _focusIndex,
+                        false,
+                      ),
+                    ),
+                  if (_fullView)
+                    ...activeDay.exercises.map(
+                      (ex) => Padding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ExerciseSetGrid(
+                              key: ValueKey(ex.id),
+                              exercise: ex,
+                              client: client,
+                              sessionData: _sessionData,
+                              onSetChange: _onSetChange,
+                              dayId: activeDay.id,
+                              syncTick: _syncTick,
+                            ),
+                            if (_live != null)
+                              LiveNotesBox(
+                                key: ValueKey("notes-${ex.id}-${_live.hashCode}"),
+                                controller: _live!,
+                                exercise: ex.name,
+                              ),
+                            if (widget.exerciseFooterBuilder != null)
+                              widget.exerciseFooterBuilder!(prog, activeDay, ex),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Builder(
+                      builder: (context) {
+                        // Clamped rather than assumed in range: the day can
+                        // change under this view (day chips, or a coach
+                        // switching clients) and land on a shorter program.
+                        final total = activeDay.exercises.length;
+                        if (total == 0) return const SizedBox.shrink();
+                        final index = _focusIndex.clamp(0, total - 1);
+                        final ex = activeDay.exercises[index];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "EXERCISE ${index + 1} OF $total",
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.mute,
+                                letterSpacing: 1,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            // A segmented bar rather than the count alone —
+                            // "how much is left" is what gets asked
+                            // mid-session, and this answers it at a glance.
+                            Row(
+                              children: List.generate(total, (i) {
+                                return Expanded(
+                                  child: Container(
+                                    height: 3,
+                                    margin: EdgeInsets.only(right: i == total - 1 ? 0 : 3),
+                                    decoration: BoxDecoration(
+                                      color: i <= index ? AppColors.gold : AppColors.line,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                            const SizedBox(height: 14),
+                            ExerciseSetGrid(
+                              key: ValueKey(ex.id),
+                              exercise: ex,
+                              client: client,
+                              sessionData: _sessionData,
+                              onSetChange: _onSetChange,
+                              dayId: activeDay.id,
+                              syncTick: _syncTick,
+                            ),
+                            if (_live != null)
+                              LiveNotesBox(
+                                key: ValueKey("notes-${ex.id}-${_live.hashCode}"),
+                                controller: _live!,
+                                exercise: ex.name,
+                              ),
+                            if (widget.exerciseFooterBuilder != null)
+                              widget.exerciseFooterBuilder!(prog, activeDay, ex),
+                            const SizedBox(height: 14),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: BtnGhost(
+                                    onPressed: index == 0
+                                        ? null
+                                        : () => setState(() => _focusIndex = index - 1),
+                                    child: const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(LucideIcons.chevronLeft, size: 15),
+                                        SizedBox(width: 4),
+                                        Text("Previous"),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: BtnGold(
+                                    onPressed: index >= total - 1
+                                        ? null
+                                        : () => setState(() => _focusIndex = index + 1),
+                                    child: const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text("Next"),
+                                        SizedBox(width: 4),
+                                        Icon(LucideIcons.chevronRight, size: 15),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                        );
+                      },
+                    ),
+                  if (_sessionData.isNotEmpty)
+                    BtnGold(
+                      onPressed: _saving
+                          ? null
+                          : () => _saveSession(prog, activeDay),
+                      full: true,
+                      child: _saving
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(
+                                  AppColors.onGold,
+                                ),
+                              ),
+                            )
+                          : const Text("Save session log"),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          // Last in the scroll view, so the citations sit under the whole
+          // program rather than interrupting it.
+          if (widget.footer != null) widget.footer!,
+        ],
+      ),
+      ),
+          if (widget.beepBarBuilder != null && _fullView)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                color: AppColors.bg,
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 8),
+                child: widget.beepBarBuilder!(
+                  [for (final e in activeDay.exercises) e.name],
+                  _focusIndex,
+                  true,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  const _Chip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.trailingCheck = false,
+  });
+  final String label;
+  final bool selected;
+  final bool trailingCheck;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.gold
+              : AppColors.card,
+          border: Border.all(color: selected ? AppColors.gold : AppColors.line),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: selected ? AppColors.onGold : AppColors.mute,
+              ),
+            ),
+            if (trailingCheck) ...[
+              const SizedBox(width: 5),
+              Icon(LucideIcons.check, size: 13, color: AppColors.grn),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 10, color: AppColors.mute),
+        ),
+      ],
+    );
+  }
+}
+
+
+/// One side of the client's view switch. Only ever shown to a client — a
+/// coach stays in the focused view and moves between clients instead.
+class _ViewToggleOption extends StatelessWidget {
+  const _ViewToggleOption({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : AppColors.card,
+          border: Border.all(color: selected ? AppColors.gold : AppColors.line),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: selected ? AppColors.onGold : AppColors.mute),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: selected ? AppColors.onGold : AppColors.mute,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Separates the suggested days from the committed ones in the day list.
+///
+/// A client's committed days are what they signed up for; suggested days are
+/// optional conditioning that shows what reaching the goal actually takes.
+/// Saying that once, above the group, beats repeating it on every card — and
+/// without it a suggested day reads as another session they've fallen behind
+/// on.
+class _SuggestedHeading extends StatelessWidget {
+  const _SuggestedHeading();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(LucideIcons.sparkles, size: 14, color: AppColors.gold),
+            const SizedBox(width: 7),
+            const Text(
+              "Suggested",
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+          ],
+        ),
+        Padding(
+          padding: EdgeInsets.only(top: 3),
+          child: Text(
+            "Optional movement days that support your goal. Do them when you can — your committed sessions come first.",
+            style: TextStyle(fontSize: 11.5, color: AppColors.mute, height: 1.4),
+          ),
+        ),
+      ],
+    );
+  }
+}

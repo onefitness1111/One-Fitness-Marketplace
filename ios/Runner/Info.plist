@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+	<dict>
+		<key>CFBundleDevelopmentRegion</key>
+		<string>$(DEVELOPMENT_LANGUAGE)</string>
+		<key>CFBundleDisplayName</key>
+		<string>ONE Fitness</string>
+		<key>CFBundleExecutable</key>
+		<string>$(EXECUTABLE_NAME)</string>
+		<key>CFBundleIdentifier</key>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<key>CFBundleInfoDictionaryVersion</key>
+		<string>6.0</string>
+		<key>CFBundleName</key>
+		<string>onefitness</string>
+		<key>CFBundlePackageType</key>
+		<string>APPL</string>
+		<key>CFBundleShortVersionString</key>
+		<string>$(FLUTTER_BUILD_NAME)</string>
+		<key>CFBundleSignature</key>
+		<string>????</string>
+		<key>CFBundleVersion</key>
+		<string>$(FLUTTER_BUILD_NUMBER)</string>
+		<key>LSRequiresIPhoneOS</key>
+		<true/>
+		<key>UILaunchStoryboardName</key>
+		<string>LaunchScreen</string>
+		<key>UIMainStoryboardFile</key>
+		<string>Main</string>
+		<key>UISupportedInterfaceOrientations</key>
+		<array>
+			<string>UIInterfaceOrientationPortrait</string>
+			<string>UIInterfaceOrientationLandscapeLeft</string>
+			<string>UIInterfaceOrientationLandscapeRight</string>
+		</array>
+		<key>UISupportedInterfaceOrientations~ipad</key>
+		<array>
+			<string>UIInterfaceOrientationPortrait</string>
+			<string>UIInterfaceOrientationPortraitUpsideDown</string>
+			<string>UIInterfaceOrientationLandscapeLeft</string>
+			<string>UIInterfaceOrientationLandscapeRight</string>
+		</array>
+		<key>CADisableMinimumFrameDurationOnPhone</key>
+		<true/>
+		<key>UIApplicationSupportsIndirectInputEvents</key>
+		<true/>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>ONE Fitness uses your photo library so you can upload progress photos to track your fitness journey.</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>ONE Fitness saves progress photos you choose to your photo library.</string>
+		<!-- image_picker links the camera API even when only the gallery is
+		     offered, and App Store Connect rejects the upload (ITMS-90683)
+		     if any linked API lacks its purpose string. -->
+		<key>NSCameraUsageDescription</key>
+		<string>ONE Fitness uses your camera to take profile and progress photos.</string>
+		<!-- Used when the client taps to find their nearest gym on the
+		     booking screen. Only read while the app is open, only on that
+		     tap, and never stored or sent anywhere — the distance is worked
+		     out on the device. -->
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>ONE Fitness uses your location to show which of our gyms is nearest to you and how far away it is when you book a session. Your location stays on your device.</string>
+		<!-- The app only ever asks for when-in-use location, but the
+		     geolocator plugin links CLLocationManager's always-authorization
+		     APIs too, and App Store Connect rejects the upload (ITMS-90683)
+		     if any linked API lacks its purpose string. These describe the
+		     same single use, and say plainly that nothing runs in the
+		     background — an inaccurate string here is itself a rejection. -->
+		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
+		<key>NSLocationAlwaysUsageDescription</key>
+		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
+		<key>UIStatusBarHidden</key>
+		<false/>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleURLName</key>
+				<string>com.onefitness.checkoutreturn</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>onefitness</string>
+				</array>
+			</dict>
+		</array>
+		<!-- Lets APNs wake the app for a push while it's backgrounded or
+		     terminated. Without this, iOS delivers only when the app
+		     happens to be running. -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>remote-notification</string>
+		</array>
+		<!-- Firebase registers for APNs itself once the token is available;
+		     leaving this false would suppress that automatic registration. -->
+		<key>FirebaseAppDelegateProxyEnabled</key>
+		<true/>
+		<!-- The Chat call button and the Support page open the phone's dialer
+		     on a tel: link; iOS only allows a scheme listed here to be
+		     checked before opening. -->
+		<key>LSApplicationQueriesSchemes</key>
+		<array>
+			<string>tel</string>
+		</array>
+	</dict>
+</plist>

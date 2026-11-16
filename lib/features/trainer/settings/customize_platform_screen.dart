@@ -1,0 +1,2121 @@
+import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/utils/domain_labels.dart";
+import "../../../core/utils/nearest_location.dart";
+import "../../../core/widgets/address_fields.dart";
+import "../../../core/widgets/map_location_picker.dart";
+import "../../../core/supabase/supabase_service.dart";
+import "../../../core/notifications/beep_sounds.dart";
+import "../../../core/utils/gym_location_link.dart";
+import "../../../core/utils/session_places.dart";
+import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/widgets.dart";
+import "../../../data/models/waiver_doc.dart";
+import "../../../data/providers/client_providers.dart";
+import "../../../data/models/live_session.dart";
+import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "automation_emails_screen.dart";
+import "manage_coupons_screen.dart";
+
+/// Dropdown option key/label pairs — mirrors SubTabs.jsx's mobile `<select>`
+/// (this app is mobile-only, so that's the correct web analog to port, not
+/// the desktop horizontal tab row). Labels here are the short dropdown
+/// text; each tab's own in-page [_sectionTitle] can be longer.
+const _tabs = [
+  ("scheduling", "Scheduling"),
+  ("services", "Services"),
+  ("access", "Coaches & Security"),
+  ("clients", "Clients"),
+  ("payments", "Payments"),
+  ("workouts", "Workouts & General"),
+  ("coupons", "Coupons"),
+  ("emails", "Automation Emails"),
+  ("location", "Location"),
+];
+
+const _sessionTypeOptions = [
+  ("semi-private", "Semi-Private"),
+  ("one-on-one", "One-on-One"),
+  ("large-group", "Large Group"),
+];
+const _disciplineOptions = [
+  ("personal-training", "Personal Training"),
+  ("boxing", "Boxing"),
+  ("hike", "Hike"),
+  ("outdoor-hiit", "Outdoor HIIT"),
+  ("stretch", "Stretch"),
+  ("stick-mobility", "Stick Mobility"),
+  ("yoga", "Yoga"),
+];
+
+String _sectionTitle(String tab) => switch (tab) {
+  "scheduling" => "Scheduling",
+  "services" => "Services",
+  "location" => "Location",
+  "access" => "Coaches, Access & Security",
+  "clients" => "Clients",
+  "payments" => "Payments",
+  "workouts" => "Workouts & General",
+  _ => "",
+};
+
+String _sectionHint(String tab) => switch (tab) {
+  "scheduling" =>
+    "These policies apply gym-wide the moment you save — a client already mid-booking sees the change without reloading.",
+  "access" =>
+    "These policies apply gym-wide the moment you save. Two-factor changes take effect on each person's next sign-in — nobody already signed in gets kicked out.",
+  "clients" => "These policies apply gym-wide the moment you save.",
+  "services" =>
+    "What the gym offers. Anything switched off here stops appearing in the session type and discipline pickers — for staff creating or booking sessions and for clients booking. Existing bookings aren't affected.",
+  "location" =>
+    "Where the gym is. Shown to clients on any session whose coach hasn't set a location of their own, and used in the calendar feed.",
+  "payments" =>
+    "Applies to real Stripe Checkout payments (paid membership plans). Free plans are never affected. Card and bank transfer have their own fee below since they can charge different amounts — whenever both are offered, the client picks how to pay before checkout so the right one applies.",
+  "workouts" => "These apply gym-wide the moment you save.",
+  _ => "",
+};
+
+const _timeZones = [
+  ("America/Los_Angeles", "Pacific Time (US)"),
+  ("America/Denver", "Mountain Time (US)"),
+  ("America/Chicago", "Central Time (US)"),
+  ("America/New_York", "Eastern Time (US)"),
+  ("America/Anchorage", "Alaska Time (US)"),
+  ("Pacific/Honolulu", "Hawaii Time (US)"),
+  ("UTC", "UTC"),
+];
+
+const _requiredFieldOptions = [("phone", "Phone"), ("birthday", "Birthday"), ("city", "City")];
+const _customFieldTypes = [("text", "Text"), ("number", "Number"), ("date", "Date")];
+
+/// Mirrors CustomizePlatform.jsx (owner-only) — 5 tabs of gym-wide config,
+/// covering every field the real `platform_settings` row models. Dropdown
+/// tab selector (mirrors web's own mobile layout), section label + hint per
+/// tab, and per-field explanatory hint text all match web's exact copy.
+/// Explicit dirty-tracking + Save button — matches web's draft/save flow so
+/// a partial edit can be discarded.
+class CustomizePlatformScreen extends ConsumerStatefulWidget {
+  const CustomizePlatformScreen({super.key});
+
+  @override
+  ConsumerState<CustomizePlatformScreen> createState() => _CustomizePlatformScreenState();
+}
+
+class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScreen> {
+  String _tab = "scheduling";
+  late PlatformSettings _draft = ref.read(platformSettingsProvider);
+  bool _dirty = false;
+  bool _saving = false;
+  bool _savedFlash = false;
+  String? _saveError;
+
+  void _set(PlatformSettings Function(PlatformSettings) f) {
+    setState(() {
+      _draft = f(_draft);
+      _dirty = true;
+      _saveError = null;
+    });
+  }
+
+  /// Sections visited before this one — back steps through them in reverse
+  /// before leaving Customize Platform.
+  final List<String> _tabHistory = [];
+
+  Future<void> _switchTab(String next, {bool fromBack = false}) async {
+    if (next == _tab) return;
+    final previous = _tab;
+    if (_dirty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Discard changes?"),
+          content: const Text("You have unsaved changes. Discard them and switch tabs?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Keep editing")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Discard")),
+          ],
+        ),
+      );
+      if (discard != true) return;
+    }
+    setState(() {
+      _draft = ref.read(platformSettingsProvider);
+      _dirty = false;
+      _saveError = null;
+      if (fromBack) {
+        _tabHistory.removeLast();
+      } else {
+        _tabHistory.add(previous);
+      }
+      _tab = next;
+    });
+  }
+
+  void _backTab() {
+    if (_tabHistory.isNotEmpty) _switchTab(_tabHistory.last, fromBack: true);
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    final prev = ref.read(platformSettingsProvider);
+    try {
+      // Any location with an address but no coordinates gets geocoded now,
+      // once, so the client's "nearest gym" distance later needs no lookup.
+      // Best effort: an address the geocoder can't place just keeps no
+      // coordinates, and everything else still saves.
+      var toSave = _draft;
+      if (_tab == "location") {
+        try {
+          toSave = await withGeocodedLocations(_draft);
+        } catch (_) {}
+      }
+      await SupabaseService.savePlatformSettings(prev, toSave);
+      ref.read(platformSettingsProvider.notifier).update((_) => toSave);
+      _draft = toSave;
+      if (!mounted) return;
+      setState(() {
+        _dirty = false;
+        _savedFlash = true;
+      });
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _savedFlash = false);
+      });
+    } catch (e) {
+      if (mounted) setState(() => _saveError = "Couldn't save — please try again.");
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LocalBackScope(
+      isOpen: _tabHistory.isNotEmpty,
+      onBack: _backTab,
+      child: _buildSections(context),
+    );
+  }
+
+  Widget _buildSections(BuildContext context) {
+    ref.listen<PlatformSettings>(platformSettingsProvider, (prev, next) {
+      if (!_dirty) setState(() => _draft = next);
+    });
+    final s = _draft;
+    final anyFeeEnabled = s.cardFee.enabled || (s.achOffered && s.achFee.enabled);
+
+    final tabSelector = Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: AppCard(
+        margin: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: DropdownButton<String>(
+          value: _tab,
+          isExpanded: true,
+          underline: const SizedBox(),
+          dropdownColor: AppColors.card,
+          style: TextStyle(color: AppColors.txt, fontSize: 14, fontWeight: FontWeight.w700),
+          items: _tabs.map((t) => DropdownMenuItem(value: t.$1, child: Text(t.$2))).toList(),
+          onChanged: (v) {
+            if (v != null) _switchTab(v);
+          },
+        ),
+      ),
+    );
+
+    // Coupons manage their own catalog with immediate per-row saves — it
+    // doesn't fit this screen's single-draft/one-Save-button flow for the
+    // other 5 tabs, so it gets its own independent scroll area instead of
+    // nesting inside the shared SingleChildScrollView below.
+    if (_tab == "coupons") {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [tabSelector, const Expanded(child: ManageCouponsScreen())],
+      );
+    }
+
+    // Automation emails are rows in the database with their own per-template
+    // Save, so (like coupons) they sit outside this screen's single draft.
+    if (_tab == "emails") {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [tabSelector, const Expanded(child: AutomationEmailsScreen())],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        tabSelector,
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionLabel(_sectionTitle(_tab)),
+                const SizedBox(height: 8),
+                HintBox(text: _sectionHint(_tab)),
+                const SizedBox(height: 16),
+                if (_tab == "scheduling") ...[
+                  _NumberRow(
+                    label: "Late cancellation window (hours)",
+                    hint: "Cancelling or rescheduling outside this many hours before a session is free. Inside it, the late cancellation fee below applies.",
+                    suffix: "hours before session",
+                    value: s.lateCancellationHours,
+                    onChange: (v) => _set((d) => d.copyWith(lateCancellationHours: v)),
+                  ),
+                  _MoneyRow(label: "Late cancellation fee", cents: s.lateCancellationFeeCents, onChange: (v) => _set((d) => d.copyWith(lateCancellationFeeCents: v))),
+                  _MoneyRow(
+                    label: "No-show fee",
+                    hint: "Charged when a coach marks a booking No-Show — unlike a late cancellation, a no-show does not give the session back.",
+                    cents: s.noShowFeeCents,
+                    onChange: (v) => _set((d) => d.copyWith(noShowFeeCents: v)),
+                  ),
+                  _ChoiceRow(
+                    label: "Block rescheduling inside that window?",
+                    hint: "\"Block it entirely\" hides the Reschedule option once a client is inside the window — they'd need to cancel (and pay the fee) instead.",
+                    value: s.blockRescheduleInWindow ? "block" : "chargeInstead",
+                    options: const [("block", "Block it entirely"), ("chargeInstead", "Allow it, but charge the late fee")],
+                    onChange: (v) => _set((d) => d.copyWith(blockRescheduleInWindow: v == "block")),
+                  ),
+                  _NumberRow(
+                    label: "How far ahead clients can book",
+                    suffix: "days",
+                    value: s.maxBookingHorizonDays,
+                    onChange: (v) => _set((d) => d.copyWith(maxBookingHorizonDays: v)),
+                  ),
+                  _NumberRow(
+                    label: "Minimum lead time to book",
+                    suffix: "hours before the slot",
+                    value: s.minBookingLeadHours,
+                    onChange: (v) => _set((d) => d.copyWith(minBookingLeadHours: v)),
+                  ),
+                  _ChoiceRow(
+                    label: "Clients book with",
+                    hint: "\"Assigned coach only\" restricts the booking screen to a client's assigned coach. If a client has no assigned coach yet, they still see every coach so they're never stuck with nothing bookable.",
+                    value: s.bookingCoachScope,
+                    options: const [("assigned", "Assigned coach only"), ("any", "Any coach")],
+                    onChange: (v) => _set((d) => d.copyWith(bookingCoachScope: v)),
+                  ),
+                  _NumberRow(
+                    label: "Default one-on-one session cap",
+                    hint: "Fixed by definition — a one-on-one session is always exactly one client, not configurable here.",
+                    suffix: "client per slot",
+                    value: 1,
+                    disabled: true,
+                    onChange: (_) {},
+                  ),
+                  // Class size for every session type the gym offers, in the
+                  // one place the rest of scheduling is set.
+                  _ClassSizeEditor(
+                    types: s.offeredSessionTypes,
+                    caps: s.sessionTypeCaps,
+                    semiPrivateCap: s.semiPrivateCap,
+                    onChange: (v) => _set((d) => d.copyWith(
+                          sessionTypeCaps: v,
+                          // Keep the long-standing semi-private cap in step,
+                          // since other screens still read it directly.
+                          semiPrivateCap: v["semi-private"] ?? d.semiPrivateCap,
+                        )),
+                  ),
+                ],
+                if (_tab == "access") ...[
+                  _ChoiceRow(
+                    label: "Require two-factor authentication",
+                    hint: "\"Staff only\" covers Owner and Coach accounts. \"Everyone\" adds clients. Authenticator apps only for now — test with a disposable coach account before requiring it gym-wide.",
+                    value: s.twoFactorRequirement,
+                    options: const [("off", "Off"), ("staff", "Staff only"), ("everyone", "Everyone")],
+                    onChange: (v) => _set((d) => d.copyWith(twoFactorRequirement: v)),
+                  ),
+                  _ChoiceRow(
+                    label: "Coach client list",
+                    hint: "Scopes a coach's Clients tab and Chat inbox. Owner always sees everyone.",
+                    value: s.coachClientScope,
+                    options: const [("own", "Own clients only"), ("all", "All clients")],
+                    onChange: (v) => _set((d) => d.copyWith(coachClientScope: v)),
+                  ),
+                  _ToggleRow(
+                    label: "Coach can view revenue / pay data",
+                    hint: "Unlocks a coach's own My Pay screen — their sessions and commission only, never gym-wide financials.",
+                    value: s.coachCanViewRevenue,
+                    onChange: (v) => _set((d) => d.copyWith(coachCanViewRevenue: v)),
+                  ),
+                  _ToggleRow(
+                    label: "Coach can see other coaches' scheduled sessions",
+                    hint: "Off keeps a coach's Scheduling tab locked to their own sessions, like today.",
+                    value: s.coachCanSeeOtherSchedules,
+                    onChange: (v) => _set((d) => d.copyWith(coachCanSeeOtherSchedules: v)),
+                  ),
+                  _ChoiceRow(
+                    label: "Coaches reply in messages as",
+                    hint: "\"Themselves\" shows the actual coach's name in a client's message log. \"ONE Fitness\" hides individual coach names — the owner always appears as ONE Fitness either way.",
+                    value: s.messageIdentity,
+                    options: const [("self", "Themselves"), ("business", "ONE Fitness")],
+                    onChange: (v) => _set((d) => d.copyWith(messageIdentity: v)),
+                  ),
+                  _ToggleRow(
+                    label: "Coach can edit workouts assigned to their clients",
+                    hint: "Off gives coaches read-only Plans — only the owner can build or edit workout/nutrition programs.",
+                    value: s.coachCanEditClientWorkouts,
+                    onChange: (v) => _set((d) => d.copyWith(coachCanEditClientWorkouts: v)),
+                  ),
+                ],
+                if (_tab == "services") ...[
+                  _CatalogEditor(
+                    label: "Session types offered",
+                    noun: "session type",
+                    value: s.offeredSessionTypes,
+                    options: _sessionTypeOptions,
+                    labelFor: sessionTypeLabel,
+                    onChange: (v) => _set((d) => d.copyWith(offeredSessionTypes: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  _CatalogEditor(
+                    label: "Disciplines offered",
+                    noun: "discipline",
+                    value: s.offeredDisciplines,
+                    options: _disciplineOptions,
+                    labelFor: disciplineLabel,
+                    onChange: (v) => _set((d) => d.copyWith(offeredDisciplines: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  _SingleSessionEditor(
+                    types: s.offeredSessionTypes,
+                    prices: s.singleSessionPriceCents,
+                    allowed: s.singleSessionAllowed,
+                    onChange: (prices, allowed) =>
+                        _set((d) => d.copyWith(singleSessionPriceCents: prices, singleSessionAllowed: allowed)),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Anything added here shows up for coaches (on their profile and availability), on the schedule when creating a session, "
+                    "and for clients when booking. How many clients each type takes is set under Scheduling → Class size limit. "
+                    "Assessments are always available to staff regardless of these settings.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                  ),
+                ],
+                if (_tab == "location") ...[
+                  FieldLabeled(
+                    label: "Location name",
+                    child: _StableTextField(value: s.locationName, placeholder: "e.g. ONE Fitness Studio", onChanged: (v) => _set((d) => d.copyWith(locationName: v))),
+                  ),
+                  const SizedBox(height: 10),
+                  AddressFields(
+                    address: s.locationAddress,
+                    onChanged: (v) => _set((d) => d.copyWith(locationAddress: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  // Search, drag the map, or use the phone's position; the
+                  // street, city, state and ZIP fill in from wherever the
+                  // pin lands, and the pin itself is kept for distances.
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final picked = await showMapLocationPicker(
+                        context,
+                        title: "Where is the gym?",
+                        subtitle: "Search for the address, drag the map onto the gym, or tap the crosshair to use where you are now.",
+                        initial: s.locationLat != null && s.locationLng != null
+                            ? PickedPoint(lat: s.locationLat!, lng: s.locationLng!)
+                            : null,
+                      );
+                      if (picked == null) return;
+                      final address = picked.address;
+                      _set((d) => d.copyWith(
+                            locationLat: picked.lat,
+                            locationLng: picked.lng,
+                            locationAddress: (address ?? "").isNotEmpty ? address : null,
+                          ));
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.gold,
+                      side: BorderSide(color: AppColors.goldDim),
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                    icon: const Icon(LucideIcons.map, size: 15),
+                    label: Text(
+                      s.locationLat != null ? "Change on map / search" : "Set on map / search / use current location",
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (s.locationLat != null && s.locationLng != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        "Pinned at ${s.locationLat!.toStringAsFixed(5)}, ${s.locationLng!.toStringAsFixed(5)}",
+                        style: TextStyle(fontSize: 11, color: AppColors.mute),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  FieldLabeled(
+                    label: "Parking / arrival notes",
+                    child: _StableTextField(value: s.locationHint, placeholder: "e.g. Park in the rear lot, side entrance", onChanged: (v) => _set((d) => d.copyWith(locationHint: v))),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Clients booking a session see the default location below (or the session's own location, if it was created at another site). A coach's profile location doesn't change this.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  FieldLabeled(
+                    label: "Support / call number",
+                    child: _StableTextField(
+                      value: s.supportPhone,
+                      placeholder: "e.g. 818-223-7001",
+                      keyboardType: TextInputType.phone,
+                      onChanged: (v) => _set((d) => d.copyWith(supportPhone: v)),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "The number the Chat call button and the Support page dial, for clients and coaches alike. Leave it empty to hide both.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                  ),
+                  const SizedBox(height: 14),
+                  // More than one site: each extra one can be picked when
+                  // creating a session (Schedule → Advanced settings).
+                  _ExtraLocationsEditor(
+                    locations: s.locations,
+                    mainName: s.locationName,
+                    onChange: (v) => _set((d) => d.copyWith(locations: v)),
+                  ),
+                  const SizedBox(height: 14),
+                  // Places the gym doesn't list, but a coach has set on
+                  // their own profile and is running sessions from. The
+                  // owner had no way to see these at all, so a coach could
+                  // move site and nothing here would show it.
+                  const _CoachSetLocations(),
+                  const SizedBox(height: 14),
+                  // Which site a coach without their own location runs at,
+                  // and what a client sees pre-selected when booking.
+                  _DefaultLocationPicker(
+                    settings: s,
+                    onChange: (name) => _set((d) => d.copyWith(defaultLocationName: name)),
+                  ),
+                  const SizedBox(height: 14),
+                  // Coaches set their own location on their profile; those
+                  // are real places the gym runs sessions at, so they belong
+                  // in this list too.
+                  const _CoachLocationsList(),
+                ],
+                if (_tab == "clients") ...[
+                  _MultiChoiceRow(label: "Required profile fields", value: s.requiredProfileFields, options: _requiredFieldOptions, onChange: (v) => _set((d) => d.copyWith(requiredProfileFields: v))),
+                  const SizedBox(height: 4),
+                  _CustomFieldsEditor(fields: s.customProfileFields, onChange: (v) => _set((d) => d.copyWith(customProfileFields: v))),
+                  const SizedBox(height: 10),
+                  _ToggleRow(
+                    label: "Require waiver at signup",
+                    hint: "Off skips the sign-a-waiver step entirely for new client signups.",
+                    value: s.requireWaiverAtSignup,
+                    onChange: (v) => _set((d) => d.copyWith(requireWaiverAtSignup: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  const _SignupWaiverEditor(),
+                  const SizedBox(height: 10),
+                  _ToggleRow(
+                    label: "Allow clients to message any coach",
+                    hint: "Off scopes a client's coach picker to coaches they've actually booked with or been assigned to.",
+                    value: s.clientsCanMessageAnyCoach,
+                    onChange: (v) => _set((d) => d.copyWith(clientsCanMessageAnyCoach: v)),
+                  ),
+                ],
+                if (_tab == "payments") ...[
+                  _FeeProfileEditor(
+                    title: "Card processing fee",
+                    hint: "Covers both credit and debit — Stripe Checkout can't tell them apart before the client pays, so they always move together.",
+                    profile: s.cardFee,
+                    onChange: (v) => _set((d) => d.copyWith(cardFee: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  _ToggleRow(
+                    label: "Offer bank transfer (ACH) as a payment option",
+                    hint: "Off = ACH isn't offered at all, same as today. On = clients can also pay by bank transfer, with its own fee below — Stripe's cost to you is much lower for ACH, so it's common to waive the fee there to encourage it.",
+                    value: s.achOffered,
+                    onChange: (v) => _set((d) => d.copyWith(achOffered: v)),
+                  ),
+                  if (s.achOffered) ...[
+                    const SizedBox(height: 10),
+                    _FeeProfileEditor(
+                      title: "Bank transfer (ACH) fee",
+                      hint: "Leave this off, or set percent/flat to 0, to offer ACH with no fee.",
+                      profile: s.achFee,
+                      onChange: (v) => _set((d) => d.copyWith(achFee: v)),
+                    ),
+                  ],
+                  if (anyFeeEnabled) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      "Each fee is calculated on its own pre-fee price only — never compounds on itself.",
+                      style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    FieldLabeled(
+                      label: "Checkout disclosure text",
+                      child: _StableTextField(
+                        value: s.checkoutDisclosureText,
+                        placeholder: "A processing fee applies to this payment.",
+                        onChanged: (v) => _set((d) => d.copyWith(checkoutDisclosureText: v)),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Shown next to the pay button on Stripe's checkout page, in addition to the fee's own line item — both are always visible before the client confirms. Not optional; there's no setting to hide either one.",
+                      style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    _ToggleRow(
+                      label: "Refund fee when refunding a payment",
+                      hint: "Off (default): refunding a purchase returns only the original price — the processing fee is kept, like most real payment processors. On: refunds return the fee too.",
+                      value: s.refundFeeOnRefund,
+                      onChange: (v) => _set((d) => d.copyWith(refundFeeOnRefund: v)),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  _ToggleRow(
+                    label: "Set a default billing date for new memberships",
+                    hint: "Off (default): a new membership just bills on whatever day the client checks out on, like today. On: every new subscription bills on the same day-of-month going forward — you can still override this per client later, including already-active memberships, from their profile.",
+                    value: s.defaultBillingAnchorDay != null,
+                    onChange: (v) => _set((d) => v ? d.copyWith(defaultBillingAnchorDay: d.defaultBillingAnchorDay ?? 1) : d.copyWith(clearDefaultBillingAnchorDay: true)),
+                  ),
+                  if (s.defaultBillingAnchorDay != null) ...[
+                    const SizedBox(height: 10),
+                    _NumberRow(
+                      label: "Day of the month",
+                      hint: "1-28 only, to avoid short-month issues (every month has a 28th). Applies to new memberships from now on — never retroactively shifts an existing client's billing date.",
+                      value: s.defaultBillingAnchorDay!,
+                      onChange: (v) => _set((d) => d.copyWith(defaultBillingAnchorDay: v.clamp(1, 28))),
+                    ),
+                  ],
+                ],
+                if (_tab == "workouts") ...[
+                  _ToggleRow(
+                    label: "Auto carry-over last logged weight",
+                    hint: "On (default): a client's next session starts pre-filled with the weight they logged last time for each set — they can still edit or clear it. Off: sets start blank.",
+                    value: s.autoCarryOverLastWeight,
+                    onChange: (v) => _set((d) => d.copyWith(autoCarryOverLastWeight: v)),
+                  ),
+                  _ChoiceRow(
+                    label: "Default weight units",
+                    hint: "Changes the unit label shown throughout workout logging. Doesn't convert numbers already entered — switching from lb to kg relabels the same figures, it doesn't recalculate them.",
+                    value: s.defaultWeightUnit,
+                    options: const [("lb", "lb"), ("kg", "kg")],
+                    onChange: (v) => _set((d) => d.copyWith(defaultWeightUnit: v)),
+                  ),
+                  _ToggleRow(
+                    label: "Allow clients to swap or edit exercises",
+                    hint: "On: a client can rename an exercise or change its prescribed sets/reps for their own copy of the program while logging a session. Off (default): clients can only log performance — the coach controls the program.",
+                    value: s.clientsCanSwapExercises,
+                    onChange: (v) => _set((d) => d.copyWith(clientsCanSwapExercises: v)),
+                  ),
+                  const SizedBox(height: 4),
+                  FieldLabeled(
+                    label: "Business time zone",
+                    child: AppCard(
+                      child: DropdownButton<String>(
+                        value: s.businessTimeZone,
+                        isExpanded: true,
+                        underline: const SizedBox(),
+                        dropdownColor: AppColors.card,
+                        style: TextStyle(color: AppColors.txt, fontSize: 13),
+                        items: _timeZones.map((tz) => DropdownMenuItem(value: tz.$1, child: Text(tz.$2))).toList(),
+                        onChanged: (v) {
+                          if (v != null) _set((d) => d.copyWith(businessTimeZone: v));
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Used to format message/charge timestamps consistently for every viewer, regardless of their own device's time zone. Booking dates themselves still follow each viewer's local device clock.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  FieldLabeled(
+                    label: "Business / location name",
+                    child: _StableTextField(value: s.businessName, placeholder: "ONE Fitness", onChanged: (v) => _set((d) => d.copyWith(businessName: v))),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Updates the main header, login screens, and email sender name. Some deeper copy (legal/waiver boilerplate, etc.) may still say \"ONE Fitness\" — flag any you spot and they're quick to update.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  const SectionLabel("Merit Badges"),
+                  const SizedBox(height: 8),
+                  _NumberRow(
+                    label: "Progress Tracker — consecutive weeks required",
+                    hint: "A client needs a photo, measurement, or workout log at least once a week for this many weeks in a row to earn the badge.",
+                    suffix: "weeks",
+                    value: s.meritBadgeProgressWeeks,
+                    onChange: (v) => _set((d) => d.copyWith(meritBadgeProgressWeeks: v)),
+                  ),
+                  _NumberRow(
+                    label: "Habit — consistency percent required",
+                    hint: "The minimum weekly habit-completion percentage a client must sustain to earn the badge.",
+                    suffix: "%",
+                    value: s.meritBadgeHabitPercent,
+                    onChange: (v) => _set((d) => d.copyWith(meritBadgeHabitPercent: v)),
+                  ),
+                  _NumberRow(
+                    label: "Habit — consecutive weeks required",
+                    hint: "How many weeks in a row that percentage must be sustained.",
+                    suffix: "weeks",
+                    value: s.meritBadgeHabitWeeks,
+                    onChange: (v) => _set((d) => d.copyWith(meritBadgeHabitWeeks: v)),
+                  ),
+                  const SizedBox(height: 10),
+                  const SectionLabel("Coach Merit Badges"),
+                  const HintBox(text: "Monthly coaching-performance badges — each pays the coach automatically when earned. Changing a value only affects badges earned after the change; already-earned badges keep the amount they were awarded at."),
+                  _MoneyRow(label: "Full House", badgeKey: "full_house", cents: s.badgeFullHouseCents, onChange: (v) => _set((d) => d.copyWith(badgeFullHouseCents: v))),
+                  _MoneyRow(label: "PR Factory", badgeKey: "pr_factory", cents: s.badgePrFactoryCents, onChange: (v) => _set((d) => d.copyWith(badgePrFactoryCents: v))),
+                  _MoneyRow(label: "Check-In", badgeKey: "check_in", cents: s.badgeCheckInCents, onChange: (v) => _set((d) => d.copyWith(badgeCheckInCents: v))),
+                  _MoneyRow(label: "Comeback", badgeKey: "comeback", cents: s.badgeComebackCents, onChange: (v) => _set((d) => d.copyWith(badgeComebackCents: v))),
+                  _MoneyRow(label: "Habit Coach", badgeKey: "habit_coach", cents: s.badgeHabitCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeHabitCoachCents: v))),
+                  _MoneyRow(label: "Challenge Coach", badgeKey: "challenge_coach", cents: s.badgeChallengeCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeChallengeCoachCents: v))),
+                  _MoneyRow(label: "Coach of the Month", badgeKey: "coach_of_month", cents: s.badgeCoachOfMonthCents, onChange: (v) => _set((d) => d.copyWith(badgeCoachOfMonthCents: v))),
+
+                  const SizedBox(height: 10),
+                  const SectionLabel("Beep Your Coach — alert sounds"),
+                  const HintBox(text: "What a coach's phone plays when a client beeps during a semi-private session. One choice per request type, applied to every coach. Tap a sound to hear it."),
+                  for (final kind in BeepKind.values)
+                    _BeepSoundRow(
+                      kind: kind,
+                      selectedId: s.beepSounds[kind.key] ?? defaultSoundId(kind),
+                      onChange: (id) => _set((d) => d.copyWith(
+                            beepSounds: {...d.beepSounds, kind.key: id},
+                          )),
+                    ),
+                ],
+                if (_saveError != null) ...[
+                  const SizedBox(height: 14),
+                  Text("⚠ $_saveError", style: TextStyle(color: AppColors.errorText, fontSize: 12, fontWeight: FontWeight.w700)),
+                ],
+                if (_savedFlash) ...[
+                  const SizedBox(height: 14),
+                  Text("✓ Saved — live for every client and coach now.", style: TextStyle(color: AppColors.success, fontSize: 12, fontWeight: FontWeight.w700)),
+                ],
+                const SizedBox(height: 18),
+                BtnGold(
+                  onPressed: _saving ? null : _save,
+                  full: true,
+                  child: Text(_saving ? "Saving…" : (_dirty ? "Save Changes" : "Save")),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A text/number entry field that keeps a stable [TextEditingController]
+/// across rebuilds — every row here used to build a fresh controller on
+/// every keystroke's rebuild, which reset the cursor to the end of the
+/// field each time. Only resyncs from [value] when it's genuinely different
+/// from what's already displayed (an external reset — tab-switch discard,
+/// a realtime update landing while this field isn't dirty — never a normal
+/// typed edit, since [onChanged] immediately feeds the same value back in).
+class _StableTextField extends StatefulWidget {
+  const _StableTextField({required this.value, required this.onChanged, this.keyboardType, this.placeholder});
+  final String value;
+  final ValueChanged<String> onChanged;
+  final TextInputType? keyboardType;
+  final String? placeholder;
+
+  @override
+  State<_StableTextField> createState() => _StableTextFieldState();
+}
+
+class _StableTextFieldState extends State<_StableTextField> {
+  late final _controller = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(covariant _StableTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != _controller.text) _controller.text = widget.value;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppField(controller: _controller, keyboardType: widget.keyboardType, placeholder: widget.placeholder, onChanged: widget.onChanged);
+  }
+}
+
+class _ToggleRow extends StatelessWidget {
+  const _ToggleRow({required this.label, required this.value, required this.onChange, this.hint});
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChange;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => onChange(!value),
+            child: Row(
+              children: [
+                Expanded(child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                Icon(value ? LucideIcons.toggleRight : LucideIcons.toggleLeft, size: 30, color: value ? AppColors.gold : AppColors.mute),
+              ],
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 6),
+            Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NumberRow extends StatelessWidget {
+  const _NumberRow({required this.label, required this.value, required this.onChange, this.hint, this.suffix, this.disabled = false});
+  final String label;
+  final int value;
+  final ValueChanged<int> onChange;
+  final String? hint;
+  final String? suffix;
+  final bool disabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+              SizedBox(
+                width: 60,
+                child: Opacity(
+                  opacity: disabled ? 0.6 : 1,
+                  child: IgnorePointer(
+                    ignoring: disabled,
+                    child: _StableTextField(value: "$value", keyboardType: TextInputType.number, onChanged: (v) => onChange(int.tryParse(v) ?? value)),
+                  ),
+                ),
+              ),
+              if (suffix != null) ...[
+                const SizedBox(width: 6),
+                Flexible(child: Text(suffix!, style: TextStyle(fontSize: 11, color: AppColors.mute))),
+              ],
+            ],
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 6),
+            Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Cents-backed dollar field (e.g. "$5.00") — mirrors NumberField's
+/// `prefix="$"` + `/100`/`*100` conversion in CustomizePlatform.jsx.
+class _MoneyRow extends StatelessWidget {
+  const _MoneyRow({required this.label, required this.cents, required this.onChange, this.hint, this.badgeKey});
+  final String label;
+  final int cents;
+  final ValueChanged<int> onChange;
+  final String? hint;
+
+  /// When set, shows that Coach Merit Badge's artwork before the label —
+  /// see [kCoachBadgeImagePaths]. Null for every non-badge money field
+  /// (late-cancellation fee, no-show fee, flat fee amounts, etc.).
+  final String? badgeKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (badgeKey != null) ...[
+                CoachBadgeShield(badgeKey: badgeKey!, size: 26),
+                const SizedBox(width: 8),
+              ],
+              Expanded(child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+              Text("\$", style: TextStyle(color: AppColors.mute, fontSize: 13)),
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 70,
+                child: _StableTextField(
+                  value: (cents / 100).toStringAsFixed(2),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (v) => onChange(((double.tryParse(v) ?? cents / 100) * 100).round()),
+                ),
+              ),
+            ],
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 6),
+            Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Percent field with decimals (e.g. "2.9%") — used by fee profile structs.
+class _PercentRow extends StatelessWidget {
+  const _PercentRow({required this.label, required this.value, required this.onChange});
+  final String label;
+  final num value;
+  final ValueChanged<num> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+          SizedBox(
+            width: 70,
+            child: _StableTextField(
+              value: "$value",
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (v) => onChange(double.tryParse(v) ?? value),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text("%", style: TextStyle(color: AppColors.mute, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChoiceRow extends StatelessWidget {
+  const _ChoiceRow({required this.label, required this.value, required this.options, required this.onChange, this.hint});
+  final String label;
+  final String value;
+  final List<(String, String)> options;
+  final ValueChanged<String> onChange;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: options.map((o) {
+              final selected = value == o.$1;
+              return InkWell(
+                onTap: () => onChange(o.$1),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(color: selected ? AppColors.gold : AppColors.bg, border: Border.all(color: selected ? AppColors.gold : AppColors.line), borderRadius: BorderRadius.circular(7)),
+                  child: Text(o.$2, style: TextStyle(fontSize: 11, color: selected ? AppColors.onGold : AppColors.txt)),
+                ),
+              );
+            }).toList(),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 8),
+            Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Multi-select variant of [_ChoiceRow] — mirrors Choice's `multi` prop,
+/// used for "Required profile fields" (any subset of phone/birthday/city).
+class _MultiChoiceRow extends StatelessWidget {
+  const _MultiChoiceRow({required this.label, required this.value, required this.options, required this.onChange});
+  final String label;
+  final List<String> value;
+  final List<(String, String)> options;
+  final ValueChanged<List<String>> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: const [
+              _LockedPill(label: "Full Name"),
+              _LockedPill(label: "Email"),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: options.map((o) {
+              final selected = value.contains(o.$1);
+              return InkWell(
+                onTap: () => onChange(selected ? value.where((k) => k != o.$1).toList() : [...value, o.$1]),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(color: selected ? AppColors.gold : AppColors.bg, border: Border.all(color: selected ? AppColors.gold : AppColors.line), borderRadius: BorderRadius.circular(7)),
+                  child: Text(o.$2, style: TextStyle(fontSize: 11, color: selected ? AppColors.onGold : AppColors.txt)),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Full name and email can't be turned off — every client needs both for their account, enforced at signup. Phone / Birthday / City above are optional-or-required, your call.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The gym's catalogue of session types or disciplines (Customize Platform →
+/// Services). Each one offered is a chip with a delete button; deleting it
+/// removes it from the whole app — booking, coach profiles, plan editing,
+/// Create Session, the schedule — via the offered lists every one of those
+/// reads (see OfferedCatalog / LiveCatalog). Deleted ones are listed below
+/// so a mistake can be undone. Changes apply when the owner taps Save.
+class _CatalogEditor extends StatelessWidget {
+  const _CatalogEditor({
+    required this.label,
+    required this.noun,
+    required this.value,
+    required this.options,
+    required this.onChange,
+    required this.labelFor,
+  });
+  final String label;
+  final String noun;
+  final List<String> value;
+
+  /// The built-in catalogue. Anything the owner added themselves is in
+  /// [value] only, and is listed alongside these.
+  final List<(String, String)> options;
+  final ValueChanged<List<String>> onChange;
+
+  /// How a key is displayed — handles both built-ins and owner-added keys.
+  final String Function(String) labelFor;
+
+  List<(String, String)> get _all => [
+        ...options,
+        for (final k in value)
+          if (!options.any((o) => o.$1 == k)) (k, labelFor(k)),
+      ];
+
+  Future<void> _add(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text("Add a $noun"),
+        content: AppField(kind: FieldKind.name, controller: controller, placeholder: noun == "discipline" ? "e.g. Pilates" : "e.g. Small Group"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Add")),
+        ],
+      ),
+    );
+    final key = slugifyName(name ?? "");
+    if (key.isEmpty || value.contains(key)) return;
+    onChange([...value, key]);
+  }
+
+  Future<void> _confirmDelete(BuildContext context, (String, String) o) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text("Delete ${o.$2}?"),
+        content: Text(
+          "${o.$2} will be removed from the whole app — clients can't book it, and it disappears from coach profiles, "
+          "plans and the schedule. Sessions already booked stay as they are. You can restore it below any time. "
+          "Tap Save to apply.",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Keep")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text("Delete", style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) onChange(value.where((k) => k != o.$1).toList());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offered = _all.where((o) => value.contains(o.$1)).toList();
+    final deleted = _all.where((o) => !value.contains(o.$1)).toList();
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          if (offered.isEmpty)
+            Row(
+              children: [
+                Text("No ${noun}s offered.", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => _add(context),
+                  style: TextButton.styleFrom(foregroundColor: AppColors.gold),
+                  child: Text("Add $noun", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final o in offered)
+                  Container(
+                    padding: const EdgeInsets.only(left: 10, right: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.gold.withValues(alpha: 0.15),
+                      border: Border.all(color: AppColors.gold),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(o.$2, style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600)),
+                        IconButton(
+                          tooltip: "Delete",
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _confirmDelete(context, o),
+                          icon: Icon(LucideIcons.x, size: 14, color: AppColors.gold),
+                        ),
+                      ],
+                    ),
+                  ),
+                // Add one of the gym's own — it then behaves exactly like a
+                // built-in everywhere in the app.
+                InkWell(
+                  onTap: () => _add(context),
+                  borderRadius: BorderRadius.circular(7),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.goldDim),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.plus, size: 13, color: AppColors.gold),
+                        const SizedBox(width: 4),
+                        Text("Add $noun", style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          if (deleted.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text("Deleted — tap to restore", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final o in deleted)
+                  InkWell(
+                    onTap: () => onChange([...value, o.$1]),
+                    borderRadius: BorderRadius.circular(7),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: AppColors.bg,
+                        border: Border.all(color: AppColors.line),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(LucideIcons.plus, size: 12, color: AppColors.mute),
+                          const SizedBox(width: 4),
+                          Text(o.$2, style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Picks which of the gym's locations is the default. The default is where
+/// a coach who has not set their own location runs sessions, and what a
+/// client sees selected first when booking.
+class _DefaultLocationPicker extends StatelessWidget {
+  const _DefaultLocationPicker({required this.settings, required this.onChange});
+  final PlatformSettings settings;
+  final ValueChanged<String> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final all = settings.allLocations;
+    final current = settings.defaultLocation?.name;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Default location", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            "Used for coaches who have not set their own location, and shown first to clients when they book.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          if (all.isEmpty)
+            Text(
+              "Add a location above first.",
+              style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic),
+            )
+          else
+            for (final l in all)
+              InkWell(
+                onTap: () => onChange(l.name),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(
+                        l.name == current ? LucideIcons.circleCheck : LucideIcons.circle,
+                        size: 17,
+                        color: l.name == current ? AppColors.gold : AppColors.mute,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              l.name,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: l.name == current ? AppColors.gold : AppColors.txt,
+                              ),
+                            ),
+                            if (l.address.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 1),
+                                child: Text(l.address, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (l.name == current)
+                        Text(
+                          "Default",
+                          style: TextStyle(fontSize: 10.5, color: AppColors.gold, fontWeight: FontWeight.w800),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Every distinct location coaches have set on their own profiles, so the
+/// owner can see where sessions actually happen — not only the sites they
+/// added here themselves.
+class _CoachLocationsList extends ConsumerWidget {
+  const _CoachLocationsList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(platformSettingsProvider);
+    final gymNames = settings.allLocations.map((l) => l.name.trim().toLowerCase()).toSet();
+
+    // Location name -> the coaches who train there.
+    final byName = <String, List<String>>{};
+    for (final t in ref.watch(trainersProvider)) {
+      for (final l in resolveTrainerLocations(t.locations, settings)) {
+        final name = l.name.trim();
+        if (name.isEmpty) continue;
+        (byName[name] ??= []).add(t.name);
+      }
+    }
+    final entries = byName.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Coach locations", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            entries.isEmpty
+                ? "No coach has set their own location — they all use the default above."
+                : "Set by coaches on their own profiles. Anything not already in your list is marked, so you can add it above if it is a real site.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          if (entries.isNotEmpty) const SizedBox(height: 10),
+          for (final e in entries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(LucideIcons.mapPin, size: 14, color: AppColors.gold),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.key, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Text(
+                            e.value.join(", "),
+                            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!gymNames.contains(e.key.trim().toLowerCase()))
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.gold.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        "Coach only",
+                        style: TextStyle(fontSize: 9.5, color: AppColors.gold, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The gym's other locations, beyond the main one above. Each can be picked
+/// when creating a session (Schedule → Advanced settings), and clients see
+/// the location of the session they book.
+class _ExtraLocationsEditor extends StatelessWidget {
+  const _ExtraLocationsEditor({required this.locations, required this.mainName, required this.onChange});
+  final List<GymLocation> locations;
+  final String mainName;
+  final ValueChanged<List<GymLocation>> onChange;
+
+  Future<void> _edit(BuildContext context, {GymLocation? existing, int? index}) async {
+    // Outside the builder so it survives the dialog's own rebuilds.
+    final pinned = ValueNotifier<PickedPoint?>(null);
+    final name = TextEditingController(text: existing?.name ?? "");
+    var addressText = existing?.address ?? "";
+    final hint = TextEditingController(text: existing?.hint ?? "");
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text(existing == null ? "Add a location" : "Edit location"),
+        content: StatefulBuilder(
+          builder: (ctx2, setDialogState) => SingleChildScrollView(
+            child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FieldLabeled(label: "Name", child: AppField(kind: FieldKind.name, controller: name, placeholder: "e.g. ONE Fitness Burbank")),
+              const SizedBox(height: 8),
+              AddressFields(address: addressText, onChanged: (v) => addressText = v),
+              const SizedBox(height: 8),
+              FieldLabeled(label: "Parking / arrival notes", child: AppField(controller: hint, placeholder: "e.g. Park in the rear lot")),
+              const SizedBox(height: 10),
+              // Placing the pin is the reliable path: an address that won't
+              // geocode, or one that lands on the wrong side of the block,
+              // leaves the location out of every distance calculation.
+              Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final picked = await showMapLocationPicker(
+                          ctx,
+                          title: "Where is this location?",
+                          subtitle: "Search for the address, drag the map onto the gym, or tap the crosshair to use where you are now.",
+                          initial: pinned.value ??
+                              (existing != null && existing.hasCoords
+                                  ? PickedPoint(lat: existing.lat!, lng: existing.lng!)
+                                  : null),
+                        );
+                        if (picked == null) return;
+                        pinned.value = picked;
+                        // Fills street, city, state and ZIP from the pin.
+                        if ((picked.address ?? "").isNotEmpty) addressText = picked.address!;
+                        setDialogState(() {});
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.gold,
+                        side: BorderSide(color: AppColors.goldDim),
+                      ),
+                      icon: const Icon(LucideIcons.map, size: 14),
+                      label: Text(
+                        pinned.value != null || (existing?.hasCoords ?? false)
+                            ? "Move pin on map"
+                            : "Set on map / use current location",
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (pinned.value != null || (existing?.hasCoords ?? false))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          "Pinned at ${(pinned.value?.lat ?? existing!.lat!).toStringAsFixed(5)}, "
+                          "${(pinned.value?.lng ?? existing!.lng!).toStringAsFixed(5)}",
+                          style: TextStyle(fontSize: 11, color: AppColors.mute),
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Text(
+                          "Without a pin we'll try to place it from the address when you save.",
+                          style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Save")),
+        ],
+      ),
+    );
+    if (saved != true || name.text.trim().isEmpty) return;
+    final next = [...locations];
+    final pin = pinned.value;
+    final entry = GymLocation(
+      name: name.text.trim(),
+      address: addressText.trim(),
+      hint: hint.text.trim(),
+      // A pin always wins over geocoding the address — it's the one the
+      // owner actually looked at.
+      lat: pin?.lat ?? existing?.lat,
+      lng: pin?.lng ?? existing?.lng,
+    );
+    if (index == null) {
+      next.add(entry);
+    } else {
+      next[index] = entry;
+    }
+    onChange(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Other locations", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            mainName.trim().isEmpty
+                ? "Set the main location above first."
+                : "$mainName is the main one. Add any other site you run sessions at — you pick the location when creating a session.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < locations.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.mapPin, size: 15, color: AppColors.gold),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(locations[i].name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        if (locations[i].address.isNotEmpty)
+                          Text(locations[i].address, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: "Edit",
+                    onPressed: () => _edit(context, existing: locations[i], index: i),
+                    icon: Icon(LucideIcons.pencil, size: 15, color: AppColors.mute),
+                  ),
+                  IconButton(
+                    tooltip: "Remove",
+                    onPressed: () => onChange([...locations]..removeAt(i)),
+                    icon: Icon(LucideIcons.trash2, size: 15, color: AppColors.mute),
+                  ),
+                ],
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _edit(context),
+              style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero),
+              icon: const Icon(LucideIcons.plus, size: 14),
+              label: const Text("Add location", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// How many clients fit in each session type — the number the booking screen
+/// counts down ("3 of 4 open") and the database enforces on every booking.
+/// One-on-one and the assessments are fixed at one by definition.
+/// One-off ("single") session pricing, per session type. Every session type the
+/// gym offers is listed — including ones the owner adds later — with a price and
+/// an Allowed switch. Off means that type needs a membership or package. Prices
+/// are whole cents; a price change only affects new bookings (each purchase
+/// keeps the price it was bought at).
+class _SingleSessionEditor extends StatelessWidget {
+  const _SingleSessionEditor({
+    required this.types,
+    required this.prices,
+    required this.allowed,
+    required this.onChange,
+  });
+  final List<String> types;
+  final Map<String, int> prices;
+  final Map<String, bool> allowed;
+  final void Function(Map<String, int> prices, Map<String, bool> allowed) onChange;
+
+  static String _fmt(int cents) => (cents / 100).toStringAsFixed(2);
+
+  /// Numeric, >= 0, at most two decimals. Null when the text isn't valid.
+  static int? parseCents(String raw) {
+    final t = raw.trim().replaceAll(r"$", "");
+    if (!RegExp(r"^\d+(\.\d{0,2})?$").hasMatch(t)) return null;
+    return (double.parse(t) * 100).round();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = types.where((t) => !t.startsWith("assessment")).toList();
+    if (list.isEmpty) return const SizedBox.shrink();
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Single session pricing", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            "What a client with no membership or package pays for ONE session. Off = that session type needs a membership or package. "
+            "A single session is good for 30 days; a price change only applies to new bookings.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          for (final t in list)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(child: Text(sessionTypeLabel(t), style: const TextStyle(fontSize: 13))),
+                  Text("\$", style: TextStyle(color: AppColors.mute, fontSize: 13)),
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 74,
+                    child: _StableTextField(
+                      value: _fmt(prices[t] ?? 0),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (v) {
+                        final c = parseCents(v);
+                        if (c == null) return; // ignore invalid text; the last valid price stays
+                        onChange({...prices, t: c}, allowed);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Switch(
+                    value: allowed[t] ?? false,
+                    onChanged: (v) => onChange(prices, {...allowed, t: v}),
+                  ),
+                ],
+              ),
+            ),
+          Text("Allowed switch is on the right of each price.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClassSizeEditor extends StatelessWidget {
+  const _ClassSizeEditor({
+    required this.types,
+    required this.caps,
+    required this.semiPrivateCap,
+    required this.onChange,
+  });
+  final List<String> types;
+  final Map<String, int> caps;
+  final int semiPrivateCap;
+  final ValueChanged<Map<String, int>> onChange;
+
+  static const _fixedAtOne = {"one-on-one", "assessment-call", "assessment-in-person"};
+
+  int _current(String type) =>
+      caps[type] ?? (type == "large-group" ? 15 : (type == "semi-private" ? semiPrivateCap : semiPrivateCap));
+
+  @override
+  Widget build(BuildContext context) {
+    final editable = types.where((t) => !_fixedAtOne.contains(t)).toList();
+    if (editable.isEmpty) return const SizedBox.shrink();
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Class size limit", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            "The most clients one session of each type takes. Booking stops at this number.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 8),
+          for (final t in editable)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(child: Text(sessionTypeLabel(t), style: const TextStyle(fontSize: 13))),
+                  SizedBox(
+                    width: 70,
+                    child: _StableTextField(
+                      value: "${_current(t)}",
+                      keyboardType: TextInputType.number,
+                      onChanged: (v) {
+                        final n = int.tryParse(v.trim());
+                        if (n == null || n < 1) return;
+                        onChange({...caps, t: n});
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text("clients", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                ],
+              ),
+            ),
+          Text(
+            "One-on-One and assessments are always one client.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LockedPill extends StatelessWidget {
+  const _LockedPill({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: AppColors.gold), color: AppColors.gold),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.lock, size: 11, color: AppColors.onGold),
+          const SizedBox(width: 5),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onGold)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Owner-defined extra client-intake fields — add/relabel/retype/reorder/
+/// remove, mirrors ClientsTab's custom-field list in CustomizePlatform.jsx.
+class _CustomFieldsEditor extends StatefulWidget {
+  const _CustomFieldsEditor({required this.fields, required this.onChange});
+  final List<CustomProfileField> fields;
+  final ValueChanged<List<CustomProfileField>> onChange;
+
+  @override
+  State<_CustomFieldsEditor> createState() => _CustomFieldsEditorState();
+}
+
+class _CustomFieldsEditorState extends State<_CustomFieldsEditor> {
+  final _newLabel = TextEditingController();
+  String _newType = "text";
+
+  @override
+  void dispose() {
+    _newLabel.dispose();
+    super.dispose();
+  }
+
+  void _add() {
+    final label = _newLabel.text.trim();
+    if (label.isEmpty) return;
+    widget.onChange([...widget.fields, CustomProfileField(id: "field-${DateTime.now().microsecondsSinceEpoch}", label: label, type: _newType)]);
+    setState(() {
+      _newLabel.clear();
+      _newType = "text";
+    });
+  }
+
+  void _reorder(int oldIndex, int newIndex) {
+    final target = newIndex.clamp(0, widget.fields.length - 1);
+    if (oldIndex < 0 || oldIndex >= widget.fields.length || target == oldIndex) return;
+    final next = [...widget.fields];
+    next.insert(target, next.removeAt(oldIndex));
+    widget.onChange(next);
+  }
+
+  void _move(int i, int dir) => _reorder(i, i + dir);
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Custom profile fields", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          if (widget.fields.isEmpty) Text("None yet — added fields show up on every client intake and edit-profile form.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+          ReorderableColumn(
+            itemCount: widget.fields.length,
+            keyOf: (i) => widget.fields[i].id,
+            enabled: widget.fields.length > 1,
+            onReorder: _reorder,
+            itemBuilder: (context, i) {
+            final f = widget.fields[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkWell(onTap: i == 0 ? null : () => _move(i, -1), child: Icon(LucideIcons.chevronUp, size: 14, color: i == 0 ? AppColors.line : AppColors.mute)),
+                      InkWell(onTap: i == widget.fields.length - 1 ? null : () => _move(i, 1), child: Icon(LucideIcons.chevronDown, size: 14, color: i == widget.fields.length - 1 ? AppColors.line : AppColors.mute)),
+                    ],
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _StableTextField(
+                      value: f.label,
+                      onChanged: (v) => widget.onChange(widget.fields.map((x) => x.id == f.id ? CustomProfileField(id: x.id, label: v, type: x.type) : x).toList()),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(f.type.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.gold)),
+                  IconButton(
+                    icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.errorText),
+                    onPressed: () => widget.onChange(widget.fields.where((x) => x.id != f.id).toList()),
+                  ),
+                ],
+              ),
+            );
+            },
+          ),
+          Row(
+            children: [
+              Expanded(child: AppField(kind: FieldKind.name, controller: _newLabel, placeholder: "New field label…")),
+              const SizedBox(width: 6),
+              DropdownButton<String>(
+                value: _newType,
+                dropdownColor: AppColors.card,
+                style: TextStyle(color: AppColors.txt, fontSize: 12),
+                items: _customFieldTypes.map((t) => DropdownMenuItem(value: t.$1, child: Text(t.$2))).toList(),
+                onChanged: (v) => setState(() => _newType = v ?? "text"),
+              ),
+              IconButton(icon: Icon(LucideIcons.plus, size: 16, color: AppColors.gold), onPressed: _add),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One fee profile's fields (card's or ACH's) — mirrors FeeProfileFields in
+/// CustomizePlatform.jsx.
+class _FeeProfileEditor extends StatelessWidget {
+  const _FeeProfileEditor({required this.title, required this.profile, required this.onChange, this.hint});
+  final String title;
+  final FeeProfile profile;
+  final ValueChanged<FeeProfile> onChange;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      borderColor: AppColors.line,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => onChange(FeeProfile(enabled: !profile.enabled, label: profile.label, structure: profile.structure, percent: profile.percent, flatCents: profile.flatCents)),
+            child: Row(
+              children: [
+                Expanded(child: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                Icon(profile.enabled ? LucideIcons.toggleRight : LucideIcons.toggleLeft, size: 30, color: profile.enabled ? AppColors.gold : AppColors.mute),
+              ],
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 6),
+            Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+          ],
+          if (profile.enabled) ...[
+            const SizedBox(height: 10),
+            FieldLabeled(
+              label: "Fee label (shown to the client)",
+              child: _StableTextField(
+                value: profile.label,
+                placeholder: title,
+                onChanged: (v) => onChange(FeeProfile(enabled: profile.enabled, label: v, structure: profile.structure, percent: profile.percent, flatCents: profile.flatCents)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _ChoiceRow(
+              label: "Fee structure",
+              value: profile.structure,
+              options: const [("percentage", "Percentage"), ("flat", "Flat"), ("percentage_flat", "Percentage + flat")],
+              onChange: (v) => onChange(FeeProfile(enabled: profile.enabled, label: profile.label, structure: v, percent: profile.percent, flatCents: profile.flatCents)),
+            ),
+            if (profile.structure != "flat") ...[
+              const SizedBox(height: 10),
+              _PercentRow(
+                label: "Percentage rate",
+                value: profile.percent,
+                onChange: (v) => onChange(FeeProfile(enabled: profile.enabled, label: profile.label, structure: profile.structure, percent: v, flatCents: profile.flatCents)),
+              ),
+            ],
+            if (profile.structure != "percentage") ...[
+              const SizedBox(height: 10),
+              _MoneyRow(
+                label: "Flat amount",
+                cents: profile.flatCents,
+                onChange: (v) => onChange(FeeProfile(enabled: profile.enabled, label: profile.label, structure: profile.structure, percent: profile.percent, flatCents: v)),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The one WAIVER_DOCS entry Clients Tab's waiver editor manages directly
+/// (same well-known id web uses) — plain multi-line text, not the rich-text
+/// editor web ships (WaiverRichTextEditor.jsx is a real secondary editor
+/// component; not worth a second bespoke editor in this port). Its own save
+/// action, separate from the rest of the tab — waiver docs live in
+/// `waiver_docs`, not the `platform_settings` blob.
+const _signupWaiverId = "signup-waiver";
+
+class _SignupWaiverEditor extends ConsumerStatefulWidget {
+  const _SignupWaiverEditor();
+
+  @override
+  ConsumerState<_SignupWaiverEditor> createState() => _SignupWaiverEditorState();
+}
+
+class _SignupWaiverEditorState extends ConsumerState<_SignupWaiverEditor> {
+  late final _title = TextEditingController(text: _existing()?.title ?? "Membership Waiver & Release");
+  late final _body = TextEditingController(text: _existing()?.body ?? "");
+  bool _saving = false;
+  bool _flash = false;
+  String? _error;
+
+  WaiverDoc? _existing() {
+    final list = ref.read(waiversProvider);
+    for (final w in list) {
+      if (w.id == _signupWaiverId) return w;
+    }
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _body.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final existing = _existing();
+    final doc = WaiverDoc(
+      id: _signupWaiverId,
+      title: _title.text.trim().isEmpty ? "Membership Waiver & Release" : _title.text.trim(),
+      body: _body.text,
+      scope: "general",
+      required: true,
+      archived: existing?.archived ?? false,
+    );
+    try {
+      await SupabaseService.upsertWaiverDoc(doc);
+      ref.read(waiversProvider.notifier).upsert(doc);
+      if (!mounted) return;
+      setState(() => _flash = true);
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _flash = false);
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't save the waiver — please try again.");
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Waiver document", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "Title", child: AppField(kind: FieldKind.name, controller: _title, placeholder: "Membership Waiver & Release")),
+          const SizedBox(height: 10),
+          FieldLabeled(label: "Body", child: AppField(controller: _body, maxLines: 8, minLines: 4)),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text("⚠ $_error", style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+          ],
+          if (_flash) ...[
+            const SizedBox(height: 8),
+            Text("✓ Waiver saved.", style: TextStyle(color: AppColors.success, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+          const SizedBox(height: 10),
+          BtnGhost(onPressed: _saving ? null : _save, child: Text(_saving ? "Saving…" : "Save Waiver Document")),
+        ],
+      ),
+    );
+  }
+}
+
+/// One alert type's sound picker, with a preview on every option.
+///
+/// The owner is choosing a sound they will not themselves hear in use — it
+/// plays on the coaches' phones — so being able to audition each one before
+/// committing is the whole point of the preview.
+class _BeepSoundRow extends StatelessWidget {
+  const _BeepSoundRow({
+    required this.kind,
+    required this.selectedId,
+    required this.onChange,
+  });
+
+  final BeepKind kind;
+  final String selectedId;
+  final ValueChanged<String> onChange;
+
+  String get _blurb => switch (kind) {
+        BeepKind.help => "A client is stuck or unsure.",
+        BeepKind.spot => "A client needs someone on the bar. Always cuts through.",
+        BeepKind.done => "A client finished an exercise.",
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(kind.label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(_blurb, style: TextStyle(fontSize: 11.5, color: AppColors.mute)),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: [
+              for (final sound in soundsFor(kind))
+                _SoundChip(
+                  label: sound.name,
+                  selected: sound.id == selectedId,
+                  onTap: () {
+                    onChange(sound.id);
+                    // Play it on selection too — choosing and hearing are the
+                    // same action for anyone picking by ear.
+                    BeepPlayer.instance.preview(kind, sound.id);
+                  },
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SoundChip extends StatelessWidget {
+  const _SoundChip({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 36),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : AppColors.card,
+          border: Border.all(color: selected ? AppColors.gold : AppColors.line),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected ? LucideIcons.volume2 : LucideIcons.play,
+              size: 12,
+              color: selected ? AppColors.onGold : AppColors.mute,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: selected ? AppColors.onGold : AppColors.txt,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Read-only list of locations a coach set for themselves.
+///
+/// Not editable here on purpose: it belongs to that coach's profile, and
+/// quietly rewriting it from the admin screen would move their sessions
+/// without telling them. This answers "where are my coaches actually
+/// running sessions", and flags any that can't be measured — a location
+/// with no coordinates still works, but no client will ever be told how
+/// far away it is.
+class _CoachSetLocations extends ConsumerWidget {
+  const _CoachSetLocations();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final places = ref.watch(coachSetPlacesProvider);
+    if (places.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionLabel("Set by coaches"),
+        const HintBox(text: "Locations your coaches set on their own profiles. Their sessions run from these instead of the gym's. Edit one on that coach's profile."),
+        for (final p in places)
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              border: Border.all(color: AppColors.line),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(LucideIcons.mapPin, size: 13, color: AppColors.gold),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(p.name,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    ),
+                    if (p.coachName != null)
+                      Text(p.coachName!,
+                          style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  ],
+                ),
+                if (p.address.trim().isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(p.address, style: TextStyle(fontSize: 11.5, color: AppColors.mute)),
+                ],
+                if (!p.hasCoords) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    "⚠ No map pin — clients won't see a distance for sessions here. Ask the coach to set it on the map.",
+                    style: TextStyle(fontSize: 11, color: AppColors.warning, height: 1.35),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
