@@ -135,7 +135,7 @@ class MeritBadgeEarningsReport extends ConsumerWidget {
               for (final b in rows)
                 [
                   if (onlyTrainerId == null) trainerNames[b.trainerId] ?? "—",
-                  kCoachBadgeLabels[b.badgeKey] ?? b.badgeKey,
+                  coachBadgeLabel(b.badgeKey),
                   b.periodMonth,
                   b.payoutStatus,
                   _money(b.rewardCents / 100),
@@ -153,7 +153,7 @@ class MeritBadgeEarningsReport extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(kCoachBadgeLabels[b.badgeKey] ?? b.badgeKey, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        Text(coachBadgeLabel(b.badgeKey), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
                         Text(
                           onlyTrainerId != null ? "${b.periodMonth} · ${b.payoutStatus}" : "${trainerNames[b.trainerId] ?? '—'} · ${b.periodMonth} · ${b.payoutStatus}",
                           style: TextStyle(fontSize: 11, color: AppColors.mute),
@@ -161,6 +161,24 @@ class MeritBadgeEarningsReport extends ConsumerWidget {
                       ],
                     ),
                   ),
+                  if (ref.watch(trainerAuthProvider) == "owner" && b.payoutStatus != "paid")
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: TextButton(
+                        onPressed: () async {
+                          try {
+                            await SupabaseService.markCoachBadgePaid(b.id);
+                            final fresh = await SupabaseService.loadCoachMeritBadges();
+                            ref.read(coachMeritBadgesProvider.notifier).setAll(fresh);
+                          } catch (_) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't mark that badge paid.")));
+                            }
+                          }
+                        },
+                        child: const Text("Mark paid"),
+                      ),
+                    ),
                   Text(_money(b.rewardCents / 100), style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.gold)),
                 ],
               ),
@@ -300,7 +318,6 @@ class _CoachMeritBadgeAutoFinalizeState extends ConsumerState<CoachMeritBadgeAut
     final lastMonthDate = DateTime(now.year, now.month - 1, 1);
     final periodMonth = "${lastMonthDate.year.toString().padLeft(4, '0')}-${lastMonthDate.month.toString().padLeft(2, '0')}";
     final existing = ref.read(coachMeritBadgesProvider);
-    if (existing.any((b) => b.periodMonth == periodMonth)) return;
     final monthEnd = DateTime(now.year, now.month, 0);
     final monthRange = ReportRange(preset: "month", start: isoDate(lastMonthDate), end: isoDate(monthEnd));
     final settings = ref.read(platformSettingsProvider);
@@ -325,6 +342,9 @@ class _CoachMeritBadgeAutoFinalizeState extends ConsumerState<CoachMeritBadgeAut
           "habit_coach": settings.badgeHabitCoachCents,
           "challenge_coach": settings.badgeChallengeCoachCents,
           "coach_of_month": settings.badgeCoachOfMonthCents,
+          "sessions_coached": settings.badgeSessionsCoachedCents,
+          "retention_streak": settings.badgeRetentionCents,
+          "client_milestone": settings.badgeClientMilestoneCents,
         },
       );
       final fresh = await SupabaseService.loadCoachMeritBadges();

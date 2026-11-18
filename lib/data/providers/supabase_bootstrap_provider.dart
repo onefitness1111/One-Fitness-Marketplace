@@ -134,6 +134,34 @@ void _subscribeRealtimeUpdates(Ref ref) {
       )
       .subscribe();
 
+  SupabaseService.client
+      .channel("message_reactions_live")
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: "public",
+        table: "message_reactions",
+        callback: (payload) async {
+          final row = payload.newRecord.isNotEmpty ? payload.newRecord : payload.oldRecord;
+          final clientId = row["client_id"] as String?;
+          if (clientId == null) return;
+          try {
+            final thread = await SupabaseService.loadMessagesFor(clientId);
+            final ordered = thread.reversed.toList();
+            ref.read(trainerClientRecordsProvider.notifier).update(
+                  clientId,
+                  (r) => r.copyWith(comms: ordered),
+                );
+            if (ref.read(clientInfoProvider).id == clientId) {
+              ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(comms: ordered));
+            }
+          } catch (e) {
+            // ignore: avoid_print
+            print("[realtime reactions] reload failed: $e");
+          }
+        },
+      )
+      .subscribe();
+
   // A client's saved programs, nutrition plan, intake answers and logs all
   // live on this row. Without this, a program the owner assigned only showed
   // up after the client fully restarted the app.

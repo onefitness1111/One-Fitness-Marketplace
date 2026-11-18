@@ -819,6 +819,7 @@ class SupabaseService {
         note: row["note"] as String?,
         revokedAt: _dateOnly(row["revoked_at"] as String?),
         revokedByUserId: row["revoked_by_user_id"] as String?,
+        celebratedAt: row["celebrated_at"] as String?,
       );
 
   // ── Coach Merit Badge System ────────────────────────────────────────
@@ -1566,9 +1567,6 @@ class SupabaseService {
             hint: l["hint"] as String? ?? "",
           ),
       ],
-      meritBadgeProgressWeeks:
-          _asInt(workouts["meritBadgeProgressWeeks"]) ??
-          defaults.meritBadgeProgressWeeks,
       meritBadgeHabitPercent:
           _asInt(workouts["meritBadgeHabitPercent"]) ??
           defaults.meritBadgeHabitPercent,
@@ -1598,6 +1596,15 @@ class SupabaseService {
       badgeCoachOfMonthCents:
           _asInt(workouts["badgeCoachOfMonthCents"]) ??
           defaults.badgeCoachOfMonthCents,
+      badgeSessionsCoachedCents:
+          _asInt(workouts["badgeSessionsCoachedCents"]) ??
+          defaults.badgeSessionsCoachedCents,
+      badgeClientMilestoneCents:
+          _asInt(workouts["badgeClientMilestoneCents"]) ??
+          defaults.badgeClientMilestoneCents,
+      badgeRetentionCents:
+          _asInt(workouts["badgeRetentionCents"]) ??
+          defaults.badgeRetentionCents,
     );
   }
 
@@ -1675,6 +1682,9 @@ class SupabaseService {
     }
     if (raw.contains("profiles_unique_email")) {
       throw Exception("That email address is already on another account.");
+    }
+    if (raw.contains("coach_name_taken") || raw.contains("trainers_coach_name_key")) {
+      throw Exception("Another coach already uses that coach name. Pick a different one.");
     }
     throw e;
   }
@@ -2065,6 +2075,13 @@ class SupabaseService {
     } catch (_) {
       await upsertClientRecordPatch(profileId, patch);
     }
+    // The food log lives on this record (see the nutrition migration). Logging
+    // a meal can earn the nutrition streak immediately, not only overnight.
+    if (patch.containsKey("foodLog")) {
+      try {
+        await checkMeritBadges(profileId, "after_food");
+      } catch (_) {}
+    }
   }
 
   /// Mirrors HabitSettingsPanel.jsx's toggle/addCustom/removeCustom — all
@@ -2227,6 +2244,114 @@ class SupabaseService {
     }
   }
 
+  static Future<String?> myPhone() async {
+    final id = currentUser?.id;
+    if (id == null) return null;
+    final row = await client.from("profiles").select("phone").eq("id", id).maybeSingle();
+    return (row?["phone"] as String?)?.trim();
+  }
+
+  static Future<bool> chatIntroSeen() async {
+    final id = currentUser?.id;
+    if (id == null) return false;
+    try {
+      final row = await client.from("profiles").select("chat_intro_seen_at").eq("id", id).maybeSingle();
+      return row?["chat_intro_seen_at"] != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> markChatIntroSeen() async {
+    final id = currentUser?.id;
+    if (id == null) return;
+    try {
+      await client.from("profiles").update({
+        "chat_intro_seen_at": DateTime.now().toUtc().toIso8601String(),
+      }).eq("id", id);
+    } catch (_) {}
+  }
+
+  static Future<bool> hasSmsConsent(String profileId) async {
+    try {
+      final profile = await client
+          .from("profiles")
+          .select("sms_consent_at, sms_opted_out")
+          .eq("id", profileId)
+          .maybeSingle();
+      if (profile?["sms_opted_out"] == true) return false;
+      if (profile?["sms_consent_at"] != null) return true;
+    } catch (_) {}
+    try {
+      final row = await client.from("clients").select("sms_opt_in").eq("profile_id", profileId).maybeSingle();
+      return row?["sms_opt_in"] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> recordSmsConsent(String profileId) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final text = smsConsentRecord();
+    try {
+      await client.from("profiles").update({
+        "sms_opted_out": false,
+        "sms_consent_at": now,
+        "sms_consent_text": text,
+      }).eq("id", profileId);
+    } catch (_) {}
+    try {
+      await client.from("clients").update({
+        "sms_opt_in": true,
+        "sms_opt_in_at": now,
+        "sms_consent_text": text,
+      }).eq("profile_id", profileId);
+    } catch (_) {}
+  }
+
+  static Future<void> setMessageReaction({
+    required String messageId,
+    required String clientId,
+    required String reaction,
+    required String routedTo,
+  }) async {
+    final me = currentUser?.id;
+    if (me == null) throw Exception("You're signed out — sign in and try again.");
+    await client.from("message_reactions").upsert({
+      "message_id": messageId,
+      "user_id": me,
+      "client_id": clientId,
+      "reaction": reaction,
+      "source": "app",
+      "channel": "app",
+      "direction": "outbound",
+      "routed_to": routedTo,
+    }, onConflict: "message_id,user_id");
+  }
+
+  static Future<List<CommMessage>> _attachReactions(List<CommMessage> messages) async {
+    if (messages.isEmpty) return messages;
+    try {
+      final rows = await client
+          .from("message_reactions")
+          .select("message_id, user_id, reaction")
+          .inFilter("message_id", messages.map((m) => m.id).toList());
+      final byId = <String, List<MessageReaction>>{};
+      for (final row in (rows as List).cast<Map<String, dynamic>>()) {
+        final id = row["message_id"] as String;
+        (byId[id] ??= []).add(MessageReaction(
+          userId: row["user_id"] as String,
+          reaction: (row["reaction"] as String?) ?? "heart",
+        ));
+      }
+      return [
+        for (final m in messages) m.copyWith(reactions: byId[m.id] ?? const []),
+      ];
+    } catch (_) {
+      return messages;
+    }
+  }
+
   /// Every message in one client's thread, oldest first. Blocked users'
   /// messages are already excluded by the table's own select policy.
   static Future<List<CommMessage>> loadMessagesFor(String clientId) async {
@@ -2235,7 +2360,8 @@ class SupabaseService {
         .select()
         .eq("client_id", clientId)
         .order("created_at");
-    return (rows as List).cast<Map<String, dynamic>>().map(_messageFromRow).toList();
+    final messages = (rows as List).cast<Map<String, dynamic>>().map(_messageFromRow).toList();
+    return _attachReactions(messages);
   }
 
   /// Every thread at once, keyed by client id — what the coach's chat list
@@ -2246,7 +2372,13 @@ class SupabaseService {
     for (final r in (rows as List).cast<Map<String, dynamic>>()) {
       (out[r["client_id"] as String] ??= []).add(_messageFromRow(r));
     }
-    return out;
+    final flat = out.values.expand((list) => list).toList();
+    final withLikes = await _attachReactions(flat);
+    final byId = {for (final m in withLikes) m.id: m};
+    return {
+      for (final entry in out.entries)
+        entry.key: [for (final m in entry.value) byId[m.id] ?? m],
+    };
   }
 
   // ── Reporting and blocking (Apple guideline 1.2) ───────────────────────
@@ -3169,6 +3301,15 @@ class SupabaseService {
         .from("bookings")
         .update({"attendance_status": status})
         .eq("id", id);
+    if (status == "checked-in") {
+      try {
+        final row = await client.from("bookings").select("client_id").eq("id", id).maybeSingle();
+        final clientId = row?["client_id"] as String?;
+        if (clientId != null) {
+          await checkMeritBadges(clientId, "after_session");
+        }
+      } catch (_) {}
+    }
     // Late Cancel / No-Show carry a fee. It is collected server-side, once per
     // booking, from the saved card; if that fails (or there is no card) the
     // full amount goes onto the client's balance. Never blocks marking.
@@ -3483,6 +3624,42 @@ class SupabaseService {
   /// server-side); returns `{ok:true, badgeKey}` on a genuinely fresh award
   /// or `{ok:true, alreadyEarned:true}`/an error otherwise — callers treat a
   /// thrown error as "not eligible yet", not a failure worth surfacing.
+  /// Asks the server to re-check the badges that a session, log, photo, or
+  /// measurement can earn. Failures stay quiet: the thing the client just
+  /// saved has already been saved.
+  static Future<List<String>> checkMeritBadges(String clientId, String event) async {
+    try {
+      final result = await awardMeritBadge(clientId, event);
+      final awarded = result["awarded"];
+      if (awarded is List) return awarded.whereType<String>().toList();
+      if (result["badgeKey"] is String && result["ok"] == true && result["alreadyEarned"] != true) {
+        return [result["badgeKey"] as String];
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  /// Automatic reward points. [sourceRefId] is the challenge id, the photo
+  /// or measurement month, or "scan" for a workout streak.
+  static Future<void> awardAutomaticPoints(String clientId, String source, String sourceRefId) async {
+    try {
+      await _invokeFunction("award-points", {
+        "clientId": clientId,
+        "source": source,
+        "sourceRefId": sourceRefId,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> markMeritBadgesSeen(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await client.rpc("mark_merit_badges_seen", params: {"p_ids": ids});
+  }
+
+  static Future<void> markCoachBadgePaid(String id) async {
+    await client.from("coach_merit_badges").update({"payout_status": "paid"}).eq("id", id);
+  }
+
   static Future<Map<String, dynamic>> awardMeritBadge(
     String clientId,
     String badgeKey, {
@@ -4116,7 +4293,6 @@ class SupabaseService {
       "defaultWeightUnit": s.defaultWeightUnit,
       "autoCarryOverLastWeight": s.autoCarryOverLastWeight,
       "clientsCanSwapExercises": s.clientsCanSwapExercises,
-      "meritBadgeProgressWeeks": s.meritBadgeProgressWeeks,
       "meritBadgeHabitPercent": s.meritBadgeHabitPercent,
       "meritBadgeHabitWeeks": s.meritBadgeHabitWeeks,
       "badgeFullHouseCents": s.badgeFullHouseCents,
@@ -4127,6 +4303,9 @@ class SupabaseService {
       "badgeHabitCoachCents": s.badgeHabitCoachCents,
       "badgeChallengeCoachCents": s.badgeChallengeCoachCents,
       "badgeCoachOfMonthCents": s.badgeCoachOfMonthCents,
+      "badgeSessionsCoachedCents": s.badgeSessionsCoachedCents,
+      "badgeClientMilestoneCents": s.badgeClientMilestoneCents,
+      "badgeRetentionCents": s.badgeRetentionCents,
     },
     "scheduling": {
       "semiPrivateCap": s.semiPrivateCap,

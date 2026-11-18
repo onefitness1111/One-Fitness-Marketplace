@@ -1,0 +1,299 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  BUSINESS_NAME,
+  HELP_TEXT,
+  ThreadBook,
+  businessNotice,
+  keywordKind,
+  leadReply,
+  matchCoachTag,
+  parseTapback,
+  pickProfileForSms,
+  prefixBody,
+  quoteMatches,
+  windowOpen,
+  WINDOW_MS,
+} from "./chatRouting.mjs";
+
+const T0 = Date.parse("2026-06-01T15:00:00Z");
+const MIN = 60 * 1000;
+
+function gym() {
+  return new ThreadBook([
+    { id: "chris", role: "coach", displayName: "Coach Chris", coachName: "Coach Chris", phone: "+15551110001", hasConsent: true },
+    { id: "pat", role: "coach", displayName: "Coach Pat", coachName: "Coach Pat", phone: "+15551110003", hasConsent: true },
+    { id: "sam", role: "client", displayName: "Sam", phone: "+15551110002", hasConsent: true },
+    { id: "bob", role: "client", displayName: "Bob", phone: "+15551110004", hasConsent: true },
+    { id: "owner", role: "owner", displayName: BUSINESS_NAME, phone: "+15551235455", hasConsent: true },
+  ]);
+}
+
+test("1. a coach sends, and the client gets the app thread plus a text", () => {
+  const book = gym();
+  const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  assert.equal(sent.message.body, "Coach Chris: See you at 6");
+  assert.equal(sent.message.channel, "app");
+  assert.equal(sent.message.direction, "outbound");
+  assert.equal(sent.message.routedTo, "conversation");
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].toId, "sam");
+  assert.equal(sent.sms[0].body, "Coach Chris: See you at 6");
+  assert.equal(book.messages.length, 1);
+});
+
+test("2. a client's text at 5h59m still goes to the coach", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const reply = book.receiveSms({ fromId: "sam", text: "On my way", now: T0 + 5 * 60 * MIN + 59 * MIN });
+  assert.equal(reply.kind, "active");
+  assert.equal(reply.message.senderId, "sam");
+  assert.equal(reply.message.body, "Sam: On my way");
+  assert.equal(reply.routedTo, "conversation");
+  assert.equal(reply.sms.length, 1);
+  assert.equal(reply.sms[0].toId, "chris");
+  assert.equal(reply.sms[0].body, "Sam: On my way");
+});
+
+test("3. an untagged text at 6h01m goes to Business Chat and texts the owner", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const reply = book.receiveSms({ fromId: "sam", text: "Still outside?", now: T0 + WINDOW_MS + MIN });
+  assert.equal(reply.kind, "fallthrough");
+  assert.equal(reply.routedTo, "business");
+  assert.equal(reply.message.senderId, "sam");
+  assert.equal(reply.sms.length, 1);
+  assert.equal(reply.sms[0].toId, "owner");
+  assert.equal(reply.sms[0].body, "New message from Sam in ONE Fitness Marketplace.");
+});
+
+test("4. @CoachChris reaches Coach Chris even when nothing is active", () => {
+  const book = gym();
+  for (const text of ["@CoachChris running late", "@Coach Chris running late", "@coachchris running late"]) {
+    const sent = book.receiveSms({ fromId: "sam", text, now: T0 + 30 * 60 * MIN });
+    assert.equal(sent.kind, "tag", text);
+    assert.equal(sent.sms[0].toId, "chris", text);
+    assert.equal(sent.message.body, `Sam: ${text}`);
+    assert.equal(sent.routedTo, "conversation");
+  }
+});
+
+test("5. back-and-forth resets the 6 hours from the latest message", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const first = book.receiveSms({ fromId: "sam", text: "Ok", now: T0 + 5 * 60 * MIN });
+  assert.equal(first.kind, "active");
+  // 5h59m after that reply is almost 11 hours after the original text.
+  // It only stays with the coach because the reply restarted the window.
+  const second = book.receiveSms({
+    fromId: "chris",
+    text: "Gate's open",
+    now: T0 + 5 * 60 * MIN + WINDOW_MS - MIN,
+  });
+  assert.equal(second.kind, "active");
+  assert.equal(second.sms[0].toId, "sam");
+  const expired = book.receiveSms({
+    fromId: "sam",
+    text: "Hello?",
+    now: T0 + 5 * 60 * MIN + WINDOW_MS - MIN + WINDOW_MS + MIN,
+  });
+  assert.equal(expired.kind, "fallthrough");
+});
+
+test("6. Liked \"See you at 6\" is a like, with no text and no window reset", () => {
+  const book = gym();
+  const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const liked = book.receiveSms({ fromId: "sam", text: 'Liked "See you at 6"', now: T0 + 60 * MIN });
+  assert.equal(liked.kind, "like");
+  assert.equal(liked.like.reaction, "thumb");
+  assert.equal(liked.like.source, "sms_tapback");
+  assert.equal(liked.like.channel, "sms");
+  assert.equal(liked.sms.length, 0);
+  assert.equal(liked.windowReset, false);
+  assert.equal(book.convoBetween("chris", "sam").lastActivityAt, T0);
+  const later = book.receiveSms({ fromId: "sam", text: "You there?", now: T0 + WINDOW_MS + MIN });
+  assert.equal(later.kind, "fallthrough");
+  assert.equal(sent.message.id, liked.message.id);
+});
+
+test("7. an in-app like is seen by both, and sends no text", () => {
+  const book = gym();
+  const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "Nice work", now: T0 });
+  const heart = book.likeApp({ userId: "sam", messageId: sent.message.id, reaction: "heart", now: T0 + MIN });
+  const thumb = book.likeApp({ userId: "chris", messageId: sent.message.id, reaction: "thumb", now: T0 + 2 * MIN });
+  assert.equal(heart.sms.length, 0);
+  assert.equal(thumb.sms.length, 0);
+  assert.deepEqual(
+    book.likesFor(sent.message.id).map((like) => `${like.userId}:${like.reaction}`),
+    ["sam:heart", "chris:thumb"],
+  );
+  assert.equal(book.convoBetween("chris", "sam").lastActivityAt, T0);
+});
+
+test("8. @Bob is treated as untagged, even when a client is named Bob", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const during = book.receiveSms({ fromId: "sam", text: "@Bob running late", now: T0 + 30 * MIN });
+  assert.equal(during.kind, "active");
+  assert.equal(during.sms[0].toId, "chris");
+  const cold = new ThreadBook([...gym().people.values()]);
+  const missed = cold.receiveSms({ fromId: "sam", text: "@Bob running late", now: T0 });
+  assert.equal(missed.kind, "fallthrough");
+  assert.equal(missed.routedTo, "business");
+  assert.equal(matchCoachTag("@Bob", cold.coaches()), null);
+  assert.equal(matchCoachTag("@Bob", [{ id: "bob", role: "client", displayName: "Bob", coachName: "Bob" }]), null);
+});
+
+test("9. with two active conversations, an untagged reply goes to the newest", () => {
+  const book = gym();
+  book.sendApp({ fromId: "sam", toId: "chris", text: "Question for Chris", now: T0 });
+  book.sendApp({ fromId: "sam", toId: "pat", text: "Question for Pat", now: T0 + 60 * MIN });
+  const reply = book.receiveSms({ fromId: "sam", text: "Following up", now: T0 + 90 * MIN });
+  assert.equal(reply.kind, "active");
+  assert.equal(reply.sms[0].toId, "pat");
+  assert.equal(reply.message.body, "Sam: Following up");
+});
+
+test("10. after STOP there is no text, but the app thread still works", () => {
+  const book = gym();
+  const stopped = book.receiveSms({ fromId: "sam", text: "STOP", now: T0 });
+  assert.equal(stopped.kind, "stop");
+  assert.equal(book.person("sam").optedOut, true);
+  const fromCoach = book.sendApp({ fromId: "chris", toId: "sam", text: "Checking in", now: T0 + MIN });
+  assert.equal(fromCoach.message.body, "Coach Chris: Checking in");
+  assert.equal(fromCoach.sms.length, 0);
+  assert.equal(book.messages.length, 1);
+  const fromSam = book.sendApp({ fromId: "sam", toId: "chris", text: "I'm in the app", now: T0 + 2 * MIN });
+  assert.equal(fromSam.message.channel, "app");
+  assert.equal(fromSam.sms.length, 1);
+  assert.equal(fromSam.sms[0].toId, "chris");
+});
+
+test("11. a coach's untagged text goes to their newest active conversation", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "bob", text: "Bring shoes", now: T0 });
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 + 30 * MIN });
+  const text = book.receiveSms({ fromId: "chris", text: "Running five late", now: T0 + 50 * MIN });
+  assert.equal(text.kind, "active");
+  assert.equal(text.message.senderId, "chris");
+  assert.equal(text.message.body, "Coach Chris: Running five late");
+  assert.equal(text.sms[0].toId, "sam");
+  assert.equal(text.routedTo, "conversation");
+});
+
+test("the window is closed at exactly 6 hours", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  assert.equal(windowOpen(T0, T0 + WINDOW_MS - 1), true);
+  assert.equal(windowOpen(T0, T0 + WINDOW_MS), false);
+  const reply = book.receiveSms({ fromId: "sam", text: "Now", now: T0 + WINDOW_MS });
+  assert.equal(reply.kind, "fallthrough");
+});
+
+test("Loved and a thumbs-up tapback are likes, and a miss is a normal text", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  const loved = book.receiveSms({ fromId: "sam", text: 'Loved "See you at 6"', now: T0 + MIN });
+  assert.equal(loved.kind, "like");
+  assert.equal(loved.like.reaction, "heart");
+  const thumb = book.receiveSms({ fromId: "sam", text: 'Reacted 👍 to "See you at 6"', now: T0 + 2 * MIN });
+  assert.equal(thumb.kind, "like");
+  assert.equal(thumb.like.reaction, "thumb");
+  const missed = book.receiveSms({ fromId: "sam", text: 'Liked "a different sentence"', now: T0 + 3 * MIN });
+  assert.equal(missed.kind, "active");
+  assert.equal(missed.message.body, 'Sam: Liked "a different sentence"');
+});
+
+test("UNSUBSCRIBE and HELP are handled, and a plain Yes is a real reply", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "Can you make it?", now: T0 });
+  const yes = book.receiveSms({ fromId: "sam", text: "YES", now: T0 + MIN });
+  assert.equal(yes.kind, "active");
+  assert.equal(yes.message.body, "Sam: YES");
+  const help = book.receiveSms({ fromId: "sam", text: "help", now: T0 + 2 * MIN });
+  assert.equal(help.kind, "help");
+  assert.equal(help.twiml, HELP_TEXT);
+  assert.equal(help.twiml.toLowerCase().includes("password"), false);
+  const off = book.receiveSms({ fromId: "sam", text: "unsubscribe", now: T0 + 3 * MIN });
+  assert.equal(off.kind, "stop");
+  assert.equal(keywordKind("STOPALL"), "stop");
+  assert.equal(keywordKind("START"), "start");
+});
+
+test("an unknown number gets the signup text and the owner gets a notice", () => {
+  const book = gym();
+  const lead = book.receiveSms({ fromId: null, phone: "+15559990000", text: "Do you have openings?", now: T0 });
+  assert.equal(lead.kind, "lead");
+  assert.match(lead.twiml, /not a ONE Fitness client yet/);
+  assert.match(lead.twiml, /APP_STORE_LINK/);
+  assert.match(lead.twiml, /GOOGLE_PLAY_LINK/);
+  assert.equal(lead.sms[0].body, businessNotice("a new number ending 0000"));
+  assert.equal(book.leads.length, 1);
+  assert.equal(book.messages.length, 0);
+});
+
+test("the owner can tag a coach in Business Chat to pass the message along", () => {
+  const book = gym();
+  const sent = book.sendApp({
+    fromId: "owner",
+    toId: "sam",
+    text: "@CoachChris can you take this one?",
+    now: T0,
+  });
+  assert.equal(sent.message.routedTo, "business");
+  assert.equal(sent.sms.some((row) => row.toId === "sam"), true);
+  assert.equal(sent.sms.some((row) => row.toId === "chris"), true);
+  const coachThread = book.messages.filter((m) => m.conversationKey === book.convoBetween("sam", "chris").key);
+  assert.equal(coachThread.length, 1);
+  assert.match(coachThread[0].body, /ONE Fitness Marketplace: @CoachChris/);
+});
+
+test("names ignore case and spaces, and a longer coach name wins", () => {
+  const coaches = [
+    { id: "chris", role: "coach", coachName: "Coach Chris" },
+    { id: "tina", role: "coach", coachName: "Coach Christina" },
+  ];
+  assert.equal(matchCoachTag("@CoachChristina hi", coaches).id, "tina");
+  assert.equal(matchCoachTag("@coach chris hi", coaches).id, "chris");
+  assert.equal(prefixBody("Coach Chris", "Coach Chris: already"), "Coach Chris: already");
+  assert.equal(quoteMatches("Coach Chris: See you at 6", "See you at 6"), true);
+});
+
+test("two profiles on one number are not guessed, unless exactly one is a client", () => {
+  assert.equal(pickProfileForSms([]), null);
+  assert.equal(pickProfileForSms([{ id: "c", role: "coach" }]).id, "c");
+  assert.equal(
+    pickProfileForSms([{ id: "c", role: "coach" }, { id: "s", role: "client" }]).id,
+    "s",
+  );
+  assert.equal(pickProfileForSms([{ id: "a", role: "coach" }, { id: "b", role: "coach" }]), null);
+});
+
+test("a saved thread is what a later text and a tapback attach to", () => {
+  const book = gym();
+  const key = ["chris", "sam"].sort().join("|");
+  book.seed({
+    conversations: [{ key, a: "chris", b: "sam", lastActivityAt: T0, routedTo: "conversation" }],
+    messages: [{
+      id: "existing",
+      conversationKey: key,
+      senderId: "chris",
+      body: "Coach Chris: See you at 6",
+      at: T0,
+      channel: "app",
+      direction: "outbound",
+      routedTo: "conversation",
+    }],
+  });
+  const reply = book.receiveSms({ fromId: "sam", text: "On my way", now: T0 + 10 * MIN });
+  assert.equal(reply.kind, "active");
+  const like = book.receiveSms({ fromId: "sam", text: 'Liked "See you at 6"', now: T0 + 11 * MIN });
+  assert.equal(like.kind, "like");
+  assert.equal(like.like.messageId, "existing");
+  assert.equal(book.convoBetween("chris", "sam").lastActivityAt, T0 + 10 * MIN);
+});
+
+test("a lead reply does not ask for a password", () => {
+  assert.equal(leadReply().toLowerCase().includes("password"), false);
+  assert.equal(parseTapback('Disliked "See you at 6"'), null);
+});

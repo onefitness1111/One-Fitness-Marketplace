@@ -22,11 +22,9 @@ void main() {
       expect(channelsNeedPhone({ChatChannel.inapp}), isFalse);
     });
 
-    test("a new chat starts on exactly that", () {
-      // The default has to be the combination that needs nothing from the
-      // sender, or the first thing a client meets is the old dead end.
-      expect(defaultChatChannels, {ChatChannel.inapp});
-      expect(channelsNeedPhone(defaultChatChannels), isFalse);
+    test("a new chat starts with the app and SMS both on", () {
+      expect(defaultChatChannels, {ChatChannel.inapp, ChatChannel.sms});
+      expect(channelsNeedPhone(defaultChatChannels), isTrue);
     });
 
     test("in app no longer implies SMS", () {
@@ -258,9 +256,10 @@ void main() {
   });
 
   group("declining the phone prompt", () {
-    /// The screen's rule when SMS was asked for and the number wasn't
-    /// given: drop SMS and open the thread on what's left. It used to
-    /// abandon the whole setup, which is the bug.
+    /// Turning SMS off keeps whatever else was selected. SMS on its own
+    /// cannot be turned off by the chip (a send has to have a channel), so
+    /// that case lands on the default: app and SMS. Opening chat with no
+    /// phone number at all is refused separately — see chatMayOpen.
     Set<ChatChannel> afterDeclining(Set<ChatChannel> wanted) {
       var chosen = toggleChannel(wanted, ChatChannel.sms);
       if (chosen.contains(ChatChannel.sms)) chosen = defaultChatChannels;
@@ -278,13 +277,11 @@ void main() {
       );
     });
 
-    test("SMS alone falls back to in app rather than to nothing", () {
-      // toggleChannel refuses to empty the set, so dropping the only
-      // channel has to land somewhere deliverable.
-      expect(afterDeclining({ChatChannel.sms}), {ChatChannel.inapp});
+    test("SMS alone lands on the default, app and SMS", () {
+      expect(afterDeclining({ChatChannel.sms}), {ChatChannel.inapp, ChatChannel.sms});
     });
 
-    test("whatever is left never needs a phone number", () {
+    test("whatever is left can still be sent", () {
       for (final wanted in [
         {ChatChannel.sms},
         {ChatChannel.inapp, ChatChannel.sms},
@@ -292,8 +289,7 @@ void main() {
         ChatChannel.values.toSet(),
       ]) {
         final left = afterDeclining(wanted);
-        expect(channelsNeedPhone(left), isFalse, reason: "$wanted left $left, which still needs a number");
-        expect(canSendOn(left), isTrue);
+        expect(canSendOn(left), isTrue, reason: "$wanted left $left");
       }
     });
   });

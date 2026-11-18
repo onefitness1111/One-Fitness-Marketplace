@@ -11,6 +11,7 @@ class EarnedBadge {
     this.note,
     this.revokedAt,
     this.revokedByUserId,
+    this.celebratedAt,
   });
 
   final String id;
@@ -23,7 +24,15 @@ class EarnedBadge {
   final String? revokedAt;
   final String? revokedByUserId;
 
+  /// Set once the client has seen the "Merit Badge earned!" popup.
+  /// Null means they have not seen it yet.
+  final String? celebratedAt;
+
   bool get isActive => revokedAt == null;
+
+  /// Badges earned before this release are not popped up again.
+  bool get awaitingCelebration =>
+      isActive && celebratedAt == null && earnedAt.compareTo("2026-11-18") >= 0;
 
   EarnedBadge copyWith({String? revokedAt, String? revokedByUserId}) => EarnedBadge(
         id: id,
@@ -35,5 +44,6 @@ class EarnedBadge {
         note: note,
         revokedAt: revokedAt ?? this.revokedAt,
         revokedByUserId: revokedByUserId ?? this.revokedByUserId,
+        celebratedAt: celebratedAt,
       );
 }

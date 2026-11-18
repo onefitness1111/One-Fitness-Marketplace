@@ -652,13 +652,6 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   const SectionLabel("Merit Badges"),
                   const SizedBox(height: 8),
                   _NumberRow(
-                    label: "Progress Tracker — consecutive weeks required",
-                    hint: "A client needs a photo, measurement, or workout log at least once a week for this many weeks in a row to earn the badge.",
-                    suffix: "weeks",
-                    value: s.meritBadgeProgressWeeks,
-                    onChange: (v) => _set((d) => d.copyWith(meritBadgeProgressWeeks: v)),
-                  ),
-                  _NumberRow(
                     label: "Habit — consistency percent required",
                     hint: "The minimum weekly habit-completion percentage a client must sustain to earn the badge.",
                     suffix: "%",
@@ -682,6 +675,9 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   _MoneyRow(label: "Habit Coach", badgeKey: "habit_coach", cents: s.badgeHabitCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeHabitCoachCents: v))),
                   _MoneyRow(label: "Challenge Coach", badgeKey: "challenge_coach", cents: s.badgeChallengeCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeChallengeCoachCents: v))),
                   _MoneyRow(label: "Coach of the Month", badgeKey: "coach_of_month", cents: s.badgeCoachOfMonthCents, onChange: (v) => _set((d) => d.copyWith(badgeCoachOfMonthCents: v))),
+                  _MoneyRow(label: "Sessions Coached", badgeKey: "sessions_coached", cents: s.badgeSessionsCoachedCents, onChange: (v) => _set((d) => d.copyWith(badgeSessionsCoachedCents: v))),
+                  _MoneyRow(label: "Client Milestone", badgeKey: "client_milestone", cents: s.badgeClientMilestoneCents, onChange: (v) => _set((d) => d.copyWith(badgeClientMilestoneCents: v))),
+                  _MoneyRow(label: "Retention Streak", badgeKey: "retention_streak", cents: s.badgeRetentionCents, onChange: (v) => _set((d) => d.copyWith(badgeRetentionCents: v))),
 
                   const SizedBox(height: 10),
                   const SectionLabel("Beep Your Coach — alert sounds"),

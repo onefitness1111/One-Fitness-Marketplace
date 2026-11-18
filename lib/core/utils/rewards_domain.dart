@@ -41,8 +41,8 @@ const kSourceLabels = {
   "referral_clawback": "Referral clawed back",
   "expiry_sweep": "Expired",
   "owner_deduction": "Deducted by owner",
-  "merit_badge_bonus": "Merit Badge bonus — 3+ badges earned",
-  "merit_badge_points": "Merit Badge points (4+ active badges)",
+  "merit_badge_bonus": "Merit Badge bonus — 5 badges earned",
+  "merit_badge_points": "Merit Badge points (5 or more active badges)",
 };
 
 String sourceLabel(String source) => kSourceLabels[source] ?? source;

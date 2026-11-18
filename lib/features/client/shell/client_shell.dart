@@ -12,6 +12,8 @@ import "../../../core/utils/merge_token_utils.dart" show outstandingWaivers;
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
+import "../../../data/models/earned_badge.dart";
+import "../../../data/models/merit_badge_def.dart";
 import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
@@ -330,6 +332,39 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     super.dispose();
   }
 
+  final Set<String> _shownBadgeIds = {};
+  bool _celebrationQueued = false;
+
+  void _queueBadgeCelebration(String clientId, List<EarnedBadge> earned) {
+    if (_celebrationQueued) return;
+    final pending = earned.where((b) => b.clientId == clientId && b.awaitingCelebration && meritBadgeByKey(b.badgeKey) != null && !_shownBadgeIds.contains(b.id));
+    if (pending.isEmpty) return;
+    _celebrationQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await _celebrateBadges(clientId, earned);
+      } finally {
+        _celebrationQueued = false;
+      }
+    });
+  }
+
+  Future<void> _celebrateBadges(String clientId, List<EarnedBadge> earned) async {
+    final unseen = earned.where((b) => b.clientId == clientId && b.awaitingCelebration && meritBadgeByKey(b.badgeKey) != null && !_shownBadgeIds.contains(b.id)).toList();
+    if (unseen.isEmpty) return;
+    for (final b in unseen) {
+      _shownBadgeIds.add(b.id);
+    }
+    if (!mounted) return;
+    for (final b in unseen) {
+      if (!mounted) return;
+      await BadgeEarnedModal.show(context, badgeKey: b.badgeKey);
+    }
+    try {
+      await SupabaseService.markMeritBadgesSeen(unseen.map((b) => b.id).toList());
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final screen = ref.watch(clientScreenProvider);
@@ -337,6 +372,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     final client = ref.watch(clientRecordProvider);
     final bookings = ref.watch(clientBookingsProvider);
     final earnedBadges = ref.watch(earnedBadgesProvider);
+    _queueBadgeCelebration(info.id, earnedBadges);
     final plan = ref
         .watch(membershipPlansProvider.notifier)
         .byId(info.membershipPlanId);
