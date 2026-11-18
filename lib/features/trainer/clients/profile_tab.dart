@@ -26,6 +26,8 @@ import "plan_expiry_row.dart";
 import "plan_price_row.dart";
 import "renewal_terms_section.dart";
 import "../../shared/balance_card.dart";
+import "charge_client_section.dart";
+import "coach_private_fields.dart";
 import "purchase_for_client_section.dart";
 import "../../../core/utils/phone_guard.dart";
 
@@ -53,8 +55,21 @@ class ProfileTab extends ConsumerStatefulWidget {
 }
 
 class _ProfileTabState extends ConsumerState<ProfileTab> {
+  String? _emergencyPhone;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      if (ref.read(trainerAuthProvider) != "owner") return;
+      final phone = await SupabaseService.loadEmergencyPhone(widget.clientId);
+      if (mounted) setState(() => _emergencyPhone = phone);
+    });
+  }
+
   bool _editing = false;
   bool _charging = false;
+  bool _cardCharge = false;
   bool _billingAnchor = false;
   bool _renewalTerms = false;
   bool _purchasing = false;
@@ -181,6 +196,14 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
           onBack: () => setState(() => _purchasing = false),
           onPlanAssigned: (planId) => update((c) => c.copyWith(membershipPlanId: planId)),
         ),
+      );
+    }
+
+    if (_cardCharge) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _cardCharge = false),
+        child: ChargeClientSection(clientId: widget.clientId, onClose: () => setState(() => _cardCharge = false)),
       );
     }
 
@@ -664,7 +687,11 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
           _ContactRow(
             icon: LucideIcons.heartPulse,
             label: "Emergency contact",
-            value: _emergencyLine(info),
+            value: _emergencyLine(
+              info,
+              showPhone: ref.watch(trainerAuthProvider) == "owner",
+              phone: _emergencyPhone,
+            ),
           ),
           _ContactRow(
             icon: LucideIcons.mapPin,
@@ -713,6 +740,14 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ],
           ),
+          if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
+            const SizedBox(height: 8),
+            BtnGold(
+              full: true,
+              onPressed: () => setState(() => _cardCharge = true),
+              child: const Text("Charge their card"),
+            ),
+          ],
           const SizedBox(height: 8),
           if (ref.watch(trainerAuthProvider) != "owner") ...[
             const SizedBox(height: 8),
@@ -1272,10 +1307,10 @@ class _IntakeStatusSummary extends StatelessWidget {
   }
 }
 
-String? _emergencyLine(ClientInfo info) {
+String? _emergencyLine(ClientInfo info, {required bool showPhone, String? phone}) {
   final parts = [
     if ((info.emergencyContactName ?? "").trim().isNotEmpty) info.emergencyContactName!.trim(),
-    if ((info.emergencyContactPhone ?? "").trim().isNotEmpty) info.emergencyContactPhone!.trim(),
+    if (showPhone && (phone ?? "").trim().isNotEmpty) phone!.trim(),
   ];
   if (parts.isEmpty) return null;
   return parts.join(" · ");
@@ -1748,6 +1783,12 @@ class _EditSectionState extends State<_EditSection> {
             const SizedBox(height: 10),
           ],
           CityStateFields(city: _city, state: _state, helper: null),
+          if (!widget.showContact) ...[
+            const SizedBox(height: 14),
+            CoachPrivatePhone(clientId: widget.info.id),
+            const SizedBox(height: 10),
+            CoachPrivateAddress(clientId: widget.info.id),
+          ],
           if (_err != null)
             Padding(
               padding: const EdgeInsets.only(top: 10),

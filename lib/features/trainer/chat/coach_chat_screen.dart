@@ -707,7 +707,10 @@ class _RecipientSetupState extends State<_RecipientSetup> {
   /// isn't a client without a number.
   bool get _selectedHasNoPhone {
     final client = _selected;
-    return client != null && (client.phone ?? "").trim().isEmpty;
+    final phone = client?.phone;
+    // A missing value means this viewer is not allowed to see the number.
+    // It does not mean the client has no phone.
+    return client != null && phone != null && phone.trim().isEmpty;
   }
 
   @override

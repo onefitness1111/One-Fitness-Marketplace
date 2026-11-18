@@ -43,12 +43,12 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     return roster.where((c) => c.primaryTrainerId == senderId).toList();
   }
 
-  List<BroadcastClient> _asPeople(List<ClientInfo> clients) => [
+  List<BroadcastClient> _asPeople(List<ClientInfo> clients, bool isOwner) => [
         for (final c in clients)
           BroadcastClient(
             id: c.id,
             primaryTrainerId: c.primaryTrainerId,
-            phone: c.phone ?? "",
+            phone: isOwner ? (c.phone ?? "") : "",
             email: c.email ?? "",
             smsOptIn: c.smsOptIn,
           ),
@@ -60,7 +60,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
       senderId: senderId,
       all: _all,
       requestedIds: _picked.toList(),
-      clients: _asPeople(mine),
+      clients: _asPeople(mine, isOwner),
     );
   }
 
@@ -259,6 +259,8 @@ class _Review extends StatelessWidget {
       if (channel == BroadcastChannel.appSms) ...[
         "Text: ${preview.sms}",
         if (preview.skippedNoPhone > 0) "Skipped, no phone: ${preview.skippedNoPhone}",
+        if (preview.skippedNoPhone == 0 && preview.sms == 0)
+          "Texts use the number on file. The number is not shown here.",
         if (preview.skippedOptOut > 0) "Skipped, no text permission: ${preview.skippedOptOut}",
         if (preview.skippedQuietHours > 0) "Skipped, quiet hours: ${preview.skippedQuietHours}",
       ],

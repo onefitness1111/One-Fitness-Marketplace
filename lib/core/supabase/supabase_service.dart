@@ -487,7 +487,7 @@ class SupabaseService {
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
-      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, emergency_contact_phone, booking_restricted, booking_restricted_reason";
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason";
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =
@@ -5414,15 +5414,59 @@ class SupabaseService {
       client.from("profiles").update({"push_opt_in": optIn}).eq("id", profileId);
 
   /// The billing address saved on a client's profile, or null when none yet.
+  static Future<({bool phoneOnFile, bool billingOnFile})?> clientFileFlags(String clientId) async {
+    try {
+      final rows = await client.rpc("client_file_flags", params: {"p_client": clientId});
+      if (rows is! List || rows.isEmpty || rows.first is! Map) return null;
+      final row = Map<String, dynamic>.from(rows.first as Map);
+      return (phoneOnFile: row["phone_on_file"] == true, billingOnFile: row["billing_on_file"] == true);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Writes the number and returns nothing. Callers must not read it back.
+  static Future<void> setClientPhone(String clientId, String phone) async {
+    await client.rpc("set_client_phone", params: {"p_client": clientId, "p_phone": phone});
+  }
+
+  static Future<String?> loadEmergencyPhone(String clientId) async {
+    try {
+      final value = await client.rpc("client_emergency_phone", params: {"p_client": clientId});
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+    } catch (_) {}
+    return null;
+  }
+
   static Future<BillingAddress?> loadBillingAddress(String clientId) async {
-    final rows = await _rpcList("client_billing_for", {"p_ids": [clientId]});
-    if (rows.isEmpty || rows.first is! Map) return null;
-    return BillingAddress.fromJson(rows.first["billing_address"]);
+    try {
+      final raw = await client.rpc("client_billing_address", params: {"p_client": clientId});
+      return BillingAddress.tryParse(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Saves (or replaces) the billing address on a client's profile.
+  static Future<Map<String, dynamic>> chargeClient({
+    required String clientId,
+    required String action,
+    String kind = "late",
+    Map<String, dynamic>? address,
+  }) =>
+      _invokeFunction("charge-client", {
+        "clientId": clientId,
+        "action": action,
+        "kind": kind,
+        if (address != null) "address": address,
+      });
+
   static Future<void> saveBillingAddress(String clientId, BillingAddress address) async {
-    await client.from("clients").update({"billing_address": address.toJson()}).eq("profile_id", clientId);
+    final result = await _invokeFunction("save-billing-address", {
+      "clientId": clientId,
+      "address": address.toJson(),
+    });
+    if (result["error"] != null) throw Exception(result["error"]);
   }
 
   /// What Stripe's Payment Sheet needs to save a card without charging it
