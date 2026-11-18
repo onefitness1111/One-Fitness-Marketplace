@@ -244,7 +244,12 @@ class _SharedProgressCard extends StatelessWidget {
     switch (message.shareKind) {
       case "photo":
         final img = payload["img"] as String?;
-        if (img == null) return const SizedBox.shrink();
+        if (img == null || !img.startsWith("data:")) {
+          return Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text("Shared a progress photo", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
+          );
+        }
         final bytes = base64Decode(img.substring(img.indexOf(",") + 1));
         return ClipRRect(
           borderRadius: BorderRadius.circular(10),

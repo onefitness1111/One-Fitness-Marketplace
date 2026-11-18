@@ -131,9 +131,10 @@ int capFor(String sessionType, {int semiPrivateCap = kSemiPrivateCap}) {
   return semiPrivateCap;
 }
 
-/// Mirrors schedulingHelpers.js `bookedCount`.
+/// Seats still taken. Cancelled bookings, and early or late cancels, do not
+/// count — counting them made an open class look full.
 int bookedCount(List<Booking> bookings, String trainerId, String date, int slot) =>
-    bookings.where((b) => b.trainerId == trainerId && b.date == date && b.slot == slot).length;
+    bookings.where((b) => bookingHoldsSeat(b) && b.trainerId == trainerId && b.date == date && b.slot == slot).length;
 
 /// Mirrors schedulingHelpers.js `findTrainerConflict` — another client
 /// already occupying this exact trainer+date+slot with an incompatible
@@ -141,7 +142,7 @@ int bookedCount(List<Booking> bookings, String trainerId, String date, int slot)
 /// same-slot overlap used by the client-booking confirm step.
 Booking? findTrainerConflict(List<Booking> bookings, String trainerId, String date, int slot) {
   for (final b in bookings) {
-    if (b.trainerId == trainerId && b.date == date && b.slot == slot) return b;
+    if (bookingHoldsSeat(b) && b.trainerId == trainerId && b.date == date && b.slot == slot) return b;
   }
   return null;
 }
@@ -162,16 +163,86 @@ bool sessionHasStarted(String date, int slot) {
   return slot <= now.hour * 60 + now.minute;
 }
 
-/// Mirrors lib/helpers.js `cancelWindow`.
-String cancelWindow(Booking b, {int lateCancellationHours = kLateCancellationHours}) {
-  final start = DateTime.parse(b.date).add(Duration(minutes: b.slot));
-  final hoursUntil = start.difference(DateTime.now()).inMinutes / 60.0;
-  return hoursUntil >= lateCancellationHours ? "free" : "late";
+/// Local wall-clock start. A date-only parse is midnight UTC, which put
+/// every Burbank session hours off when the fee window was judged.
+DateTime sessionStartLocal(Booking b) {
+  final y = int.parse(b.date.substring(0, 4));
+  final m = int.parse(b.date.substring(5, 7));
+  final d = int.parse(b.date.substring(8, 10));
+  return DateTime(y, m, d, b.slot ~/ 60, b.slot % 60);
+}
+
+/// Hours from [now] until the session. Negative once it has started.
+double hoursUntilSession(Booking b, DateTime now) =>
+    sessionStartLocal(b).difference(now).inMinutes / 60.0;
+
+/// "free" outside 12 hours, "late" inside 12 and outside 4 ($15, session
+/// returned), "close" inside 4 hours ($25 fee, session still returned).
+/// A coach-marked no-show is not this — that one uses the session.
+String cancelWindowAt(
+  Booking b,
+  DateTime now, {
+  int lateCancellationHours = kLateCancellationHours,
+  int noShowCancelHours = kNoShowCancelHours,
+}) {
+  final hoursUntil = hoursUntilSession(b, now);
+  if (hoursUntil >= lateCancellationHours) return "free";
+  if (hoursUntil >= noShowCancelHours) return "late";
+  return "close";
+}
+
+/// Mirrors lib/helpers.js `cancelWindow`, with the 4-hour fee added.
+String cancelWindow(
+  Booking b, {
+  int lateCancellationHours = kLateCancellationHours,
+  int noShowCancelHours = kNoShowCancelHours,
+}) =>
+    cancelWindowAt(
+      b,
+      DateTime.now(),
+      lateCancellationHours: lateCancellationHours,
+      noShowCancelHours: noShowCancelHours,
+    );
+
+int cancelFeeCentsFor(
+  String window, {
+  int lateCents = kLateCancellationFeeCents,
+  int closeCents = kNoShowFeeCents,
+}) =>
+    switch (window) {
+      "late" => lateCents,
+      "close" => closeCents,
+      _ => 0,
+    };
+
+/// What to say before the client confirms a cancel.
+String cancelFeeExplanation(
+  String window, {
+  int lateHours = kLateCancellationHours,
+  int closeHours = kNoShowCancelHours,
+  int lateCents = kLateCancellationFeeCents,
+  int closeCents = kNoShowFeeCents,
+}) {
+  final late = "\$${(lateCents / 100).toStringAsFixed(2)}";
+  final close = "\$${(closeCents / 100).toStringAsFixed(2)}";
+  if (window == "late") {
+    return "This is within $lateHours hours, so a $late late-cancellation fee will be charged to your card. The session goes back on your plan.";
+  }
+  if (window == "close") {
+    return "This is within $closeHours hours, so a $close fee will be charged to your card. The session still goes back on your plan. Only a no-show your coach marks uses the session up.";
+  }
+  return "You're outside the $lateHours-hour window. There's no fee, and the session goes back on your plan.";
 }
 
 /// Mirrors lib/helpers.js `canReschedule`.
-bool canReschedule(Booking b, {bool blockRescheduleInWindow = kBlockRescheduleInWindow, int lateCancellationHours = kLateCancellationHours}) =>
-    !blockRescheduleInWindow || cancelWindow(b, lateCancellationHours: lateCancellationHours) == "free";
+bool canReschedule(
+  Booking b, {
+  bool blockRescheduleInWindow = kBlockRescheduleInWindow,
+  int lateCancellationHours = kLateCancellationHours,
+  int noShowCancelHours = kNoShowCancelHours,
+}) =>
+    !blockRescheduleInWindow ||
+    cancelWindow(b, lateCancellationHours: lateCancellationHours, noShowCancelHours: noShowCancelHours) == "free";
 
 enum CalendarDayStatus { done, missed, upcoming }
 

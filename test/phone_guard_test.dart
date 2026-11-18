@@ -56,8 +56,8 @@ void main() {
       expect(await errorFor(tester, "owner"), isNull);
     });
 
-    testWidgets("a coach may not", (tester) async {
-      expect(await errorFor(tester, "t1"), kGymNumberError);
+    testWidgets("a coach may use the gym's number", (tester) async {
+      expect(await errorFor(tester, "t1"), isNull);
     });
 
     testWidgets("a client may not", (tester) async {

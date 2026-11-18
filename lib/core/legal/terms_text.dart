@@ -18,9 +18,9 @@
 /// accept again on next sign-in.
 library;
 
-const String kTermsVersion = "2026-09-26";
+const String kTermsVersion = "2026-11-18";
 
-const String kTermsEffectiveDate = "26 September 2026";
+const String kTermsEffectiveDate = "18 November 2026";
 
 const String kTermsOfUse = """
 These Terms govern your use of the services, app, website and text messaging
@@ -115,12 +115,13 @@ stolen property.
 • Payments are non-refundable except where required by law or approved by
   ONE Fitness in writing.
 
-17. Cancellations and no-shows. Cancel or reschedule by the deadline shown
-on your booking. A booking does not use a session. A session is used only
-when you check in or are marked a no-show. Early and late cancellations do
-not use a session — it goes back to your balance right away. A late
-cancellation or a no-show may still include the fee stated on your plan.
-That fee is separate from the session count.
+17. Cancellations and no-shows. Cancel or reschedule at least 12 hours
+before your session at no charge. A booking does not use a session. A
+session is used only when you check in or your coach marks a no-show.
+Cancelling within 12 hours is a \$15 fee. Cancelling within 4 hours is a
+\$25 fee. Both of those are charges only — the session goes back to your
+balance right away. A no-show your coach marks uses the session and may
+include the \$25 fee.
 
 18. Conduct. We may suspend or end services, without refund of the current
 period, for unsafe, abusive or disruptive behavior toward coaches, clients

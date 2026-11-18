@@ -7,7 +7,9 @@ import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_location.dart";
 import "../../../core/utils/session_places.dart";
+import "../../../core/utils/booking_pitch.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
@@ -449,6 +451,19 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
   }
 
+  String _coverageLine(ClientInfo info, List<MembershipPlan> held, List<Booking> bookings, PendingPick pick) {
+    if (_freeAssessment) return "This is your free first session. It does not come off a plan.";
+    if (_pickPlanId != null && _pickPlanId!.startsWith("single:")) {
+      return "This uses a single session you already paid for.";
+    }
+    final match = held.where((p) => p.id == _pickPlanId);
+    if (match.isEmpty) return "This uses the plan that covers ${sessionTypeLabel(pick.sessionType)}.";
+    final plan = match.first;
+    final left = sessionsLeftToBook(info, plan, bookings);
+    final kind = plan.kind == PlanKind.membership ? "membership" : "package";
+    return "This comes off your $kind, ${plan.name} ($left left to book).";
+  }
+
   void _showError(String msg) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
@@ -470,8 +485,17 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     if (_busy) return;
     final b = _cancelTarget!;
     final settingsNow = ref.read(platformSettingsProvider);
-    final isLate = cancelWindow(b, lateCancellationHours: settingsNow.lateCancellationHours) != "free";
-    final feeCents = settingsNow.lateCancellationFeeCents;
+    final window = cancelWindow(
+      b,
+      lateCancellationHours: settingsNow.lateCancellationHours,
+      noShowCancelHours: settingsNow.noShowCancelHours,
+    );
+    final isLate = window != "free";
+    final feeCents = cancelFeeCentsFor(
+      window,
+      lateCents: settingsNow.lateCancellationFeeCents,
+      closeCents: settingsNow.noShowFeeCents,
+    );
 
     // The fee is taken from the card now rather than left as a debt the gym
     // has to chase, so the last word before that happens says the amount
@@ -485,9 +509,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           title: const Text("Cancel and pay the fee?",
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           content: Text(
-            "This is a late cancellation, so ${lateCancellationFeeLabel(feeCents: feeCents)} "
-            "will be charged to your card on file now. "
-            "Your session will be cancelled either way.",
+            cancelFeeExplanation(
+              window,
+              lateHours: settingsNow.lateCancellationHours,
+              closeHours: settingsNow.noShowCancelHours,
+              lateCents: settingsNow.lateCancellationFeeCents,
+              closeCents: settingsNow.noShowFeeCents,
+            ),
             style: const TextStyle(fontSize: 13, height: 1.5),
           ),
           actions: [
@@ -530,23 +558,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // The slot list reads the gym-wide list, so it has to drop the booking
       // too, otherwise the cancelled session keeps showing as "Booked".
       ref.read(allBookingsProvider.notifier).cancelBooking(b.id);
-      final res = feeRes;
-      if (res != null && mounted) {
-        if (res["charged"] == true) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text("${lateCancellationFeeLabel(feeCents: feeCents)} charged for the late cancellation."),
-          ));
-        } else if ((res["feeCents"] as num? ?? 0) > 0 && res["alreadyCharged"] != true) {
-          // Declined or no card: the session is cancelled and the whole fee
-          // now sits on the account as a negative balance.
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-              "Cancelled. We couldn't charge the ${lateCancellationFeeLabel(feeCents: feeCents)} late cancellation fee, "
-              "so it's been added to your balance. You'll need to pay it before booking again.",
-            ),
-            duration: const Duration(seconds: 8),
-          ));
-        }
+      final notice = lateFeeNotice(feeRes);
+      if (notice != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(notice),
+          duration: const Duration(seconds: 8),
+        ));
       }
       setState(() {
         _busy = false;
@@ -941,6 +958,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
 
     if (_picking != null) {
+      final pick = _picking!;
+      final settingsNow = ref.watch(platformSettingsProvider);
+      final heldNow = heldAccessPlans(info, ref.watch(membershipPlansProvider));
       return LocalBackScope(
         isOpen: true,
         onBack: () => setState(() {
@@ -948,9 +968,14 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           _bookingError = null;
         }),
         child: BookingPickingScreen(
-          pick: _picking!,
-          location: _pickLocation(_picking!),
+          pick: pick,
+          location: _pickLocation(pick),
           date: _date,
+          pitch: bookingConfirmPitch(
+            sessionLabel: sessionTypeLabel(pick.sessionType),
+            cap: capFor(pick.sessionType, semiPrivateCap: settingsNow.semiPrivateCap),
+            coverage: _coverageLine(info, heldNow, bookings, pick),
+          ),
           onBack: () => setState(() {
             _picking = null;
             _bookingError = null;
@@ -1258,7 +1283,8 @@ class _MembershipBanner extends StatelessWidget {
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: l.remaining > 0 ? AppColors.txt : AppColors.errorText),
                     ),
                     TextSpan(
-                      text: "— ${l.plan.name}${l.plan.kind == PlanKind.membership ? " this month" : ""}",
+                      text: "— ${l.plan.name}${l.plan.kind == PlanKind.membership ? " this month" : ""}. "
+                          "A session is used when you check in or are a no-show. Cancelling gives it back.",
                       style: TextStyle(fontSize: 12, color: AppColors.mute),
                     ),
                   ],
@@ -1289,7 +1315,7 @@ List<String> _bookableTypes({
       : plans.expand((p) => p.allowedTypes).toSet().toList();
   final covered = {...base, ...singleTypes}.where(offeredTypes.contains).toList();
   final anyLargeGroupOffered = offeredTypes.contains("large-group") &&
-      (plans.isNotEmpty || isStaff || singleTypes.contains("large-group")) &&
+      (isStaff || singleTypes.contains("large-group") || plans.any(planCoversLargeGroup)) &&
       trainers.any(
         (t) => t.offeredAvailability.any((b) => b.sessionType == "large-group" && b.byDay.values.any((s) => s.isNotEmpty)),
       );
@@ -1381,8 +1407,7 @@ class _StepOne extends StatelessWidget {
                 const Text("Large Group", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 const SizedBox(height: 3),
                 Text(
-                  "Hike and Outdoor HIIT classes — 1 hour, capacity ${capFor("large-group")}, starting on the "
-                  "hour every hour. Included with any active membership.",
+                  largeGroupBlurb(plans, cap: capFor("large-group")),
                   style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
                 ),
               ],
@@ -1804,7 +1829,23 @@ class _StepThreeState extends State<_StepThree> {
         // Collapsed to one line like the discipline row above; only appears
         // when the gym actually runs more than one site.
         LocationPicker(selected: widget.locationFilter, onSelect: widget.onLocationChange),
-        DateStrip(date: date, onSelect: onDateChange, disablePast: true),
+        DateStrip(
+          date: date,
+          onSelect: onDateChange,
+          disablePast: true,
+          dayFill: (d) => scheduleDayFill(
+            trainers: trainers,
+            bookings: bookings,
+            blocked: widget.blockedTimes,
+            date: d,
+            sessionType: chosenType,
+            discipline: chosenDisc,
+            locationName: widget.locationFilter,
+            gymLocationName: widget.gymLocationName,
+            semiPrivateCap: widget.semiPrivateCap,
+            skipStarted: true,
+          ),
+        ),
         if (slots.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),

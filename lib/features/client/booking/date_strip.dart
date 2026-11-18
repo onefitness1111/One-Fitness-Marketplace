@@ -3,17 +3,28 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
+import "../../../core/widgets/schedule_day_dot.dart";
 
 const _weekdayShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 /// Mirrors DateStrip.jsx — a 7-day horizontal week strip with paging
 /// arrows; `disablePast` blocks selecting/paging before today.
 class DateStrip extends StatefulWidget {
-  const DateStrip({super.key, required this.date, required this.onSelect, this.disablePast = false});
+  const DateStrip({
+    super.key,
+    required this.date,
+    required this.onSelect,
+    this.disablePast = false,
+    this.dayFill,
+  });
 
   final String date;
   final ValueChanged<String> onSelect;
   final bool disablePast;
+
+  /// Open, booked, or full for each day on the strip. Null hides the dots.
+  final ScheduleDayFill? Function(String date)? dayFill;
 
   @override
   State<DateStrip> createState() => _DateStripState();
@@ -65,6 +76,7 @@ class _DateStripState extends State<DateStrip> {
                     final isToday = d == todayStr;
                     final past = widget.disablePast && d.compareTo(todayStr) < 0;
                     final dt = DateTime.parse(d);
+                    final fill = widget.dayFill?.call(d);
                     return Expanded(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -99,6 +111,8 @@ class _DateStripState extends State<DateStrip> {
                                       color: sel ? AppColors.onGold : (past ? AppColors.mute : (isToday ? AppColors.gold : AppColors.txt)),
                                     ),
                                   ),
+                                  const SizedBox(height: 3),
+                                  ScheduleDayDot(fill: fill, onDark: sel),
                                 ],
                               ),
                             ),
@@ -113,6 +127,7 @@ class _DateStripState extends State<DateStrip> {
               _NavButton(icon: LucideIcons.chevronRight, disabled: false, onTap: () => _page(1)),
             ],
           ),
+          if (widget.dayFill != null) const ScheduleDayLegend(),
         ],
       ),
     );

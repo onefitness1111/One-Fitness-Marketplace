@@ -7,10 +7,9 @@ import "../../data/providers/trainer_providers.dart";
 /// being saved as a client's or coach's personal phone. Texts and calls
 /// meant for that person would otherwise go to the gym's line instead.
 ///
-/// The owner is exempt. The gym's line is usually the owner's own phone, so
-/// their own profile — and any profile they fill in themselves — is a
-/// deliberate choice, not the mistake this guard exists to catch. Coaches
-/// and clients are still stopped.
+/// The owner is exempt, and so is a coach who is already signed in. Coaches
+/// may use the gym's number. A client may not: texts meant for them would
+/// land on the gym's line, and a client and a coach must not share a number.
 
 /// Digits only, with a leading US country code dropped, so "818-223-7001",
 /// "(818) 223 7001" and "+1 818 223 7001" all compare equal.
@@ -27,12 +26,12 @@ bool isGymSupportNumber(String phone, String supportPhone) {
 const kGymNumberError =
     "That's the gym's own number. Please enter your own phone number.";
 
-/// [kGymNumberError] when [phone] is the gym's support number, else null.
-/// Null for the owner whoever they're editing — see the note above.
-/// Takes a BuildContext so plain StatefulWidgets can use it too.
+/// [kGymNumberError] when a client tries to save the gym's number.
+/// A signed-in coach or the owner may use that number.
 String? gymNumberError(BuildContext context, String phone) {
   final container = ProviderScope.containerOf(context, listen: false);
-  if (container.read(trainerAuthProvider) == "owner") return null;
+  final auth = container.read(trainerAuthProvider);
+  if (auth != null && auth.isNotEmpty) return null;
   final support = container.read(platformSettingsProvider).supportPhone;
   return isGymSupportNumber(phone, support) ? kGymNumberError : null;
 }

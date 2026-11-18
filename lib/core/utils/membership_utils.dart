@@ -28,6 +28,12 @@ bool bookingOccupiesLimit(Booking b) =>
     b.status != "cancelled" &&
     !kGiveBackAttendanceStatuses.contains(b.attendanceStatus);
 
+/// Still sitting in the class. An early or late cancel frees the seat.
+/// A no-show keeps it, because that session was used.
+bool bookingHoldsSeat(Booking b) =>
+    b.status != "cancelled" &&
+    !kGiveBackAttendanceStatuses.contains(b.attendanceStatus);
+
 /// Every membership or package the client currently holds, in the order
 /// booking should draw on them: the recurring membership first (its sessions
 /// reset monthly, so unused ones are lost), then packages oldest-first (a

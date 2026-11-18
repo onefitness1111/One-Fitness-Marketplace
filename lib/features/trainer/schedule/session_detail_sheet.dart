@@ -6,6 +6,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
@@ -311,6 +312,31 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                               if (opt.key == "checked-in") {
                                 final total = ref.read(allBookingsProvider).where((x) => x.clientId == client.id && x.attendanceStatus == "checked-in").length;
                                 notifySessionMilestoneIfCrossed(toEmail: client.email ?? "", toName: client.name, totalCheckedIn: total, profileId: client.id);
+                              }
+                              if (opt.key == "early-cancel" || opt.key == "late-cancel" || opt.key == "no-show") {
+                                final settings = ref.read(platformSettingsProvider);
+                                final coaches = ref.read(trainersProvider).where((t) => t.id == b.trainerId);
+                                final coachName = coaches.isEmpty ? "Your coach" : coaches.first.displayTitle;
+                                final window = cancelWindow(
+                                  b,
+                                  lateCancellationHours: settings.lateCancellationHours,
+                                  noShowCancelHours: settings.noShowCancelHours,
+                                );
+                                final cents = opt.key == "no-show"
+                                    ? settings.noShowFeeCents
+                                    : opt.key == "late-cancel"
+                                        ? cancelFeeCentsFor(
+                                            window,
+                                            lateCents: settings.lateCancellationFeeCents,
+                                            closeCents: settings.noShowFeeCents,
+                                          )
+                                        : 0;
+                                notifyPush(
+                                  profileId: b.clientId,
+                                  title: opt.key == "no-show" ? "No-show fee" : "Session updated",
+                                  body: attendanceMarkedNotice(coachName: coachName, status: opt.key, cents: cents),
+                                  sms: true,
+                                );
                               }
                             },
                             borderRadius: BorderRadius.circular(7),

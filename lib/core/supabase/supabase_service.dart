@@ -1441,16 +1441,26 @@ class SupabaseService {
     final scheduling = ((j["scheduling"] as Map?) ?? const {})
         .cast<String, dynamic>();
     const defaults = PlatformSettings();
+    // The old saved row was 24 hours and a $25 late fee, with no 4-hour
+    // window. That was the previous default, not a choice Coach Chris made,
+    // so it reads as the current rule: 12 hours is $15, 4 hours is $25.
+    final storedHours = _asInt(scheduling["lateCancellationHours"]);
+    final storedLate = _asInt(scheduling["lateCancellationFeeCents"]);
+    final storedClose = _asInt(scheduling["noShowCancelHours"]);
+    final legacy = storedClose == null &&
+        (storedHours == null || storedHours == 24) &&
+        (storedLate == null || storedLate == 2500);
     return PlatformSettings(
-      lateCancellationHours:
-          _asInt(scheduling["lateCancellationHours"]) ??
-          defaults.lateCancellationHours,
+      lateCancellationHours: legacy
+          ? defaults.lateCancellationHours
+          : (storedHours ?? defaults.lateCancellationHours),
       blockRescheduleInWindow:
           scheduling["blockRescheduleInWindow"] as bool? ??
           defaults.blockRescheduleInWindow,
-      lateCancellationFeeCents:
-          _asInt(scheduling["lateCancellationFeeCents"]) ??
-          defaults.lateCancellationFeeCents,
+      lateCancellationFeeCents: legacy
+          ? defaults.lateCancellationFeeCents
+          : (storedLate ?? defaults.lateCancellationFeeCents),
+      noShowCancelHours: storedClose ?? defaults.noShowCancelHours,
       noShowFeeCents:
           _asInt(scheduling["noShowFeeCents"]) ?? defaults.noShowFeeCents,
       maxBookingHorizonDays:
@@ -1642,10 +1652,18 @@ class SupabaseService {
     // …_coach), so one check still covers them. The wording no longer says
     // "each person needs their own number" — an owner may now share one
     // with a coach, so that would be wrong as often as it was right.
-    if (raw.contains("profiles_unique_phone_digits_coach")) {
+    if (raw.contains("phone_client_coach")) {
+      throw Exception(
+        "A client and a coach can't share a phone number unless both accounts use the same email.",
+      );
+    }
+    if (raw.contains("phone_gym_client")) {
+      throw Exception("That number belongs to the gym. Please use your own phone.");
+    }
+    if (raw.contains("profiles_unique_phone_digits_coach") || raw.contains("phone_same_role_coach")) {
       throw Exception("That phone number is already on another coach's account.");
     }
-    if (raw.contains("profiles_unique_phone_digits")) {
+    if (raw.contains("profiles_unique_phone_digits") || raw.contains("phone_same_role_client")) {
       throw Exception(
         "That phone number is already on another client's account. "
         "Texts to it would reach the wrong person.",
@@ -2028,6 +2046,23 @@ class SupabaseService {
     });
   }
 
+  /// Replaces only the keys in [patch], under a row lock, so a nutrition
+  /// save and a measurements save cannot wipe each other out.
+  /// Falls back to a full rewrite if the database function is not deployed yet.
+  static Future<void> patchClientRecord(
+    String profileId,
+    Map<String, dynamic> patch,
+  ) async {
+    try {
+      await client.rpc("patch_client_record", params: {
+        "p_client": profileId,
+        "p_patch": patch,
+      });
+    } catch (_) {
+      await upsertClientRecordPatch(profileId, patch);
+    }
+  }
+
   /// Mirrors HabitSettingsPanel.jsx's toggle/addCustom/removeCustom — all
   /// three just rewrite the whole `habitSettings` object, so one write
   /// covers every caller.
@@ -2330,7 +2365,7 @@ class SupabaseService {
   static Future<void> updateClientTrainerNotes(
     String profileId,
     List<TrainerNote> notes,
-  ) => upsertClientRecordPatch(profileId, {
+  ) => patchClientRecord(profileId, {
     "trainerNotes": notes.map(_trainerNoteToJson).toList(),
   });
 
@@ -2426,7 +2461,7 @@ class SupabaseService {
   static Future<void> updateClientMeasurements(
     String profileId,
     List<Measurement> measurements,
-  ) => upsertClientRecordPatch(profileId, {
+  ) => patchClientRecord(profileId, {
     "measurements": measurements.map(_measurementToJson).toList(),
   });
 
@@ -2436,7 +2471,7 @@ class SupabaseService {
   static Future<void> updateClientPhotos(
     String profileId,
     List<ProgressPhoto> photos,
-  ) => upsertClientRecordPatch(profileId, {
+  ) => patchClientRecord(profileId, {
     "photos": photos.map(_progressPhotoToJson).toList(),
   });
 
@@ -2482,6 +2517,65 @@ class SupabaseService {
   /// migration 31's policies match on to keep a client inside their own
   /// folder, so nothing here may write a path shaped any other way.
   static const kIntakeFilesBucket = "intake-files";
+  static const kProgressPhotosBucket = "progress-photos";
+
+  /// Puts one progress photo in the private bucket. The record stores the
+  /// path, never a public link. [id] is reused when moving an older photo
+  /// that was saved inside the client record.
+  static Future<String> uploadProgressPhoto({
+    required String clientId,
+    required Uint8List bytes,
+    String? id,
+  }) async {
+    final photoId = (id == null || id.isEmpty) ? const Uuid().v4() : id;
+    final path = "$clientId/$photoId.jpg";
+    await client.storage.from(kProgressPhotosBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(contentType: "image/jpeg", upsert: true),
+        );
+    return path;
+  }
+
+  static Future<String> signedProgressPhotoUrl(String path) =>
+      client.storage.from(kProgressPhotosBucket).createSignedUrl(path, 60 * 10);
+
+  /// Moves photos that are still stored inside the client record into the
+  /// private bucket. Returns the new list when something moved, or null when
+  /// nothing changed or the bucket is not deployed yet.
+  static Future<List<ProgressPhoto>?> moveInlineProgressPhotos(
+    String clientId,
+    List<ProgressPhoto> photos,
+  ) async {
+    if (!photos.any((p) => p.img.startsWith("data:"))) return null;
+    final next = <ProgressPhoto>[];
+    var moved = false;
+    for (final p in photos) {
+      if (!p.img.startsWith("data:")) {
+        next.add(p);
+        continue;
+      }
+      try {
+        final path = await uploadProgressPhoto(clientId: clientId, bytes: p.bytes, id: p.id);
+        next.add(ProgressPhoto(
+          id: p.id,
+          date: p.date,
+          img: path,
+          coachComment: p.coachComment,
+          coachCommentAt: p.coachCommentAt,
+          addedBy: p.addedBy,
+        ));
+        moved = true;
+      } catch (_) {
+        next.add(p);
+      }
+    }
+    if (!moved) return null;
+    await patchClientRecord(clientId, {
+      "photos": next.map(_progressPhotoToJson).toList(),
+    });
+    return next;
+  }
 
   /// Per-file ceiling. The bucket enforces 10MB itself (migration 31); this
   /// is the same number said earlier, so a client learns their file is too
@@ -2553,19 +2647,28 @@ class SupabaseService {
         intakeField is Map ? intakeField.cast<String, dynamic>() : const <String, dynamic>{};
     final existing = currentIntake[assessmentKey];
     final entry = existing is Map ? existing.cast<String, dynamic>() : <String, dynamic>{};
-    await client.from("client_records").upsert({
-      "profile_id": profileId,
-      "data": {
-        ...current,
-        "intake": {
-          ...currentIntake,
-          assessmentKey: {
-            ...entry,
-            "attachments": [for (final a in attachments) a.toJson()],
+    final nextEntry = {
+      ...entry,
+      "attachments": [for (final a in attachments) a.toJson()],
+    };
+    try {
+      await client.rpc("patch_client_intake", params: {
+        "p_client": profileId,
+        "p_assessment": assessmentKey,
+        "p_entry": nextEntry,
+      });
+    } catch (_) {
+      await client.from("client_records").upsert({
+        "profile_id": profileId,
+        "data": {
+          ...current,
+          "intake": {
+            ...currentIntake,
+            assessmentKey: nextEntry,
           },
         },
-      },
-    });
+      });
+    }
   }
 
   /// Saves one intake form.
@@ -2629,10 +2732,18 @@ class SupabaseService {
         if (nextHistory.isNotEmpty) "history": nextHistory,
       },
     };
-    await client.from("client_records").upsert({
-      "profile_id": profileId,
-      "data": {...current, "intake": nextIntake},
-    });
+    try {
+      await client.rpc("patch_client_intake", params: {
+        "p_client": profileId,
+        "p_assessment": assessmentKey,
+        "p_entry": nextIntake[assessmentKey],
+      });
+    } catch (_) {
+      await client.from("client_records").upsert({
+        "profile_id": profileId,
+        "data": {...current, "intake": nextIntake},
+      });
+    }
   }
 
   /// `client_records.data.tourSeen` — one-time "seen" flags for the
@@ -2731,7 +2842,7 @@ class SupabaseService {
   static Future<void> updateClientNutrition(
     String profileId,
     NutritionPlan plan,
-  ) => upsertClientRecordPatch(profileId, {
+  ) => patchClientRecord(profileId, {
     "nutrition": _nutritionPlanToJson(plan),
   });
 
@@ -2742,7 +2853,7 @@ class SupabaseService {
   static Future<void> updateClientChosenMeals(
     String profileId,
     Map<String, List<NutritionMeal>> byCategory,
-  ) => upsertClientRecordPatch(profileId, {
+  ) => patchClientRecord(profileId, {
     "myMeals": {
       for (final e in byCategory.entries) e.key: e.value.map(_nutritionMealToJson).toList(),
     },
@@ -3038,7 +3149,12 @@ class SupabaseService {
     // full amount goes onto the client's balance. Never blocks marking.
     if (status == "late-cancel" || status == "no-show" || status == "early-cancel") {
       try {
-        await client.functions.invoke("charge-attendance-fee", body: {"bookingId": id});
+        // The phone already tells the client. skipNotice keeps the function
+        // from sending that same note a second time once it is deployed.
+        await client.functions.invoke("charge-attendance-fee", body: {
+          "bookingId": id,
+          "skipNotice": true,
+        });
       } catch (e) {
         // ignore: avoid_print
         print("[attendance fee] failed: $e");
@@ -3943,6 +4059,7 @@ class SupabaseService {
       "minBookingLeadHours": s.minBookingLeadHours,
       "lateCancellationHours": s.lateCancellationHours,
       "lateCancellationFeeCents": s.lateCancellationFeeCents,
+      "noShowCancelHours": s.noShowCancelHours,
       "noShowFeeCents": s.noShowFeeCents,
       "blockRescheduleInWindow": s.blockRescheduleInWindow,
       "maxBookingHorizonDays": s.maxBookingHorizonDays,

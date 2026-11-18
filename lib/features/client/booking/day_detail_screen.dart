@@ -85,6 +85,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
           b,
           blockRescheduleInWindow: settings.blockRescheduleInWindow,
           lateCancellationHours: settings.lateCancellationHours,
+          noShowCancelHours: settings.noShowCancelHours,
         );
 
     if (_cancelTarget != null) {

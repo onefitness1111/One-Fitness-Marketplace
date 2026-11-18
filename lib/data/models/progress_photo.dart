@@ -17,7 +17,22 @@ class ProgressPhoto {
 
   final String id;
   final String date; // ISO yyyy-MM-dd
-  final String img; // data:image/jpeg;base64,...
+  /// A `data:image/...` URL for photos saved before private storage, or a
+  /// path inside the progress-photos bucket (`<client id>/<id>.jpg`).
+  final String img;
+
+  bool get isStoredFile => img.isNotEmpty && !img.startsWith("data:");
+
+  Uint8List? get inlineBytes {
+    if (!img.startsWith("data:")) return null;
+    final comma = img.indexOf(",");
+    if (comma < 0) return null;
+    try {
+      return base64Decode(img.substring(comma + 1));
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// A coach's note left on this specific photo (Notifications spec —
   /// "Coach comments on a progress photo"), shown to the client and
@@ -34,7 +49,7 @@ class ProgressPhoto {
   /// forgotten taking, and they'd have no way to tell the difference.
   final String? addedBy;
 
-  Uint8List get bytes => base64Decode(img.substring(img.indexOf(",") + 1));
+  Uint8List get bytes => inlineBytes ?? Uint8List(0);
 
   ProgressPhoto copyWith({String? coachComment, String? coachCommentAt}) => ProgressPhoto(
         id: id,

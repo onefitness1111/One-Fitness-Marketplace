@@ -5,6 +5,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/photo_picker_utils.dart";
+import "../../../core/widgets/progress_photo_view.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/progress_photo.dart";
 import "../../../data/models/squad_chat_message.dart";
@@ -22,6 +23,7 @@ class ProgressPhotosTab extends ConsumerStatefulWidget {
 
 class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
   bool _busy = false;
+  bool _movedOld = false;
   String? _removingId;
   String? _sharingId;
   String? _error;
@@ -37,7 +39,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
       at: stamp(),
       type: "shared_progress",
       shareKind: "photo",
-      payload: {"img": p.img, "date": p.date},
+      payload: {"date": p.date},
     );
     setState(() => _sharingId = p.id);
     final ok = await mutateSquad(ref, squad, (s) => s.copyWith(chat: [entry, ...s.chat]));
@@ -55,13 +57,15 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
       _error = null;
     });
     try {
-      final img = await pickProgressPhotoDataUrl();
-      if (img == null) {
+      final bytes = await pickProgressPhotoBytes();
+      if (bytes == null) {
         if (mounted) setState(() => _busy = false);
         return;
       }
       final client = ref.read(clientRecordProvider);
-      final next = [ProgressPhoto(id: DateTime.now().microsecondsSinceEpoch.toString(), date: isoToday(), img: img), ...client.photos];
+      final id = DateTime.now().microsecondsSinceEpoch.toString();
+      final path = await SupabaseService.uploadProgressPhoto(clientId: client.id, bytes: bytes, id: id);
+      final next = [ProgressPhoto(id: id, date: isoToday(), img: path), ...client.photos];
       await SupabaseService.updateClientPhotos(client.id, next);
       ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(photos: next));
       if (mounted) setState(() => _busy = false);
@@ -95,7 +99,18 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
 
   @override
   Widget build(BuildContext context) {
-    final photos = ref.watch(clientRecordProvider).photos;
+    final record = ref.watch(clientRecordProvider);
+    final photos = record.photos;
+    if (!_movedOld && photos.any((p) => p.img.startsWith("data:"))) {
+      _movedOld = true;
+      final clientId = record.id;
+      Future.microtask(() async {
+        final moved = await SupabaseService.moveInlineProgressPhotos(clientId, photos);
+        if (moved != null && mounted) {
+          ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(photos: moved));
+        }
+      });
+    }
     final info = ref.watch(clientInfoProvider);
     final squad = ref.watch(squadsProvider.notifier).squadFor(info.id);
 
@@ -144,7 +159,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Container(color: AppColors.card, child: Image.memory(p.bytes, fit: BoxFit.cover)),
+                      Container(color: AppColors.card, child: ProgressPhotoView(photo: p)),
                       if (hasComment)
                         Positioned(
                           top: 6,

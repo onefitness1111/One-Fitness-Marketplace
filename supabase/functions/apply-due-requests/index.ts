@@ -4,7 +4,8 @@
 //
 // Proposed. Not deployed until you deploy this function.
 // The app calls it when the owner opens Requests. A timer can call it too,
-// with the header x-cron-secret set to the APPLY_REQUESTS_SECRET secret.
+// with the header x-cron-secret set to the Vault secret apply_requests_cron.
+// The password is not stored in this file or in an edge-function env var.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -29,7 +30,9 @@ serve(async (req) => {
     const admin = createClient(url, serviceKey);
 
     const cron = req.headers.get("x-cron-secret");
-    const expected = Deno.env.get("APPLY_REQUESTS_SECRET") ?? "";
+    const { data: secretRow, error: secretErr } = await admin.rpc("cron_vault_secret");
+    if (secretErr) console.error("cron vault read failed");
+    const expected = typeof secretRow === "string" ? secretRow : "";
     const cronOk = expected.length > 0 && cron === expected;
     if (!cronOk) {
       const authed = createClient(url, Deno.env.get("SUPABASE_ANON_KEY") ?? "", {

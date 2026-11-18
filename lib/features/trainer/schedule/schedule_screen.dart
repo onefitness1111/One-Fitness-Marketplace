@@ -8,6 +8,7 @@ import "../../../core/utils/domain_labels.dart";
 import "../../../data/models/blocked_time.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/trainer.dart";
@@ -51,6 +52,7 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
     final bookings = ref.watch(allBookingsProvider).where((b) => isOwner || b.trainerId == trainerAuth).toList();
     final relevantTrainers = ref.watch(trainersProvider).where((t) => isOwner || t.id == trainerAuth).toList();
     final blocked = ref.watch(blockedTimesProvider).where((b) => isOwner || b.trainerId == trainerAuth).toList();
+    final cap = ref.watch(platformSettingsProvider).semiPrivateCap;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -103,7 +105,8 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                           month: _month,
                           slotsByDate: _slotsByDate(bookings, relevantTrainers),
                           blockedDates: blocked.map((b) => b.date).toSet(),
-                          availableDates: isOwner ? const {} : _availableDates(relevantTrainers, blocked),
+                          availableDates: const {},
+                          dayFills: _dayFills(relevantTrainers, bookings, blocked, cap),
                           onSelectDay: (d) => _handleSelectDay(d, _bookingsByDate(bookings)),
                           onChangeMonth: (dir) => setState(() => _month = DateTime(_month.year, _month.month + dir, 1)),
                         ),
@@ -159,38 +162,24 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
     return map;
   }
 
-  /// Future days in the visible month the signed-in coach is working: any
-  /// weekday their availability covers, plus one-off sessions created for a
-  /// specific date. A day they've cancelled is left out — blocked for the
-  /// whole day, or inside a time-off range — so cancelling removes the
-  /// yellow straight away.
-  Set<String> _availableDates(List<Trainer> trainers, List<BlockedTime> blocked) {
-    final out = <String>{};
-    final today = isoToday();
+  Map<String, ScheduleDayFill> _dayFills(
+    List<Trainer> trainers,
+    List<Booking> bookings,
+    List<BlockedTime> blocked,
+    int semiPrivateCap,
+  ) {
+    final out = <String, ScheduleDayFill>{};
     final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
-    for (final t in trainers) {
-      final weekdays = <int>{
-        for (final b in t.offeredAvailability)
-          for (final e in b.byDay.entries)
-            if (e.value.isNotEmpty) e.key,
-      };
-      final oneOffDates = <String>{
-        for (final b in t.offeredAvailability)
-          for (final e in b.dates.entries)
-            if (e.value.isNotEmpty) e.key,
-      };
-      for (var d = 1; d <= daysInMonth; d++) {
-        final date = isoDate(DateTime(_month.year, _month.month, d));
-        if (date.compareTo(today) < 0) continue;
-        final wd = DateTime(_month.year, _month.month, d).weekday % 7;
-        // Sunday never runs the weekly pattern (same as booking); a one-off
-        // session on a Sunday still counts.
-        final working = (wd != 0 && weekdays.contains(wd)) || oneOffDates.contains(date);
-        if (!working) continue;
-        final cancelled = fallsInUnavailability(t, date) ||
-            blocked.any((b) => b.trainerId == t.id && b.date == date && b.allDay);
-        if (!cancelled) out.add(date);
-      }
+    for (var d = 1; d <= daysInMonth; d++) {
+      final date = isoDate(DateTime(_month.year, _month.month, d));
+      final fill = scheduleDayFill(
+        trainers: trainers,
+        bookings: bookings,
+        blocked: blocked,
+        date: date,
+        semiPrivateCap: semiPrivateCap,
+      );
+      if (fill != null) out[date] = fill;
     }
     return out;
   }

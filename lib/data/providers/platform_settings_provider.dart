@@ -82,9 +82,10 @@ class CustomProfileField {
 /// itself, which is real and fully interactive.
 class PlatformSettings {
   const PlatformSettings({
-    this.lateCancellationHours = 24,
+    this.lateCancellationHours = 12,
     this.blockRescheduleInWindow = true,
-    this.lateCancellationFeeCents = 2500,
+    this.lateCancellationFeeCents = 1500,
+    this.noShowCancelHours = 4,
     this.noShowFeeCents = 2500,
     this.maxBookingHorizonDays = 30,
     this.minBookingLeadHours = 2,
@@ -146,11 +147,13 @@ class PlatformSettings {
   /// membership_utils.dart's kGiveBackAttendanceStatuses).
   final int lateCancellationFeeCents;
 
-  /// Charged when a coach marks a booking "no-show" — unlike a late
-  /// cancellation, a no-show does NOT give the session back (Attendance &
-  /// Cancellation Charging Policy, July 2026: a no-show costs the client
-  /// both the fee and the session itself). Independent from
-  /// [lateCancellationFeeCents] — the two are never assumed equal.
+  /// Inside this many hours, a cancel is the higher fee ([noShowFeeCents]).
+  /// The session is still returned. A coach-marked no-show is what uses it.
+  final int noShowCancelHours;
+
+  /// Charged when a cancel is inside [noShowCancelHours], and when a coach
+  /// marks a real no-show. The cancel does not use the session. The no-show
+  /// does.
   final int noShowFeeCents;
 
   final int maxBookingHorizonDays;
@@ -305,6 +308,7 @@ class PlatformSettings {
     int? lateCancellationHours,
     bool? blockRescheduleInWindow,
     int? lateCancellationFeeCents,
+    int? noShowCancelHours,
     int? noShowFeeCents,
     int? maxBookingHorizonDays,
     int? minBookingLeadHours,
@@ -361,6 +365,7 @@ class PlatformSettings {
         lateCancellationHours: lateCancellationHours ?? this.lateCancellationHours,
         blockRescheduleInWindow: blockRescheduleInWindow ?? this.blockRescheduleInWindow,
         lateCancellationFeeCents: lateCancellationFeeCents ?? this.lateCancellationFeeCents,
+        noShowCancelHours: noShowCancelHours ?? this.noShowCancelHours,
         noShowFeeCents: noShowFeeCents ?? this.noShowFeeCents,
         maxBookingHorizonDays: maxBookingHorizonDays ?? this.maxBookingHorizonDays,
         minBookingLeadHours: minBookingLeadHours ?? this.minBookingLeadHours,

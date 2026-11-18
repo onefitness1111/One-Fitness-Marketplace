@@ -10,6 +10,8 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/late_fee_notice.dart";
+import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -976,16 +978,28 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                       });
                                       if (next == "early-cancel" || next == "late-cancel" || next == "no-show") {
                                         final coachName = t.isNotEmpty ? t.first.displayTitle : "Your coach";
-                                        final label = next == "no-show"
-                                            ? "no-show"
-                                            : (next == "late-cancel" ? "late cancel" : "early cancel");
+                                        final settings = ref.read(platformSettingsProvider);
+                                        final window = cancelWindow(
+                                          b,
+                                          lateCancellationHours: settings.lateCancellationHours,
+                                          noShowCancelHours: settings.noShowCancelHours,
+                                        );
+                                        final cents = next == "no-show"
+                                            ? settings.noShowFeeCents
+                                            : next == "late-cancel"
+                                                ? cancelFeeCentsFor(
+                                                    window,
+                                                    lateCents: settings.lateCancellationFeeCents,
+                                                    closeCents: settings.noShowFeeCents,
+                                                  )
+                                                : 0;
                                         notifyClientAndCoach(
                                           clientId: b.clientId,
                                           coachId: b.trainerId,
-                                          clientTitle: "Session updated",
-                                          clientBody: "$coachName marked this session as a $label.",
+                                          clientTitle: next == "no-show" ? "No-show fee" : "Session updated",
+                                          clientBody: attendanceMarkedNotice(coachName: coachName, status: next!, cents: cents),
                                           coachTitle: "Session updated",
-                                          coachBody: "${attendee.name} was marked as a $label.",
+                                          coachBody: "${attendee.name} was marked ${next == "no-show" ? "a no-show" : next == "late-cancel" ? "a late cancel" : "an early cancel"}.",
                                         );
                                       }
                                       if (next == "checked-in" &&

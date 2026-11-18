@@ -6,7 +6,10 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/booking_utils.dart" show Offering, trainerOfferingsOn;
+import "../../../core/utils/schedule_day_fill.dart";
 import "../../../core/utils/scheduling_utils.dart";
+import "../../../core/widgets/schedule_day_dot.dart";
+import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/blocked_time.dart";
 import "../../../data/models/booking.dart";
@@ -51,7 +54,9 @@ class DayView extends ConsumerWidget {
     // days either side of this one, which the day's own list can't see.
     final visible = ref.watch(allBookingsProvider).where((b) => isOwner || b.trainerId == trainerAuth).toList();
     final bookings = visible.where((b) => b.date == date).toList();
-    final blocked = ref.watch(blockedTimesProvider).where((b) => b.date == date && (isOwner || b.trainerId == trainerAuth)).toList();
+    final allBlocked = ref.watch(blockedTimesProvider).where((b) => isOwner || b.trainerId == trainerAuth).toList();
+    final blocked = allBlocked.where((b) => b.date == date).toList();
+    final cap = ref.watch(platformSettingsProvider).semiPrivateCap;
     final roster = ref.watch(trainerRosterProvider);
     final isPast = date.compareTo(isoToday()) < 0;
 
@@ -99,7 +104,13 @@ class DayView extends ConsumerWidget {
           const SizedBox(height: 10),
           _DateStrip(
             selected: date,
-            sessionsByDate: _sessionsByDate(visible),
+            dayFill: (d) => scheduleDayFill(
+              trainers: relevantTrainers,
+              bookings: visible,
+              blocked: allBlocked,
+              date: d,
+              semiPrivateCap: cap,
+            ),
             onPick: onPickDate,
           ),
           if (anySession && !isPast)
@@ -159,15 +170,6 @@ class DayView extends ConsumerWidget {
     );
   }
 
-  /// How many distinct sessions sit on each date — one coach at one slot is
-  /// one session, however many clients are in it.
-  Map<String, int> _sessionsByDate(List<Booking> bookings) {
-    final keys = <String, Set<String>>{};
-    for (final b in bookings) {
-      (keys[b.date] ??= {}).add("${b.trainerId}|${b.slot}");
-    }
-    return {for (final e in keys.entries) e.key: e.value.length};
-  }
 }
 
 /// The days either side of the one being viewed: a tap moves the view, and a
@@ -179,10 +181,10 @@ class DayView extends ConsumerWidget {
 /// there is nothing in them that identifies one session to pick up, and the
 /// targets would be too small to hit with a finger already holding a drag.
 class _DateStrip extends ConsumerWidget {
-  const _DateStrip({required this.selected, required this.sessionsByDate, required this.onPick});
+  const _DateStrip({required this.selected, required this.dayFill, required this.onPick});
 
   final String selected;
-  final Map<String, int> sessionsByDate;
+  final ScheduleDayFill? Function(String date) dayFill;
   final ValueChanged<String> onPick;
 
   /// Starts three days before the day being viewed, so the days just gone
@@ -209,7 +211,7 @@ class _DateStrip extends ConsumerWidget {
               isSelected: d == selected,
               isToday: d == today,
               isPast: d.compareTo(today) < 0,
-              sessions: sessionsByDate[d] ?? 0,
+              fill: dayFill(d),
               onPick: onPick,
             ),
         ],
@@ -224,7 +226,7 @@ class _DateCell extends ConsumerWidget {
     required this.isSelected,
     required this.isToday,
     required this.isPast,
-    required this.sessions,
+    required this.fill,
     required this.onPick,
   });
 
@@ -232,7 +234,7 @@ class _DateCell extends ConsumerWidget {
   final bool isSelected;
   final bool isToday;
   final bool isPast;
-  final int sessions;
+  final ScheduleDayFill? fill;
   final ValueChanged<String> onPick;
 
   @override
@@ -291,23 +293,7 @@ class _DateCell extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  // A dot per session up to three, so a busy day reads as
-                  // busy without printing a number this small.
-                  SizedBox(
-                    height: 4,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var i = 0; i < (sessions > 3 ? 3 : sessions); i++)
-                          Container(
-                            width: 3,
-                            height: 3,
-                            margin: const EdgeInsets.symmetric(horizontal: 1),
-                            decoration: BoxDecoration(color: AppColors.gold, shape: BoxShape.circle),
-                          ),
-                      ],
-                    ),
-                  ),
+                  ScheduleDayDot(fill: fill),
                 ],
               ),
             ),

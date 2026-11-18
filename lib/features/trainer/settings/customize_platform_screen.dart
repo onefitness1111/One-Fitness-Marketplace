@@ -266,15 +266,27 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                 if (_tab == "scheduling") ...[
                   _NumberRow(
                     label: "Late cancellation window (hours)",
-                    hint: "Cancelling or rescheduling outside this many hours before a session is free. Inside it, the late cancellation fee below applies.",
+                    hint: "Cancelling further out than this is free. Inside it, the late fee below is charged. The session still goes back on the plan.",
                     suffix: "hours before session",
                     value: s.lateCancellationHours,
                     onChange: (v) => _set((d) => d.copyWith(lateCancellationHours: v)),
                   ),
-                  _MoneyRow(label: "Late cancellation fee", cents: s.lateCancellationFeeCents, onChange: (v) => _set((d) => d.copyWith(lateCancellationFeeCents: v))),
                   _MoneyRow(
-                    label: "No-show fee",
-                    hint: "Charged when a coach marks a booking No-Show — unlike a late cancellation, a no-show does not give the session back.",
+                    label: "Late cancellation fee",
+                    hint: "Charged when a cancel is inside the window above, and still further out than the shorter window below.",
+                    cents: s.lateCancellationFeeCents,
+                    onChange: (v) => _set((d) => d.copyWith(lateCancellationFeeCents: v)),
+                  ),
+                  _NumberRow(
+                    label: "Short-notice window (hours)",
+                    hint: "A cancel inside this many hours is the higher fee. It is still a cancel: the session goes back. A no-show your coaches mark is the only one that uses the session.",
+                    suffix: "hours before session",
+                    value: s.noShowCancelHours,
+                    onChange: (v) => _set((d) => d.copyWith(noShowCancelHours: v)),
+                  ),
+                  _MoneyRow(
+                    label: "Short-notice and no-show fee",
+                    hint: "Charged for a cancel inside the short window, and when a coach marks a real no-show. The cancel gives the session back. The no-show uses it.",
                     cents: s.noShowFeeCents,
                     onChange: (v) => _set((d) => d.copyWith(noShowFeeCents: v)),
                   ),

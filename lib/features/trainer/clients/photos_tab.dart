@@ -7,6 +7,7 @@ import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/photo_picker_utils.dart";
 import "../../../core/utils/write_failure.dart";
+import "../../../core/widgets/progress_photo_view.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/progress_photo.dart";
 import "../../../data/providers/client_providers.dart";
@@ -33,6 +34,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
   final Map<String, TextEditingController> _controllers = {};
   String? _savingId;
   bool _adding = false;
+  bool _movedOld = false;
   String? _addError;
 
   /// Who to stamp on a photo this coach adds. The owner shows as "Admin"
@@ -52,8 +54,8 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
       _addError = null;
     });
     try {
-      final img = await pickProgressPhotoDataUrl();
-      if (img == null) {
+      final bytes = await pickProgressPhotoBytes();
+      if (bytes == null) {
         if (mounted) setState(() => _adding = false);
         return;
       }
@@ -62,10 +64,12 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
         if (mounted) setState(() => _adding = false);
         return;
       }
+      final id = DateTime.now().microsecondsSinceEpoch.toString();
+      final path = await SupabaseService.uploadProgressPhoto(clientId: widget.clientId, bytes: bytes, id: id);
       final photo = ProgressPhoto(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        id: id,
         date: isoToday(),
-        img: img,
+        img: path,
         addedBy: _whoAmI(),
       );
       final next = [photo, ...record.photos];
@@ -129,6 +133,16 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
   Widget build(BuildContext context) {
     final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
     final photos = (record?.photos ?? const []).toList()..sort((a, b) => b.date.compareTo(a.date));
+    if (!_movedOld && photos.any((p) => p.img.startsWith("data:"))) {
+      _movedOld = true;
+      final clientId = widget.clientId;
+      Future.microtask(() async {
+        final moved = await SupabaseService.moveInlineProgressPhotos(clientId, photos);
+        if (moved != null && mounted) {
+          ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(photos: moved));
+        }
+      });
+    }
 
     final addButton = Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -202,7 +216,11 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(p.bytes, fit: BoxFit.cover, width: double.infinity, height: 220),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 220,
+                          child: ProgressPhotoView(photo: p),
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Row(
