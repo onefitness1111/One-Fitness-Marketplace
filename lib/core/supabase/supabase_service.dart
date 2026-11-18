@@ -816,6 +816,7 @@ class SupabaseService {
         note: row["note"] as String?,
         revokedAt: _dateOnly(row["revoked_at"] as String?),
         revokedByUserId: row["revoked_by_user_id"] as String?,
+        celebratedAt: row["celebrated_at"] as String?,
       );
 
   // ── Coach Merit Badge System ────────────────────────────────────────
@@ -1562,9 +1563,6 @@ class SupabaseService {
             hint: l["hint"] as String? ?? "",
           ),
       ],
-      meritBadgeProgressWeeks:
-          _asInt(workouts["meritBadgeProgressWeeks"]) ??
-          defaults.meritBadgeProgressWeeks,
       meritBadgeHabitPercent:
           _asInt(workouts["meritBadgeHabitPercent"]) ??
           defaults.meritBadgeHabitPercent,
@@ -1594,6 +1592,15 @@ class SupabaseService {
       badgeCoachOfMonthCents:
           _asInt(workouts["badgeCoachOfMonthCents"]) ??
           defaults.badgeCoachOfMonthCents,
+      badgeSessionsCoachedCents:
+          _asInt(workouts["badgeSessionsCoachedCents"]) ??
+          defaults.badgeSessionsCoachedCents,
+      badgeClientMilestoneCents:
+          _asInt(workouts["badgeClientMilestoneCents"]) ??
+          defaults.badgeClientMilestoneCents,
+      badgeRetentionCents:
+          _asInt(workouts["badgeRetentionCents"]) ??
+          defaults.badgeRetentionCents,
     );
   }
 
@@ -2063,6 +2070,13 @@ class SupabaseService {
       });
     } catch (_) {
       await upsertClientRecordPatch(profileId, patch);
+    }
+    // The food log lives on this record (see the nutrition migration). Logging
+    // a meal can earn the nutrition streak immediately, not only overnight.
+    if (patch.containsKey("foodLog")) {
+      try {
+        await checkMeritBadges(profileId, "after_food");
+      } catch (_) {}
     }
   }
 
@@ -3262,6 +3276,15 @@ class SupabaseService {
         .from("bookings")
         .update({"attendance_status": status})
         .eq("id", id);
+    if (status == "checked-in") {
+      try {
+        final row = await client.from("bookings").select("client_id").eq("id", id).maybeSingle();
+        final clientId = row?["client_id"] as String?;
+        if (clientId != null) {
+          await checkMeritBadges(clientId, "after_session");
+        }
+      } catch (_) {}
+    }
     // Late Cancel / No-Show carry a fee. It is collected server-side, once per
     // booking, from the saved card; if that fails (or there is no card) the
     // full amount goes onto the client's balance. Never blocks marking.
@@ -3576,6 +3599,42 @@ class SupabaseService {
   /// server-side); returns `{ok:true, badgeKey}` on a genuinely fresh award
   /// or `{ok:true, alreadyEarned:true}`/an error otherwise — callers treat a
   /// thrown error as "not eligible yet", not a failure worth surfacing.
+  /// Asks the server to re-check the badges that a session, log, photo, or
+  /// measurement can earn. Failures stay quiet: the thing the client just
+  /// saved has already been saved.
+  static Future<List<String>> checkMeritBadges(String clientId, String event) async {
+    try {
+      final result = await awardMeritBadge(clientId, event);
+      final awarded = result["awarded"];
+      if (awarded is List) return awarded.whereType<String>().toList();
+      if (result["badgeKey"] is String && result["ok"] == true && result["alreadyEarned"] != true) {
+        return [result["badgeKey"] as String];
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  /// Automatic reward points. [sourceRefId] is the challenge id, the photo
+  /// or measurement month, or "scan" for a workout streak.
+  static Future<void> awardAutomaticPoints(String clientId, String source, String sourceRefId) async {
+    try {
+      await _invokeFunction("award-points", {
+        "clientId": clientId,
+        "source": source,
+        "sourceRefId": sourceRefId,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> markMeritBadgesSeen(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await client.rpc("mark_merit_badges_seen", params: {"p_ids": ids});
+  }
+
+  static Future<void> markCoachBadgePaid(String id) async {
+    await client.from("coach_merit_badges").update({"payout_status": "paid"}).eq("id", id);
+  }
+
   static Future<Map<String, dynamic>> awardMeritBadge(
     String clientId,
     String badgeKey, {
@@ -4160,7 +4219,6 @@ class SupabaseService {
       "defaultWeightUnit": s.defaultWeightUnit,
       "autoCarryOverLastWeight": s.autoCarryOverLastWeight,
       "clientsCanSwapExercises": s.clientsCanSwapExercises,
-      "meritBadgeProgressWeeks": s.meritBadgeProgressWeeks,
       "meritBadgeHabitPercent": s.meritBadgeHabitPercent,
       "meritBadgeHabitWeeks": s.meritBadgeHabitWeeks,
       "badgeFullHouseCents": s.badgeFullHouseCents,
@@ -4171,6 +4229,9 @@ class SupabaseService {
       "badgeHabitCoachCents": s.badgeHabitCoachCents,
       "badgeChallengeCoachCents": s.badgeChallengeCoachCents,
       "badgeCoachOfMonthCents": s.badgeCoachOfMonthCents,
+      "badgeSessionsCoachedCents": s.badgeSessionsCoachedCents,
+      "badgeClientMilestoneCents": s.badgeClientMilestoneCents,
+      "badgeRetentionCents": s.badgeRetentionCents,
     },
     "scheduling": {
       "semiPrivateCap": s.semiPrivateCap,

@@ -37,8 +37,12 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(habitLogByDate: {...r.habitLogByDate, _dateTab: nextEntry}));
 
     final clientId = ref.read(clientInfoProvider).id;
-    SupabaseService.updateClientHabitLog(clientId, _dateTab, nextEntry).catchError((Object _) {});
-    SupabaseService.awardMeritBadge(clientId, "habit").catchError((Object _) => <String, dynamic>{});
+    SupabaseService.updateClientHabitLog(clientId, _dateTab, nextEntry).then((_) {
+      return SupabaseService.checkMeritBadges(clientId, "after_habit");
+    }).then((_) async {
+      final fresh = await SupabaseService.loadMeritBadgesFor(clientId);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(clientId, fresh);
+    }).catchError((Object _) {});
     if (nextChecked[habitId] == true) {
       notifyPush(
         profileId: clientId,

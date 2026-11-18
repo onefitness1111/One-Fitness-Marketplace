@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "../theme/app_colors.dart";
 import "../utils/coach_merit_badge_utils.dart";
 
 /// Mirrors merit_badge_shield.dart's [MeritBadgeShield] — same
@@ -15,7 +16,23 @@ class CoachBadgeShield extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = kCoachBadgeImagePaths[badgeKey];
-    if (path == null) return SizedBox(width: size, height: size);
+    if (path == null) {
+      final letter = coachBadgeLabel(badgeKey);
+      return Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          border: Border.all(color: grayscale ? AppColors.line : AppColors.txt),
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          letter.isEmpty ? "?" : letter[0].toUpperCase(),
+          style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: size * 0.38),
+        ),
+      );
+    }
     final image = Image.asset(path, width: size, height: size, fit: BoxFit.contain);
     if (!grayscale) return image;
     return ColorFiltered(

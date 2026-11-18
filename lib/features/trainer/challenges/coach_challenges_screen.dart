@@ -235,39 +235,38 @@ class _CoachChallengeDetailState extends ConsumerState<_CoachChallengeDetail> {
     }
   }
 
-  Future<bool> _patchBadge(String clientId, String badgeId, String name, String awardedAt) async {
-    final rec = ref.read(trainerClientRecordsProvider)[clientId];
-    if (rec == null) return true;
-    final next = [
-      ...rec.challengeBadges.where((b) => b.challengeId != badgeId),
-      ChallengeBadge(challengeId: badgeId, name: name, awardedAt: awardedAt),
-    ];
-    try {
-      await SupabaseService.updateClientChallengeBadges(clientId, next);
-    } catch (e) {
-      return false;
-    }
-    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(challengeBadges: next));
-    return true;
-  }
-
   Future<void> _awardBadges(Challenge challenge, List<RankedParticipant> ranked) async {
     final winnerId = challenge.winnerMode == "auto"
         ? (ranked.isNotEmpty ? ranked.first.clientId : null)
         : challenge.winnerClientId;
-    if (winnerId == null && challenge.participantIds.isEmpty) return;
+    if (winnerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Pick a winner first. Then this awards the Champion badge.")),
+      );
+      return;
+    }
     setState(() => _awarding = true);
-    final awardedAt = stamp();
-    var ok = true;
-    if (winnerId != null) ok = await _patchBadge(winnerId, challenge.id, challenge.name, awardedAt) && ok;
+    String? problem;
+    try {
+      final result = await SupabaseService.awardMeritBadge(winnerId, "champion", sourceRefId: challenge.id);
+      if (result["ok"] == false) {
+        problem = result["reason"]?.toString() ?? "The winner did not earn Champion.";
+      }
+    } catch (e) {
+      problem = e.toString().replaceFirst("Exception: ", "");
+    }
     for (final cid in challenge.participantIds) {
-      ok = await _patchBadge(cid, "complete-${challenge.id}", "Completed: ${challenge.name}", awardedAt) && ok;
+      await SupabaseService.awardAutomaticPoints(cid, "challenge_participation", challenge.id);
+    }
+    for (final row in ranked) {
+      if (row.rank == 1) await SupabaseService.awardAutomaticPoints(row.clientId, "challenge_1st", challenge.id);
+      if (row.rank == 2) await SupabaseService.awardAutomaticPoints(row.clientId, "challenge_2nd", challenge.id);
     }
     if (!mounted) return;
     setState(() => _awarding = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(ok ? "Badges awarded." : "Some badges couldn't be saved — check your connection and try again."),
+        content: Text(problem == null ? "Champion badge awarded, and the reward points were checked." : "Points were checked, but Champion was not awarded: $problem"),
       ),
     );
   }

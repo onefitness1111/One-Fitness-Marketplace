@@ -21,8 +21,8 @@ final _coachAwardable = kMeritBadges
 /// Badges). Award a coach-category badge, remove an active coach-awarded
 /// one, an owner-only "force assign any badge" override, an Active grid, a
 /// History section for removed coach-awarded badges, and a full-catalog
-/// reference. Automatic badges are never awarded here — this mock build
-/// has no eligibility engine, so they only ever appear via mock seed data.
+/// reference. Automatic badges are awarded by award-merit-badge, not from
+/// this screen. The owner can still force-assign one, and that one stays.
 class MeritBadgesTab extends ConsumerStatefulWidget {
   const MeritBadgesTab({super.key, required this.clientId});
 

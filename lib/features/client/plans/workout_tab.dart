@@ -48,6 +48,10 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     // Same id = the same live session: replace, never log it twice.
     final updatedLogs = [...client.workoutLogs.where((l) => l.id != entry.id), entry];
     await SupabaseService.appendWorkoutLog(client.id, entry);
+    await SupabaseService.awardAutomaticPoints(client.id, "workout_streak", "scan");
+    await SupabaseService.checkMeritBadges(client.id, "after_workout");
+    final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+    ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
     ref
         .read(clientRecordProvider.notifier)
         .update(

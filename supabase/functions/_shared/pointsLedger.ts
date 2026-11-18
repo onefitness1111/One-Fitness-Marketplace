@@ -79,3 +79,43 @@ export function planRedemption(
 export function pointsToDiscountCents(points: number, subtotalCents: number, rateBp = 50): number {
   return Math.round((subtotalCents * points * rateBp) / 10000);
 }
+
+function isoWeekStart(dateStr: string): string {
+  const d = new Date(dateStr.slice(0, 10) + "T00:00:00Z");
+  const dayIdx = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayIdx);
+  return d.toISOString().slice(0, 10);
+}
+
+// Three consecutive weeks of client-logged workouts. Each finished block is
+// named by the Monday of its last week, which is the ledger's source_ref_id.
+// deno-lint-ignore no-explicit-any
+export function computeStreakAwards(workoutLogs: any[]): { weekEnding: string }[] {
+  const weeksWithLogs = new Set(
+    (workoutLogs || []).filter((l) => l.loggedBy === "client" && l.date).map((l) => isoWeekStart(String(l.date))),
+  );
+  if (weeksWithLogs.size === 0) return [];
+  const weekStarts = [...weeksWithLogs].sort();
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const awards: { weekEnding: string }[] = [];
+  const flush = (start: string, length: number) => {
+    const blocks = Math.floor(length / 3);
+    for (let b = 1; b <= blocks; b++) {
+      const weekEnding = new Date(new Date(start + "T00:00:00Z").getTime() + (b * 3 - 1) * msPerWeek).toISOString().slice(0, 10);
+      awards.push({ weekEnding });
+    }
+  };
+  let runStart = weekStarts[0];
+  let runLength = 1;
+  for (let i = 1; i < weekStarts.length; i++) {
+    const gap = new Date(weekStarts[i] + "T00:00:00Z").getTime() - new Date(weekStarts[i - 1] + "T00:00:00Z").getTime();
+    if (gap === msPerWeek) runLength++;
+    else {
+      flush(runStart, runLength);
+      runStart = weekStarts[i];
+      runLength = 1;
+    }
+  }
+  flush(runStart, runLength);
+  return awards;
+}

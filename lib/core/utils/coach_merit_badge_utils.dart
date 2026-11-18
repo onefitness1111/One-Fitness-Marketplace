@@ -65,7 +65,17 @@ const Map<String, String> kCoachBadgeLabels = {
   "habit_coach": "Habit Coach",
   "challenge_coach": "Challenge Coach",
   "coach_of_month": "Coach of the Month",
+  "sessions_coached": "Sessions Coached",
+  "client_milestone": "Client Milestone",
+  "retention_streak": "Retention Streak",
 };
+
+/// History rows for a client milestone use a key like
+/// `client_milestone_<client>_<count>`. Those still read as one badge.
+String coachBadgeLabel(String key) {
+  if (key.startsWith("client_milestone")) return "Client Milestone";
+  return kCoachBadgeLabels[key] ?? key;
+}
 
 /// badgeKey -> artwork — mirrors merit_badge_def.dart's `kBadgeImagePaths`
 /// for the (separate, client-facing) merit badge system, same pattern, own
@@ -90,6 +100,9 @@ const Map<String, String> kCoachBadgeDescriptions = {
   "habit_coach": "70%+ of your habit-tracking clients hit the consistency bar for several straight weeks this month.",
   "challenge_coach": "50%+ of your roster enrolled in an active challenge this month.",
   "coach_of_month": "Highest composite score across every badge this month, gym-wide.",
+  "sessions_coached": "20 or more checked-in sessions this month.",
+  "client_milestone": "A client you coached hit 10, 25, 50, or 100 total sessions.",
+  "retention_streak": "At least one client trained with you in each of the last 3 months.",
 };
 
 String _dateOnly(String isoOrTimestamp) => isoOrTimestamp.length >= 10 ? isoOrTimestamp.substring(0, 10) : isoOrTimestamp;
@@ -346,8 +359,80 @@ CoachBadgeProgress challengeCoachBadge(
   );
 }
 
-/// The 6 monthly badges (everything except Coach of the Month, which is
-/// cross-coach — see [coachCompositeScore]/[pickCoachOfTheMonth]).
+const kSessionsCoachedTarget = 20;
+
+CoachBadgeProgress sessionsCoachedBadge(Trainer coach, List<Booking> bookings, ReportRange range, {int target = kSessionsCoachedTarget}) {
+  final n = bookings.where((b) => b.trainerId == coach.id && b.attendanceStatus == "checked-in" && range.includes(b.date)).length;
+  return CoachBadgeProgress(
+    badgeKey: "sessions_coached",
+    label: "Sessions Coached",
+    current: n,
+    target: target,
+    qualifies: n >= target,
+    detail: "$n checked-in sessions this month. $target earns it.",
+  );
+}
+
+String _shiftMonth(String monthKey, int delta) {
+  final parts = monthKey.split("-");
+  var y = int.parse(parts[0]);
+  var m = int.parse(parts[1]) + delta;
+  while (m < 1) {
+    m += 12;
+    y -= 1;
+  }
+  while (m > 12) {
+    m -= 12;
+    y += 1;
+  }
+  return "$y-${m.toString().padLeft(2, '0')}";
+}
+
+/// One client who checked in with this coach in each of the last 3 months,
+/// ending with the month that contains [range.start].
+CoachBadgeProgress retentionStreakBadge(Trainer coach, List<Booking> bookings, ReportRange range) {
+  final month = range.start.substring(0, 7);
+  final months = [_shiftMonth(month, -2), _shiftMonth(month, -1), month];
+  final clients = bookings.where((b) => b.trainerId == coach.id && b.attendanceStatus == "checked-in").map((b) => b.clientId).toSet();
+  var n = 0;
+  for (final id in clients) {
+    final hit = months.every((m) => bookings.any((b) => b.trainerId == coach.id && b.clientId == id && b.attendanceStatus == "checked-in" && b.date.startsWith(m)));
+    if (hit) n++;
+  }
+  return CoachBadgeProgress(
+    badgeKey: "retention_streak",
+    label: "Retention Streak",
+    current: n,
+    target: 1,
+    qualifies: n >= 1,
+    detail: n == 0 ? "No client has trained with you in each of the last 3 months." : "$n client(s) trained with you in each of the last 3 months.",
+  );
+}
+
+CoachBadgeProgress clientMilestoneBadge(Trainer coach, List<Booking> bookings, ReportRange range) {
+  final sorted = bookings.where((b) => b.attendanceStatus == "checked-in").toList()
+    ..sort((a, b) => a.date == b.date ? a.slot.compareTo(b.slot) : a.date.compareTo(b.date));
+  final counts = <String, int>{};
+  var n = 0;
+  for (final b in sorted) {
+    final next = (counts[b.clientId] ?? 0) + 1;
+    counts[b.clientId] = next;
+    if (next != 10 && next != 25 && next != 50 && next != 100) continue;
+    if (b.trainerId == coach.id && range.includes(b.date)) n++;
+  }
+  return CoachBadgeProgress(
+    badgeKey: "client_milestone",
+    label: "Client Milestone",
+    current: n,
+    target: 1,
+    qualifies: n >= 1,
+    detail: n == 0 ? "No client hit 10, 25, 50, or 100 sessions with you this month." : "$n client milestone(s) with you this month.",
+  );
+}
+
+/// The monthly badges, including Coach of the Month's inputs. The three
+/// newer badges are listed after the six the composite score uses, so they
+/// do not change who wins Coach of the Month.
 List<CoachBadgeProgress> computeAllCoachBadges({
   required Trainer coach,
   required List<ClientInfo> roster,
@@ -367,6 +452,9 @@ List<CoachBadgeProgress> computeAllCoachBadges({
       comebackBadge(coach, roster, clientRecords, bookings, range),
       habitCoachBadge(coach, roster, clientRecords, range, habitPercent: habitPercent, consecutiveWeeks: habitConsecutiveWeeks),
       challengeCoachBadge(coach, roster, challenges, range),
+      sessionsCoachedBadge(coach, bookings, range),
+      clientMilestoneBadge(coach, bookings, range),
+      retentionStreakBadge(coach, bookings, range),
     ];
 
 /// One coach's Coach-of-the-Month composite for a month — each sub-rate is

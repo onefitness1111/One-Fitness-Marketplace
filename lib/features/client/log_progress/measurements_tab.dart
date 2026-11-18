@@ -83,6 +83,11 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
         goalWeight: goalWeight,
         profileId: info.id,
       );
+      final month = entry.date.length >= 7 ? entry.date.substring(0, 7) : entry.date;
+      await SupabaseService.awardAutomaticPoints(client.id, "measurement", month);
+      await SupabaseService.checkMeritBadges(client.id, "after_measurement");
+      final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
       for (final c in _fieldControllers.values) {
         c.clear();
       }

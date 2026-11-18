@@ -68,6 +68,11 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
       final next = [ProgressPhoto(id: id, date: isoToday(), img: path), ...client.photos];
       await SupabaseService.updateClientPhotos(client.id, next);
       ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(photos: next));
+      final month = isoToday().substring(0, 7);
+      await SupabaseService.awardAutomaticPoints(client.id, "progress_photo", month);
+      await SupabaseService.checkMeritBadges(client.id, "after_photo");
+      final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
       if (mounted) setState(() => _busy = false);
     } catch (e) {
       if (mounted) {

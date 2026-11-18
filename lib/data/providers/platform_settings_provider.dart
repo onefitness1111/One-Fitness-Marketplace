@@ -125,7 +125,6 @@ class PlatformSettings {
     this.locationName = "",
     this.locationAddress = "",
     this.locationHint = "",
-    this.meritBadgeProgressWeeks = 3,
     this.meritBadgeHabitPercent = 80,
     this.meritBadgeHabitWeeks = 3,
     this.badgeFullHouseCents = 2500,
@@ -135,6 +134,9 @@ class PlatformSettings {
     this.badgeHabitCoachCents = 2500,
     this.badgeChallengeCoachCents = 2500,
     this.badgeCoachOfMonthCents = 5000,
+    this.badgeSessionsCoachedCents = 0,
+    this.badgeClientMilestoneCents = 0,
+    this.badgeRetentionCents = 0,
     this.beepSounds = const {},
   });
 
@@ -280,7 +282,6 @@ class PlatformSettings {
 
   /// Parking / arrival notes, e.g. "Side entrance, buzz 4".
   final String locationHint;
-  final int meritBadgeProgressWeeks;
   final int meritBadgeHabitPercent;
   final int meritBadgeHabitWeeks;
 
@@ -296,6 +297,9 @@ class PlatformSettings {
   final int badgeHabitCoachCents;
   final int badgeChallengeCoachCents;
   final int badgeCoachOfMonthCents;
+  final int badgeSessionsCoachedCents;
+  final int badgeClientMilestoneCents;
+  final int badgeRetentionCents;
 
   /// Which alert tone each Beep Your Coach request plays on the coach's
   /// phone, keyed by request type ("help" | "spot" | "done"). Set by the
@@ -349,7 +353,6 @@ class PlatformSettings {
     String? locationName,
     String? locationAddress,
     String? locationHint,
-    int? meritBadgeProgressWeeks,
     int? meritBadgeHabitPercent,
     int? meritBadgeHabitWeeks,
     int? badgeFullHouseCents,
@@ -359,6 +362,9 @@ class PlatformSettings {
     int? badgeHabitCoachCents,
     int? badgeChallengeCoachCents,
     int? badgeCoachOfMonthCents,
+    int? badgeSessionsCoachedCents,
+    int? badgeClientMilestoneCents,
+    int? badgeRetentionCents,
     Map<String, String>? beepSounds,
   }) =>
       PlatformSettings(
@@ -405,7 +411,6 @@ class PlatformSettings {
         locationName: locationName ?? this.locationName,
         locationAddress: locationAddress ?? this.locationAddress,
         locationHint: locationHint ?? this.locationHint,
-        meritBadgeProgressWeeks: meritBadgeProgressWeeks ?? this.meritBadgeProgressWeeks,
         meritBadgeHabitPercent: meritBadgeHabitPercent ?? this.meritBadgeHabitPercent,
         meritBadgeHabitWeeks: meritBadgeHabitWeeks ?? this.meritBadgeHabitWeeks,
         badgeFullHouseCents: badgeFullHouseCents ?? this.badgeFullHouseCents,
@@ -416,6 +421,9 @@ class PlatformSettings {
         badgeHabitCoachCents: badgeHabitCoachCents ?? this.badgeHabitCoachCents,
         badgeChallengeCoachCents: badgeChallengeCoachCents ?? this.badgeChallengeCoachCents,
         badgeCoachOfMonthCents: badgeCoachOfMonthCents ?? this.badgeCoachOfMonthCents,
+        badgeSessionsCoachedCents: badgeSessionsCoachedCents ?? this.badgeSessionsCoachedCents,
+        badgeClientMilestoneCents: badgeClientMilestoneCents ?? this.badgeClientMilestoneCents,
+        badgeRetentionCents: badgeRetentionCents ?? this.badgeRetentionCents,
       );
 }
 

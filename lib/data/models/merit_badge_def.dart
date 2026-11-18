@@ -1,8 +1,6 @@
-/// Mirrors src/constants/meritBadges.js `MERIT_BADGES` — static display
-/// metadata for the badge catalog. Real eligibility/award logic is
-/// Supabase-edge-function-only in the source (award-merit-badge,
-/// grant-merit-badge) and isn't ported here; badges in this mock build are
-/// only ever seeded or coach-awarded, never automatically computed.
+/// Display names for the Merit Badge catalog. Earning and removing a badge
+/// happens in the award-merit-badge function, which reads the live records
+/// and writes merit_badges. This list is what the app shows.
 class MeritBadgeDef {
   const MeritBadgeDef({required this.key, required this.name, required this.category, required this.description});
 
@@ -23,25 +21,25 @@ const kMeritBadges = <MeritBadgeDef>[
     key: "early_bird",
     name: "Early Bird",
     category: "automatic",
-    description: "Awarded after completing an entire month of membership using only sessions before 9:00 AM. Removed if the following month doesn't also meet this.",
+    description: "Every completed session in the early window, before 9:00 AM. A membership with a monthly session count must fill that count, all before 9:00 AM, for the previous month. A membership with no session cap needs every session from that month in the window. A package is earned once, when its last session is completed and every session in the package was before 9:00 AM.",
   ),
   MeritBadgeDef(
     key: "daytimer",
     name: "Daytimer",
     category: "automatic",
-    description: "Awarded after completing an entire month of membership using only sessions between 9:00 AM and 6:00 PM. Removed if the following month doesn't also meet this.",
+    description: "Every completed session in the midday window, 9:00 AM to 6:00 PM. A membership with a monthly session count must fill that count in the window for the previous month. A membership with no session cap needs every session from that month in the window. A package is earned once, when its last session is completed and every session in the package was in this window.",
   ),
   MeritBadgeDef(
     key: "night_owl",
     name: "Night Owl",
     category: "automatic",
-    description: "Awarded after completing an entire month of membership using only sessions after 6:00 PM. Removed if the following month doesn't also meet this.",
+    description: "Every completed session in the evening window, 6:00 PM or later. A membership with a monthly session count must fill that count in the window for the previous month. A membership with no session cap needs every session from that month in the window. A package is earned once, when its last session is completed and every session in the package was in this window.",
   ),
   MeritBadgeDef(
     key: "progress_tracker",
     name: "Progress Tracker",
     category: "automatic",
-    description: "Three consecutive weeks of consistent client-logged progress (photos, measurements, or workouts logged from the client's own account). Re-evaluated every 3 weeks.",
+    description: "A progress photo, a body measurement, and a workout you logged yourself, each within the last 6 months. It stays while all three are current and drops off if any of them is older than 6 months.",
   ),
   MeritBadgeDef(
     key: "record_breaker",
@@ -78,6 +76,60 @@ const kMeritBadges = <MeritBadgeDef>[
     name: "Gym Citizen",
     category: "coach",
     description: "Awarded to clients who consistently demonstrate outstanding gym etiquette, come prepared, respect the facility, and positively contribute to the One Fitness community.",
+  ),
+  MeritBadgeDef(
+    key: "first_session",
+    name: "First Session",
+    category: "automatic",
+    description: "Completed your first session. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "sessions_10",
+    name: "10 Sessions",
+    category: "automatic",
+    description: "Completed 10 sessions. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "sessions_25",
+    name: "25 Sessions",
+    category: "automatic",
+    description: "Completed 25 sessions. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "sessions_50",
+    name: "50 Sessions",
+    category: "automatic",
+    description: "Completed 50 sessions. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "sessions_100",
+    name: "100 Sessions",
+    category: "automatic",
+    description: "Completed 100 sessions. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "one_year",
+    name: "One Year",
+    category: "automatic",
+    description: "One year since you joined ONE Fitness. It stays.",
+  ),
+  MeritBadgeDef(
+    key: "nutrition_streak",
+    name: "Nutrition Streak",
+    category: "automatic",
+    description: "Logged food for 7 days in a row. It drops off if the streak breaks.",
+  ),
+  MeritBadgeDef(
+    key: "perfect_attendance",
+    name: "Perfect Attendance",
+    category: "automatic",
+    description: "Last month, every session you were still expected to attend was checked in. An early cancel does not count against you. It is checked again each month.",
+  ),
+  MeritBadgeDef(
+    key: "goal_reached",
+    name: "Goal Reached",
+    category: "automatic",
+    description: "Your latest weight is within half a pound of the goal on your intake, or a tape measurement is at least an inch smaller than your first one. It stays.",
   ),
 ];
 
