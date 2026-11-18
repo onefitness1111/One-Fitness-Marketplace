@@ -1,5 +1,6 @@
 import "../../data/models/client_record.dart";
 import "../../data/models/program_day.dart";
+import "../../data/models/workout_log.dart";
 
 class LastSetData {
   const LastSetData({this.weight = 0, this.reps = 0});
@@ -274,4 +275,213 @@ List<DayProgression> getDayProgressionSummary(ClientRecord client) {
     (a, b) => b.date.compareTo(a.date),
   ); // most recently completed day first
   return days;
+}
+
+/// One saved workout, newest first. Older sessions stay on the list.
+class WorkoutHistorySet {
+  const WorkoutHistorySet({
+    required this.setNum,
+    required this.reps,
+    required this.weight,
+    this.prevReps,
+    this.prevWeight,
+  });
+  final int setNum;
+  final int reps;
+  final double weight;
+  final int? prevReps;
+  final double? prevWeight;
+
+  String get weightMark {
+    if (prevWeight == null) return "";
+    if (weight > prevWeight!) return "up";
+    if (weight < prevWeight!) return "down";
+    return "same";
+  }
+
+  String get repsMark {
+    if (prevReps == null) return "";
+    if (reps > prevReps!) return "up";
+    if (reps < prevReps!) return "down";
+    return "same";
+  }
+}
+
+class WorkoutHistoryExercise {
+  const WorkoutHistoryExercise({required this.name, required this.sets});
+  final String name;
+  final List<WorkoutHistorySet> sets;
+}
+
+class WorkoutHistoryCard {
+  const WorkoutHistoryCard({
+    required this.id,
+    required this.dayId,
+    required this.dayTitle,
+    required this.date,
+    required this.loggedAt,
+    required this.loggedBy,
+    required this.loggedByName,
+    required this.exerciseCount,
+    required this.setCount,
+    required this.volume,
+    required this.cycleCheck,
+    required this.improved,
+    required this.pr,
+    required this.exercises,
+    this.coachComment,
+  });
+  final String id;
+  final String dayId;
+  final String dayTitle;
+  final String date;
+  final String loggedAt;
+  final String loggedBy;
+  final String? loggedByName;
+  final int exerciseCount;
+  final int setCount;
+  final double volume;
+  final bool cycleCheck;
+  final bool improved;
+  final bool pr;
+  final List<WorkoutHistoryExercise> exercises;
+  final String? coachComment;
+
+  String get who => loggedBy == "coach"
+      ? (loggedByName != null && loggedByName!.trim().isNotEmpty ? loggedByName!.trim() : "Coach")
+      : "Self";
+}
+
+int _completedSetCount(WorkoutLogEntry log) {
+  var n = 0;
+  for (final ex in log.exercises) {
+    n = n + ex.sets.where((s) => s.completed).length;
+  }
+  return n;
+}
+
+String _sortKey(WorkoutLogEntry log) => log.loggedAt ?? log.date;
+
+/// The id a live session uses for one program day on one date.
+String liveWorkoutId(String date, String dayId) => "live-$date-$dayId";
+
+/// Two saves of the same live session, or a thin save of the same day and
+/// date, collapse into the fuller one. A later thin save does not hide a
+/// full workout. Two different saved workouts stay separate.
+List<WorkoutLogEntry> mergeDuplicateWorkoutLogs(List<WorkoutLogEntry> logs) {
+  final kept = <WorkoutLogEntry>[];
+  final ordered = [...logs]..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
+  for (final log in ordered) {
+    final liveId = liveWorkoutId(log.date, log.dayId);
+    final dup = kept.indexWhere((k) =>
+        k.id == log.id ||
+        (k.dayId == log.dayId && k.date == log.date && (k.id == liveId || log.id == liveId)));
+    if (dup < 0) {
+      kept.add(log);
+      continue;
+    }
+    final other = kept[dup];
+    final mine = _completedSetCount(log);
+    final theirs = _completedSetCount(other);
+    if (mine > theirs || (mine == theirs && _sortKey(log).compareTo(_sortKey(other)) > 0)) {
+      kept[dup] = log;
+    }
+  }
+  kept.sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
+  return kept;
+}
+
+double _volumeOf(WorkoutLogEntry log) {
+  var total = 0.0;
+  for (final ex in log.exercises) {
+    for (final s in ex.sets) {
+      if (!s.completed) continue;
+      total += (s.completedWeight ?? 0) * (s.completedReps ?? 0);
+    }
+  }
+  return total;
+}
+
+/// Every saved workout, newest first, with the change from the previous
+/// time that exercise and set were logged.
+List<WorkoutHistoryCard> workoutHistory(ClientRecord client) {
+  final merged = mergeDuplicateWorkoutLogs(client.workoutLogs);
+  final chronological = [...merged]..sort((a, b) => _sortKey(a).compareTo(_sortKey(b)));
+  final programs = client.savedPrograms.where((p) => p.programDays.isNotEmpty).toList();
+  final cycleByProgram = <String, Set<String>>{
+    for (final p in programs) p.id: getCurrentCycleCompletedDays(client, p.programDays),
+  };
+  final newestOfDay = <String, String>{};
+  for (final log in merged) {
+    newestOfDay.putIfAbsent(log.dayId, () => log.id);
+  }
+
+  final cards = <WorkoutHistoryCard>[];
+  for (var i = 0; i < chronological.length; i++) {
+    final log = chronological[i];
+    final earlier = chronological.take(i);
+    final exercises = <WorkoutHistoryExercise>[];
+    var improved = false;
+    var pr = false;
+    for (final ex in log.exercises) {
+      final sets = <WorkoutHistorySet>[];
+      for (final s in ex.sets.where((s) => s.completed)) {
+        WorkoutHistorySet? prev;
+        for (final old in earlier.toList().reversed) {
+          final oldEx = old.exercises.where((e) => e.name == ex.name);
+          if (oldEx.isEmpty) continue;
+          final oldSet = oldEx.first.sets.where((os) => os.setNum == s.setNum && os.completed);
+          if (oldSet.isEmpty) continue;
+          prev = WorkoutHistorySet(
+            setNum: s.setNum,
+            reps: s.completedReps ?? 0,
+            weight: s.completedWeight ?? 0,
+            prevReps: oldSet.first.completedReps,
+            prevWeight: oldSet.first.completedWeight,
+          );
+          break;
+        }
+        final line = prev ??
+            WorkoutHistorySet(
+              setNum: s.setNum,
+              reps: s.completedReps ?? 0,
+              weight: s.completedWeight ?? 0,
+            );
+        if (line.weightMark == "up" || line.repsMark == "up") improved = true;
+        var best = 0.0;
+        for (final old in earlier) {
+          for (final oldEx in old.exercises.where((e) => e.name == ex.name)) {
+            for (final os in oldEx.sets.where((os) => os.setNum == s.setNum && os.completed)) {
+              final w = os.completedWeight ?? 0;
+              if (w > best) best = w;
+            }
+          }
+        }
+        if (best > 0 && (s.completedWeight ?? 0) > best) pr = true;
+        sets.add(line);
+      }
+      if (sets.isNotEmpty) exercises.add(WorkoutHistoryExercise(name: ex.name, sets: sets));
+    }
+    final setCount = exercises.fold<int>(0, (n, e) => n + e.sets.length);
+    final cycle = cycleByProgram[log.programId] ?? const <String>{};
+    cards.add(WorkoutHistoryCard(
+      id: log.id,
+      dayId: log.dayId,
+      dayTitle: log.dayTitle,
+      date: log.date,
+      loggedAt: log.loggedAt ?? log.date,
+      loggedBy: log.loggedBy,
+      loggedByName: log.loggedByName,
+      exerciseCount: exercises.length,
+      setCount: setCount,
+      volume: _volumeOf(log),
+      cycleCheck: cycle.contains(log.dayId) && newestOfDay[log.dayId] == log.id,
+      improved: improved,
+      pr: pr,
+      exercises: exercises,
+      coachComment: log.coachComment,
+    ));
+  }
+  cards.sort((a, b) => b.loggedAt.compareTo(a.loggedAt));
+  return cards;
 }

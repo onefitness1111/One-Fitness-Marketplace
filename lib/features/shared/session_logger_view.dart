@@ -138,6 +138,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   LiveLogController? _live;
   int _syncTick = 0;
   Set<String> _liveDays = {};
+  String? _coachLedDayId;
   RealtimeChannel? _activity;
 
   @override
@@ -169,12 +170,51 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     try {
       final rows = await LiveActivity.recent(clientId: widget.client.id);
       final today = isoToday();
-      final days = {
-        for (final r in rows)
-          if (r["log_date"]?.toString() == today) r["day_id"].toString(),
-      };
-      if (mounted) setState(() => _liveDays = days);
+      final days = <String>{};
+      String? coachDay;
+      for (final r in rows) {
+        if (r["log_date"]?.toString() != today) continue;
+        final ended = r["ended_at"]?.toString();
+        if (ended != null && ended.isNotEmpty) continue;
+        final dayId = r["day_id"].toString();
+        days.add(dayId);
+        final exercise = r["exercise_name"]?.toString() ?? "";
+        if (exercise == "__day_started_coach__") coachDay = dayId;
+      }
+      try {
+        final runs = await SupabaseService.client
+            .from("live_day_runs")
+            .select("day_id, started_role, started_at, ended_at")
+            .eq("client_id", widget.client.id)
+            .eq("log_date", today)
+            .isFilter("ended_at", null);
+        for (final raw in runs as List) {
+          final row = (raw as Map).cast<String, dynamic>();
+          final dayId = row["day_id"]?.toString() ?? "";
+          if (dayId.isEmpty) continue;
+          days.add(dayId);
+          final role = row["started_role"]?.toString();
+          if (role == "coach" || role == "owner") coachDay = dayId;
+        }
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _liveDays = days;
+        _coachLedDayId = coachDay;
+      });
+      if (widget.loggedBy == "client" && coachDay != null && _dayId != coachDay) {
+        _startDay(coachDay, announce: false);
+      }
     } catch (_) {}
+  }
+
+  String? _preferredLiveDay(List<ProgramDay> days) {
+    final coach = _coachLedDayId;
+    if (coach != null && days.any((d) => d.id == coach)) return coach;
+    for (final d in days) {
+      if (_liveDays.contains(d.id)) return d.id;
+    }
+    return null;
   }
 
   SavedProgram? _currentProgram() {
@@ -293,9 +333,36 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     }
   }
 
-  void _leaveDay() {
+  bool _hasDraftSets() => _sessionData.values.any((d) => d.reps != null || d.weight != null);
+
+  Future<void> _leaveDay() async {
+    if (_hasDraftSets() && !_saved) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Save this workout?"),
+          content: const Text(
+            "You have sets that are not saved to the workout yet. They stay on this phone as a draft either way.",
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, "stay"), child: const Text("Keep going")),
+            TextButton(onPressed: () => Navigator.pop(ctx, "draft"), child: const Text("Leave as draft")),
+            TextButton(onPressed: () => Navigator.pop(ctx, "save"), child: const Text("Save")),
+          ],
+        ),
+      );
+      if (!mounted || choice == null || choice == "stay") return;
+      if (choice == "save") {
+        final prog = _currentProgram();
+        final day = _currentDay();
+        if (prog != null && day != null) await _saveSession(prog, day);
+        return;
+      }
+    }
     _detachLive();
-    setState(() => _sessionStarted = false);
+    unawaited(widget._store.flush());
+    if (mounted) setState(() => _sessionStarted = false);
   }
 
   /// Which exercise the one-at-a-time view is showing.
@@ -307,7 +374,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   /// session rather than a saved preference.
   bool _fullView = false;
 
-  void _startDay(String dayId) {
+  void _startDay(String dayId, {bool announce = true}) {
     setState(() {
       _dayId = dayId;
       _sessionStarted = true;
@@ -319,7 +386,23 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     });
     _seedDraftsFromStore();
     final prog = _currentProgram();
-    if (prog != null) _attachLive(prog, dayId);
+    if (prog != null) {
+      _attachLive(prog, dayId);
+      if (!announce) return;
+      final role = widget.authorRole ?? widget.loggedBy;
+      final me = SupabaseService.currentUser?.id;
+      unawaited(SupabaseService.startLiveDay(
+        clientId: widget.client.id,
+        date: isoToday(),
+        dayId: dayId,
+        programId: prog.id,
+        role: role == "owner" ? "owner" : (role == "client" ? "client" : "coach"),
+        trainerId: role == "client" ? null : me,
+      ));
+      if (role != "client") {
+        setState(() => _coachLedDayId = dayId);
+      }
+    }
   }
 
   // Mutating _sessionData alone doesn't tell this State to rebuild — the
@@ -394,7 +477,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       return;
     }
     // The workout is done — it stops showing as "working out now".
-    unawaited(LiveActivity.end(widget.client.id, isoToday()));
+    unawaited(LiveActivity.end(widget.client.id, isoToday(), dayId: day.id));
     if (!mounted) return;
     _detachLive();
     setState(() {
@@ -459,7 +542,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
 
     return LocalBackScope(
       isOpen: _sessionStarted,
-      onBack: _leaveDay,
+      onBack: () { _leaveDay(); },
       // In Full view the Beep bar is pinned over the scrolling content, so
       // a client part-way down a long day can still reach their coach
       // without scrolling back to the top.
@@ -539,7 +622,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                                   ),
                                 ),
                                 TextButton(
-                                  onPressed: () => _startDay(days.firstWhere((d) => _liveDays.contains(d.id)).id),
+                                  onPressed: () {
+                                    final id = _preferredLiveDay(days);
+                                    if (id != null) _startDay(id);
+                                  },
                                   child: const Text("Follow live"),
                                 ),
                               ],
@@ -671,7 +757,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                   Row(
                     children: [
                       TextButton.icon(
-                        onPressed: _leaveDay,
+                        onPressed: () { _leaveDay(); },
                         style: TextButton.styleFrom(
                           foregroundColor: AppColors.mute,
                           padding: EdgeInsets.zero,

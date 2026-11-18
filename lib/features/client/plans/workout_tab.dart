@@ -47,7 +47,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     final client = ref.read(clientRecordProvider);
     // Same id = the same live session: replace, never log it twice.
     final updatedLogs = [...client.workoutLogs.where((l) => l.id != entry.id), entry];
-    await SupabaseService.updateClientWorkoutLogs(client.id, updatedLogs);
+    await SupabaseService.appendWorkoutLog(client.id, entry);
     ref
         .read(clientRecordProvider.notifier)
         .update(

@@ -52,37 +52,51 @@ class _PlansTabState extends ConsumerState<PlansTab> {
 
     final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final canEdit = isOwner || ref.watch(platformSettingsProvider).coachCanEditClientWorkouts;
-    if (!canEdit) {
-      return const Padding(
-        padding: EdgeInsets.all(18),
-        child: HintBox(
-          text: "Only the owner can build, approve, or assign workout and nutrition programs.",
+    final logButton = Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: BtnGold(
+        full: true,
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => LiveWorkoutPage(
+              clientId: widget.clientId,
+              clientName: ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId).map((c) => c.name).firstOrNull ?? "Client",
+            ),
+          ),
         ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.play, size: 14),
+            SizedBox(width: 6),
+            Text("Log workout"),
+          ],
+        ),
+      ),
+    );
+    // Logging a workout is not editing the program. The button stays even
+    // when a coach is not allowed to build or assign programs.
+    if (!canEdit) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          logButton,
+          const Expanded(
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: HintBox(
+                text: "Only the owner can build, approve, or assign workout and nutrition programs.",
+              ),
+            ),
+          ),
+        ],
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
-          child: BtnGold(
-            full: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => LiveWorkoutPage(clientId: widget.clientId, clientName: ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId).map((c) => c.name).firstOrNull ?? "Client"),
-              ),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.play, size: 14),
-                SizedBox(width: 6),
-                Text("Log workout"),
-              ],
-            ),
-          ),
-        ),
+        logButton,
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
           child: Container(

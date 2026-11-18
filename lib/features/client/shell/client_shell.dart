@@ -658,6 +658,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
               ClientLiveSessionLayer(
                 screen: screen,
                 onOpenChat: () => go("chat"),
+                onOpenWorkout: () => go("plans"),
               ),
             ],
           ),

@@ -10,6 +10,7 @@ import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/flag_utils.dart";
 import "../../../core/utils/membership_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/program_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
@@ -818,6 +819,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     );
     if (confirmed != true) return;
     try {
+      notifyClientAndCoach(
+        clientId: info.id,
+        coachId: info.primaryTrainerId,
+        clientTitle: "Account deleted",
+        clientBody: "Your ONE Fitness profile has been deleted.",
+        coachTitle: "Client deleted",
+        coachBody: "${info.name}'s profile was deleted.",
+      );
+      notifyOwnerInternal(title: "Profile deleted", body: "${info.name}'s profile was deleted.");
       await SupabaseService.deleteClientAccount(info.id);
     } catch (e) {
       if (mounted) {

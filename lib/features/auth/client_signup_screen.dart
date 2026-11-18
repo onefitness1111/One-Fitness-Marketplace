@@ -168,6 +168,8 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
       // Fire-and-forget, deliberately not awaited: the welcome email must
       // never be a reason signup takes longer or appears to fail.
       notifyWelcome(toEmail: email, firstName: firstName);
+      notifyPush(profileId: userId, title: "Welcome", body: "Your ONE Fitness account is ready.");
+      notifyOwnerInternal(title: "New client", body: "$name signed up.");
       await SupabaseService.recordTermsAcceptance(
         userId,
         version: kTermsVersion,

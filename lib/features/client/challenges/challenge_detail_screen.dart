@@ -3,6 +3,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/challenge_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/challenge.dart";
@@ -166,6 +167,14 @@ class _ChallengeDetailScreenState extends ConsumerState<ChallengeDetailScreen> {
                     return;
                   }
                   ref.read(challengesProvider.notifier).join(challenge.id, info.id);
+                  notifyClientAndCoach(
+                    clientId: info.id,
+                    coachId: challenge.trainerId,
+                    clientTitle: "You're in",
+                    clientBody: "You joined ${challenge.name}.",
+                    coachTitle: "Challenge joined",
+                    coachBody: "${info.name} joined ${challenge.name}.",
+                  );
                   // Joining is what entitles them to see the standings, so
                   // fetch them now rather than leaving the board empty until
                   // the screen is reopened.

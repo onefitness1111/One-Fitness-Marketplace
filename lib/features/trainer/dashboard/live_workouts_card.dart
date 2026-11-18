@@ -114,7 +114,7 @@ class LiveWorkoutPage extends ConsumerWidget {
     Future<void> save(WorkoutLogEntry entry) async {
       final rec = ref.read(trainerClientRecordsProvider)[clientId];
       final logs = [...?rec?.workoutLogs.where((l) => l.id != entry.id), entry];
-      await SupabaseService.updateClientWorkoutLogs(clientId, logs);
+      await SupabaseService.appendWorkoutLog(clientId, entry);
       ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(workoutLogs: logs));
     }
 

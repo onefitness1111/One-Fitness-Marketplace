@@ -6,23 +6,11 @@ import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/program_utils.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/models/workout_log.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../shared/workout_history_list.dart";
 
-// Rebuilt on each read rather than held in a `final`: a lazily-initialised
-// field would capture whichever palette happened to be active the first
-// time it was touched and keep those colours after a theme switch.
-Map<String, ({String arrow, Color color, String label})> get _dirMeta => {
-  "up": (arrow: "↑", color: Color(0xFF00E676), label: "Increased"),
-  "down": (arrow: "↓", color: AppColors.danger, label: "Decreased"),
-  "same": (arrow: "=", color: AppColors.gold, label: "Maintained"),
-  "new": (arrow: "•", color: AppColors.mute, label: "First logged"),
-};
-
-/// Mirrors TrainerView.jsx's "logs" tab (`<LoggedSessions client readOnly />`)
-/// — the same read-only progression history the client sees of their own
-/// sessions, from the coach's side, plus a per-session comment box
-/// (Notifications spec — "Coach comments on a workout"). Session Feedback
-/// isn't modeled yet.
+/// The same workout cards the client sees, plus a comment on each session.
 class LoggedTab extends ConsumerStatefulWidget {
   const LoggedTab({super.key, required this.clientId});
 
@@ -47,16 +35,32 @@ class _LoggedTabState extends ConsumerState<LoggedTab> {
     super.dispose();
   }
 
-  Future<void> _saveComment(String logId) async {
+  Future<void> _saveComment(WorkoutHistoryCard card) async {
     final record = ref.read(trainerClientRecordsProvider)[widget.clientId];
     if (record == null) return;
-    final text = _controllers[logId]?.text.trim() ?? "";
-    setState(() => _savingId = logId);
+    final text = _controllers[card.id]?.text.trim() ?? "";
+    final matches = record.workoutLogs.where((l) => l.id == card.id);
+    if (matches.isEmpty) return;
+    final updated = WorkoutLogEntry(
+      id: matches.first.id,
+      date: matches.first.date,
+      programId: matches.first.programId,
+      programName: matches.first.programName,
+      dayId: matches.first.dayId,
+      dayTitle: matches.first.dayTitle,
+      exercises: matches.first.exercises,
+      loggedAt: matches.first.loggedAt,
+      loggedBy: matches.first.loggedBy,
+      loggedByName: matches.first.loggedByName,
+      coachComment: text,
+      coachCommentAt: stamp(),
+    );
+    setState(() => _savingId = card.id);
     try {
-      final next = record.workoutLogs
-          .map((l) => l.id == logId ? l.copyWith(coachComment: text, coachCommentAt: stamp()) : l)
-          .toList();
-      await SupabaseService.updateClientWorkoutLogs(widget.clientId, next);
+      await SupabaseService.appendWorkoutLog(widget.clientId, updated);
+      final next = [
+        for (final l in record.workoutLogs) l.id == updated.id ? updated : l,
+      ];
       ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(workoutLogs: next));
       if (text.isNotEmpty) {
         final info = ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId);
@@ -74,146 +78,48 @@ class _LoggedTabState extends ConsumerState<LoggedTab> {
 
   @override
   Widget build(BuildContext context) {
-    final records = ref.watch(trainerClientRecordsProvider);
-    final record = records[widget.clientId];
-    final days = record != null
-        ? getDayProgressionSummary(record)
-        : const <DayProgression>[];
-
-    if (days.isEmpty) {
+    final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
+    final cards = record == null ? const <WorkoutHistoryCard>[] : workoutHistory(record);
+    if (cards.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(18),
         child: HintBox(text: "Nothing logged yet for this client."),
       );
     }
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionLabel("Logged Sessions"),
-          ...days.map((day) {
-            final logMatches = record!.workoutLogs.where((l) => l.id == day.sourceId);
-            final log = logMatches.isEmpty ? null : logMatches.first;
-            return CollapsibleSection(
-              title: day.dayTitle,
-              meta: Text(
-                "${_niceDate(day.date)} · ${day.loggedBy == "coach" ? "Logged by ${day.loggedByName?.trim().isNotEmpty == true ? day.loggedByName : "coach"}" : "Self-logged"}",
-                style: TextStyle(fontSize: 11, color: AppColors.mute),
+          const SectionLabel("Logged sessions"),
+          WorkoutHistoryList(
+            cards: cards,
+            commentBuilder: (card) => Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("COACH COMMENT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.mute, letterSpacing: 0.5)),
+                  const SizedBox(height: 6),
+                  AppField(
+                    controller: _controllerFor(card.id, card.coachComment),
+                    placeholder: "Leave a note on this session…",
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: BtnGhost(
+                      onPressed: _savingId == card.id ? null : () => _saveComment(card),
+                      child: Text(_savingId == card.id ? "Saving…" : "Save comment"),
+                    ),
+                  ),
+                ],
               ),
-              children: [
-                ...day.exercises.map(
-                  (ex) => CollapsibleSection(
-                    title: ex.name,
-                    meta: Text(
-                      "${_dirMeta[ex.direction]!.label} ${_dirMeta[ex.direction]!.arrow}",
-                      style: TextStyle(
-                        color: _dirMeta[ex.direction]!.color,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
-                    ),
-                    children: ex.sets
-                        .map(
-                          (s) => Container(
-                            padding: const EdgeInsets.symmetric(vertical: 7),
-                            decoration: BoxDecoration(
-                              border: Border(
-                                bottom: BorderSide(color: AppColors.line),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  "Set ${s.setNum}",
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: AppColors.mute,
-                                  ),
-                                ),
-                                Row(
-                                  children: [
-                                    Text(
-                                      s.prevWeight != null
-                                          ? "${_fmtNum(s.prevWeight!)} lbs → ${_fmtNum(s.weight)} lbs"
-                                          : "${_fmtNum(s.weight)} lbs",
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: AppColors.txt,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _dirMeta[s.direction ?? "new"]!.arrow,
-                                      style: TextStyle(
-                                        color: _dirMeta[s.direction ?? "new"]!
-                                            .color,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-                if (log != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("COACH COMMENT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.mute, letterSpacing: 0.5)),
-                        const SizedBox(height: 6),
-                        AppField(
-                          controller: _controllerFor(log.id, log.coachComment),
-                          placeholder: "Leave a note on this session…",
-                          maxLines: 2,
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: BtnGhost(
-                            onPressed: _savingId == log.id ? null : () => _saveComment(log.id),
-                            child: Text(_savingId == log.id ? "Saving…" : "Save comment"),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            );
-          }),
+            ),
+          ),
         ],
       ),
     );
   }
-}
-
-String _fmtNum(double n) => n % 1 == 0 ? n.toInt().toString() : n.toString();
-
-String _niceDate(String iso) {
-  final d = DateTime.parse(iso);
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return "${weekdays[d.weekday % 7]}, ${months[d.month - 1]} ${d.day}";
 }

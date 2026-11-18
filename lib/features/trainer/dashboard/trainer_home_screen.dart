@@ -123,10 +123,8 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final run = _run;
     _run = null;
     if (run == null) return;
-    // Ending the session ends everyone's live workout in it too.
-    for (final id in _runClientIds) {
-      unawaited(LiveActivity.end(id, isoToday()));
-    }
+    // Ending the booked clock does not finish a program day. Each day is
+    // saved and closed on its own, so two days on the same date stay separate.
     _runClientIds = const [];
     try {
       await SupabaseService.endSessionRun(run.id);
@@ -183,7 +181,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   Future<void> _saveCoachSession(String clientId, WorkoutLogEntry entry) async {
     final record = ref.read(trainerClientRecordsProvider)[clientId];
     final updatedLogs = [...?record?.workoutLogs.where((l) => l.id != entry.id), entry];
-    await SupabaseService.updateClientWorkoutLogs(clientId, updatedLogs);
+    await SupabaseService.appendWorkoutLog(clientId, entry);
     ref
         .read(trainerClientRecordsProvider.notifier)
         .update(clientId, (r) => r.copyWith(workoutLogs: updatedLogs));
@@ -976,6 +974,20 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                             .read(allBookingsProvider.notifier)
                                             .updateAttendance(b.id, prev);
                                       });
+                                      if (next == "early-cancel" || next == "late-cancel" || next == "no-show") {
+                                        final coachName = t.isNotEmpty ? t.first.displayTitle : "Your coach";
+                                        final label = next == "no-show"
+                                            ? "no-show"
+                                            : (next == "late-cancel" ? "late cancel" : "early cancel");
+                                        notifyClientAndCoach(
+                                          clientId: b.clientId,
+                                          coachId: b.trainerId,
+                                          clientTitle: "Session updated",
+                                          clientBody: "$coachName marked this session as a $label.",
+                                          coachTitle: "Session updated",
+                                          coachBody: "${attendee.name} was marked as a $label.",
+                                        );
+                                      }
                                       if (next == "checked-in" &&
                                           next != prev) {
                                         final total = ref

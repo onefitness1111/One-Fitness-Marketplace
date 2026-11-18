@@ -70,6 +70,8 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
       await SupabaseService.updateClientMeasurements(client.id, next);
       ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(measurements: next));
       final info = ref.read(clientInfoProvider);
+      notifyPush(profileId: info.id, title: "Measurement saved", body: "Your measurement was saved.");
+      notifyOwnerInternal(title: "Measurement logged", body: "${info.name} logged a measurement.");
       final goalWeight = parseLeadingNum(
         (client.intake["nutritional"]?.answers["goalWeight"] ?? client.intake["personalTraining"]?.answers["goalWeight"])?.toString(),
       );

@@ -51,9 +51,22 @@ class _CollapsibleSectionState extends State<CollapsibleSection> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(widget.title, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.txt)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.txt),
+                        ),
+                        if (widget.meta != null) ...[
+                          const SizedBox(height: 2),
+                          widget.meta!,
+                        ],
+                      ],
+                    ),
                   ),
-                  if (widget.meta != null) widget.meta!,
                 ],
               ),
             ),

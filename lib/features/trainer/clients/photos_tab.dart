@@ -79,6 +79,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
         title: "New progress photo",
         body: "${photo.addedBy} added a progress photo to your gallery.",
       );
+      notifyOwnerInternal(title: "Progress photo", body: "A progress photo was added for a client.");
       if (mounted) setState(() => _adding = false);
     } catch (e) {
       if (mounted) {

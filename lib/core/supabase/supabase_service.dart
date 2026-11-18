@@ -2367,6 +2367,59 @@ class SupabaseService {
     "workoutLogs": logs.map(_workoutLogToJson).toList(),
   });
 
+  /// Adds or replaces one workout without rewriting the rest of the client's
+  /// record, so two saves at once cannot wipe each other out.
+  static Future<void> appendWorkoutLog(String profileId, WorkoutLogEntry entry) async {
+    try {
+      await client.rpc("append_workout_log", params: {
+        "p_client": profileId,
+        "p_entry": _workoutLogToJson(entry),
+      });
+    } catch (_) {
+      final current = await loadClientRecord(profileId);
+      final next = [...current.workoutLogs.where((l) => l.id != entry.id), entry];
+      await updateClientWorkoutLogs(profileId, next);
+    }
+  }
+
+  /// Marks a program day as started, before the first set is typed.
+  /// A coach start is what turns Beep Your Coach on.
+  static Future<void> startLiveDay({
+    required String clientId,
+    required String date,
+    required String dayId,
+    required String programId,
+    required String role,
+    String? trainerId,
+  }) async {
+    final marker = role == "client" ? "__day_started_client__" : "__day_started_coach__";
+    final trainer = _looksLikeUuid(trainerId) ? trainerId : null;
+    try {
+      await client.rpc("start_live_day", params: {
+        "p_client": clientId,
+        "p_date": date,
+        "p_day": dayId,
+        "p_program": programId,
+        "p_role": role,
+        "p_trainer": trainer,
+      });
+    } catch (_) {
+      try {
+        await client.rpc("upsert_live_set", params: {
+          "p_client": clientId,
+          "p_date": date,
+          "p_day": dayId,
+          "p_program": programId,
+          "p_exercise": marker,
+          "p_set": 0,
+          "p_field": "reps",
+          "p_value": 0,
+          "p_at": DateTime.now().toUtc().toIso8601String(),
+        });
+      } catch (_) {}
+    }
+  }
+
   /// `client_records.data.measurements` — the Body tab's weight/body-fat/
   /// tape-measurement log (measurements_tab.dart). Same shape as
   /// [updateClientProgramDays]: caller passes the full accumulated list.
@@ -3070,11 +3123,25 @@ class SupabaseService {
   /// of coaches — and RLS already narrows it to the caller's own sessions
   /// plus any they're booked into.
   static Future<List<LiveSession>> loadLiveSessions() async {
+    try {
+      // Finishes runs whose clock ended recently. Older stuck rows are
+      // left alone. A missing function (not deployed yet) is ignored.
+      await client.rpc("close_recent_expired_session_runs");
+    } catch (_) {}
     final rows = await client.from("session_runs").select().isFilter("ended_at", null);
     return rows
         .map((r) => LiveSession.fromJson(r.cast<String, dynamic>()))
         .whereType<LiveSession>()
+        .where((r) => r.isLive)
         .toList();
+  }
+
+  /// An expired run is not a live one. A run that finished more than a day
+  /// and a half ago is left in the database; it is simply not reused.
+  static bool _recentlyExpired(LiveSession run) {
+    final ended = run.endsAt;
+    if (ended == null || run.isLive) return false;
+    return DateTime.now().toUtc().difference(ended) < const Duration(hours: 36);
   }
 
   /// The coach starting a session, which is what switches Beep Your Coach on
@@ -3100,7 +3167,18 @@ class SupabaseService {
         .isFilter("ended_at", null)
         .maybeSingle();
     if (existing != null) {
-      return LiveSession.fromJson(existing.cast<String, dynamic>());
+      final run = LiveSession.fromJson(existing.cast<String, dynamic>());
+      if (run != null && run.isLive) return run;
+      // The clock already finished. Close a recent one so it cannot be
+      // brought back, then start fresh. An old stuck row is not closed
+      // and is not reused.
+      if (run != null && _recentlyExpired(run)) {
+        await client.from("session_runs").update({
+          "ended_at": run.endsAt!.toUtc().toIso8601String(),
+        }).eq("id", run.id);
+      } else {
+        return null;
+      }
     }
 
     final row = await client
@@ -3148,7 +3226,7 @@ class SupabaseService {
   /// screen. Who may insert what is enforced by RLS, which re-checks that
   /// the session is live, semi-private, and one this client is booked into.
   static Future<Beep?> sendBeep({
-    required String sessionRunId,
+    String? sessionRunId,
     required String trainerId,
     required BeepKind kind,
     String? exercise,
@@ -3156,7 +3234,7 @@ class SupabaseService {
     final row = await client
         .from("beeps")
         .insert({
-          "session_run_id": sessionRunId,
+          if (_looksLikeUuid(sessionRunId)) "session_run_id": sessionRunId,
           "client_id": currentUser?.id,
           "trainer_id": trainerId,
           "kind": kind.key,

@@ -11,6 +11,7 @@ import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/merge_token_utils.dart";
 import "../../../core/utils/onboarding_utils.dart";
 import "../../../core/widgets/widgets.dart";
@@ -515,6 +516,16 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // Always asked: the server decides early vs late and sends the right email.
       final feeRes = await takeLateCancelFee(b.id);
       await SupabaseService.deleteBooking(b.id, archive: true);
+      final coaches = ref.read(trainersProvider).where((t) => t.id == b.trainerId);
+      final coachName = coaches.isEmpty ? "your coach" : coaches.first.displayTitle;
+      notifyClientAndCoach(
+        clientId: ref.read(clientInfoProvider).id,
+        coachId: b.trainerId,
+        clientTitle: isLate ? "Late cancel confirmed" : "Cancellation confirmed",
+        clientBody: "Your session on ${niceDate(b.date)} at ${fmtSlot(b.slot)} with $coachName is cancelled.",
+        coachTitle: isLate ? "Late cancel" : "Early cancel",
+        coachBody: "A client cancelled ${niceDate(b.date)} at ${fmtSlot(b.slot)}.",
+      );
       ref.read(clientBookingsProvider.notifier).cancelBooking(b.id);
       // The slot list reads the gym-wide list, so it has to drop the booking
       // too, otherwise the cancelled session keeps showing as "Booked".
@@ -782,6 +793,14 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         SupabaseService.clientNotify("booking-confirmed", {
           "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
         });
+        notifyClientAndCoach(
+          clientId: info.id,
+          coachId: pick.trainer.id,
+          clientTitle: "Booking confirmed",
+          clientBody: "You're booked for ${niceDate(_date)} at ${fmtSlot(pick.slot)} with ${pick.trainer.displayTitle}.",
+          coachTitle: "New booking",
+          coachBody: "${info.name} booked ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
+        );
       }
       // The coach is told now, while there's still time to chase the forms
       // before the session. Only for a client who holds a plan — see

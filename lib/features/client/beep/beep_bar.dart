@@ -6,6 +6,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
 import "../../../data/providers/beep_providers.dart";
@@ -142,11 +143,23 @@ class _BeepBarState extends ConsumerState<BeepBar> {
   @override
   Widget build(BuildContext context) {
     final clientId = ref.watch(clientInfoProvider).id;
-    final run = ref.watch(liveSessionsProvider.notifier).beepable;
-    // Watch the list too, so the bar appears and disappears as the coach
-    // starts and ends the session.
+    final coachLed = ref.watch(coachLedDaysProvider.notifier).forClient(clientId);
+    ref.watch(coachLedDaysProvider);
+    // A booked clock by itself is not enough. Beep is only on while a coach
+    // has started this client's program day, including from Log workout.
+    if (coachLed == null) return const SizedBox.shrink();
+    final booked = ref.watch(liveSessionsProvider.notifier).beepable;
     ref.watch(liveSessionsProvider);
-    if (run == null) return const SizedBox.shrink();
+    final run = booked ??
+        LiveSession(
+          id: coachLed.fallbackRunId,
+          trainerId: coachLed.trainerId ?? "",
+          date: isoToday(),
+          slotMin: 0,
+          sessionType: "log-workout",
+          startedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+    if (run.trainerId.isEmpty) return const SizedBox.shrink();
 
     final mine = ref.watch(beepsProvider.notifier).mineFor(clientId);
     ref.watch(beepsProvider);

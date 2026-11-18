@@ -397,13 +397,33 @@ class LiveActivity {
     }).toList();
   }
 
-  /// Marks a client's live workout for [isoDate] as finished.
-  static Future<void> end(String clientId, String isoDate) async {
+  /// Finishes one program day. A different day logged on the same date stays open.
+  static Future<void> end(String clientId, String isoDate, {required String dayId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
     try {
-      await SupabaseService.client.rpc("end_live_logs", params: {"p_client": clientId, "p_date": isoDate});
+      await SupabaseService.client.rpc("end_live_logs", params: {
+        "p_client": clientId,
+        "p_date": isoDate,
+        "p_day": dayId,
+      });
     } catch (_) {
-      // Best-effort: it also stops showing once it has been idle for a while.
+      try {
+        await SupabaseService.client
+            .from("live_set_logs")
+            .update({"ended_at": now})
+            .eq("client_id", clientId)
+            .eq("log_date", isoDate)
+            .eq("day_id", dayId);
+      } catch (_) {}
     }
+    try {
+      await SupabaseService.client
+          .from("live_day_runs")
+          .update({"ended_at": now})
+          .eq("client_id", clientId)
+          .eq("log_date", isoDate)
+          .eq("day_id", dayId);
+    } catch (_) {}
   }
 
   static RealtimeChannel watch({String? clientId, required void Function() onChange}) {
