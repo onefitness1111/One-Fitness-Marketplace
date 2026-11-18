@@ -86,8 +86,10 @@ serve(async (req) => {
       });
     }
 
-    if (!card) return json({ ok: false, needsCard: true });
-    if (!card.hasAddress && !body.address) return json({ ok: false, needsAddress: true });
+    const ledgerId = String(body.ledgerId ?? "");
+    if (!card || (!card.hasAddress && !body.address)) {
+      return await recordBalance(admin, clientId, kind, user.id, null, null, ledgerId);
+    }
     if (body.address) {
       await stripe.paymentMethods.update(card.id, { billing_details: billing(body.address) });
       await stripe.customers.update(customerId!, {
@@ -109,15 +111,27 @@ serve(async (req) => {
         metadata: { client_id: clientId, fee_kind: kind },
       });
     } catch (e) {
-      const err = e as { code?: string; type?: string };
-      const code = err.code ?? "";
-      if (code === "authentication_required" || err.type === "StripeCardError") {
-        return json({ ok: false, needsCard: true, code });
+      const err = e as { code?: string; payment_intent?: { id?: string } };
+      if (err.payment_intent?.id) {
+        try {
+          await stripe.paymentIntents.cancel(err.payment_intent.id);
+        } catch (_) { /* already closed */ }
       }
-      throw e;
+      return await recordBalance(admin, clientId, kind, user.id, err.payment_intent?.id ?? null, card.id, ledgerId, err.code ?? "card_declined");
     }
     if (intent.status !== "succeeded") {
-      return json({ ok: false, needsCard: true, code: intent.status });
+      try {
+        await stripe.paymentIntents.cancel(intent.id);
+      } catch (_) { /* requires_action that cannot be finished off-session */ }
+      return await recordBalance(admin, clientId, kind, user.id, intent.id, card.id, ledgerId, intent.status);
+    }
+
+    if (ledgerId) {
+      await admin.rpc("settle_ledger_paid", {
+        p_id: ledgerId,
+        p_payment_intent: intent.id,
+        p_payment_method: card.id,
+      });
     }
 
     const { data: profile } = await admin.from("profiles").select("name").eq("id", clientId).maybeSingle();
@@ -135,7 +149,7 @@ serve(async (req) => {
       stripe_payment_intent_id: intent.id,
     });
     const dollars = `$${(FEES[kind] / 100).toFixed(2)}`;
-    await notifyProfile(admin, clientId, "Fee charged", `A ${dollars} ${LABELS[kind].toLowerCase()} was charged to your card.`, true);
+    await notifyProfile(admin, clientId, "Fee charged", `A ${dollars} ${LABELS[kind].toLowerCase()} was charged to your card.`, false);
     return json({
       ok: true,
       charged: true,
@@ -151,6 +165,63 @@ serve(async (req) => {
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+}
+
+// No card, a decline, or a bank check that was not finished. The fee is
+// recorded either way. A second try for the same ledger row does not add it again.
+// deno-lint-ignore no-explicit-any
+async function recordBalance(
+  admin: any,
+  clientId: string,
+  kind: string,
+  createdBy: string,
+  paymentIntentId: string | null,
+  paymentMethodId: string | null,
+  ledgerId: string,
+  code?: string,
+) {
+  if (ledgerId) {
+    const { data: row } = await admin.from("clients").select("balance_cents").eq("profile_id", clientId).maybeSingle();
+    return json({
+      ok: false,
+      balanceRecorded: true,
+      alreadyRecorded: true,
+      optionalCard: true,
+      ledgerId,
+      balanceCents: row?.balance_cents ?? null,
+      amountCents: FEES[kind],
+      code: code ?? null,
+    });
+  }
+  const feeType = kind === "close" ? "close" : kind === "noshow" ? "noshow" : "late";
+  const { data: recorded, error } = await admin.rpc("record_unpaid_fee", {
+    p_client: clientId,
+    p_type: feeType,
+    p_amount_cents: FEES[kind],
+    p_booking: null,
+    p_created_by: createdBy,
+    p_stripe_payment_intent: paymentIntentId,
+    p_stripe_payment_method: paymentMethodId,
+  });
+  if (error) throw new Error(error.message);
+  const owed = Math.abs(Number(recorded?.balanceCents ?? FEES[kind]));
+  const dollars = `$${(owed / 100).toFixed(2)}`;
+  await notifyProfile(
+    admin,
+    clientId,
+    "Outstanding balance",
+    `You have an outstanding balance of ${dollars}. Please pay your balance to book sessions.`,
+    false,
+  );
+  return json({
+    ok: false,
+    balanceRecorded: true,
+    optionalCard: true,
+    ledgerId: recorded?.ledgerId ?? null,
+    balanceCents: recorded?.balanceCents ?? null,
+    amountCents: FEES[kind],
+    code: code ?? null,
+  });
 }
 
 async function defaultCard(stripe: Stripe, customerId: string) {

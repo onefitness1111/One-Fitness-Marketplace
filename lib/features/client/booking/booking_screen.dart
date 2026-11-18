@@ -32,6 +32,7 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../drawer_screens/waiver_signing_screen.dart";
 import "../shell/client_shell_state.dart";
+import "balance_due_sheet.dart";
 import "booking_cancel_screen.dart";
 import "booking_picking_screen.dart";
 import "date_strip.dart";
@@ -181,11 +182,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   Future<void> _payForSingle(Trainer t, String sessionType, String discipline, int slot) async {
     if (_singleBusy) return;
     final info = ref.read(clientInfoProvider);
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      _showError(blocked);
-      return;
-    }
+    if (await stopForOutstandingBalance(context, info.id)) return;
     final settings = ref.read(platformSettingsProvider);
     final offering = trainerOfferingsOn(t, _date)
         .where((o) => o.slot == slot && o.sessionType == sessionType && o.discipline == discipline)
@@ -766,11 +763,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // of every session count (see sessionsUsedThisPeriod).
       isPhysicalAssessment: _freeAssessment,
     );
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      if (mounted) setState(() => _bookingError = blocked);
-      return;
-    }
+    if (!mounted) return;
+    if (await stopForOutstandingBalance(context, info.id)) return;
     setState(() {
       _busy = true;
       _bookingError = null;
@@ -860,6 +854,18 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (!mounted) return;
       // The server found a waiver this device didn't know about yet — open
       // it right here, then come back to this same confirm screen.
+      if (e.toString().contains("BALANCE_DUE")) {
+        final owed = await unpaidBalanceCents(info.id);
+        if (mounted && owed != null) {
+          await showOutstandingBalanceSheet(context, balanceCents: owed);
+        }
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _bookingError = owed == null ? _bookingErrorMessage(e) : null;
+        });
+        return;
+      }
       if (e.toString().contains("waiver-required") && _outstandingDocs().isNotEmpty) {
         setState(() {
           _busy = false;
@@ -887,7 +893,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   String _bookingErrorMessage(Object e) {
     final text = e.toString();
     if (text.contains("BALANCE_DUE")) {
-      return "You have an unpaid balance. Please pay it from your Profile before booking another session.";
+      final start = text.indexOf("You have an outstanding balance");
+      if (start >= 0) {
+        final end = text.indexOf("book sessions.");
+        if (end > start) return text.substring(start, end + "book sessions.".length);
+      }
+      return "You have an outstanding balance. Please pay your balance to book sessions.";
     }
     if (text.contains("waiver-required")) {
       return "Please sign the waiver under Signatures (in the menu) before booking.";

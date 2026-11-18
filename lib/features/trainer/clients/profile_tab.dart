@@ -742,6 +742,12 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
           ),
           if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
             const SizedBox(height: 8),
+            BalanceCard(
+              key: ValueKey("balance-${info.id}"),
+              clientId: info.id,
+              editable: ref.watch(trainerAuthProvider) == "owner",
+              canPay: false,
+            ),
             BtnGold(
               full: true,
               onPressed: () => setState(() => _cardCharge = true),
@@ -775,7 +781,6 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
           ),
           if (ref.watch(trainerAuthProvider) == "owner") ...[
             const SizedBox(height: 8),
-            BalanceCard(key: ValueKey("balance-${info.id}"), clientId: info.id, editable: true),
             OutlinedButton.icon(
               onPressed: () => setState(() => _paymentDetails = true),
               icon: const Icon(LucideIcons.creditCard, size: 14),

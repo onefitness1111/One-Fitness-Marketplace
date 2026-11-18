@@ -3,6 +3,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -117,7 +118,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           ..sort((a, b) => ((a["name"] as String?) ?? "").compareTo((b["name"] as String?) ?? ""))),
       ];
 
-  List<ChatConversation> _staffConversations() {
+  List<ChatConversation> _staffConversations(Set<String> unreadKeys) {
     final out = <ChatConversation>[];
     for (final t in _teammates) {
       final key = t["id"] as String;
@@ -135,6 +136,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         preview: last["body"] as String? ?? "",
         at: DateTime.tryParse(last["created_at"]?.toString() ?? "")?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0),
         outgoing: last["sender_id"] == _me,
+        unread: unreadKeys.contains("staff:$key"),
       ));
     }
     return out;
@@ -219,7 +221,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             body: SafeArea(child: TeamChatScreen(initialKey: key, initialChannels: channels)),
           ),
         ))
-        .then((_) => _loadStaff());
+        .then((_) {
+          _loadStaff();
+          ref.read(unreadChatKeysProvider.notifier).refresh();
+        });
   }
 
   @override
@@ -287,6 +292,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// into it (including a remembered thread reopened via SharedPreferences)
   /// — mirrors the old _CoachCompose.initState's read-receipt behavior.
   void _markThreadRead(String clientId) {
+    SupabaseService.markChatRead(clientId);
+    ref.read(unreadChatKeysProvider.notifier).clear(clientId);
     final trainerAuth = ref.read(trainerAuthProvider);
     final record = ref.read(trainerClientRecordsProvider)[clientId];
     if (record == null) return;
@@ -432,6 +439,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     Map<String, ClientRecord> records,
     String? trainerAuth,
     bool isOwner,
+    Set<String> unreadKeys,
   ) {
     final out = <ChatConversation>[];
     for (final c in roster) {
@@ -449,7 +457,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         outgoing: last.who == "trainer",
         // Unread means the client wrote something the coach hasn't opened
         // yet — the same flag the thread clears on open.
-        unread: mine.any((m) => m.who == "client" && !m.readByCoach),
+        unread: unreadKeys.contains(c.id) || mine.any((m) => m.who == "client" && !m.readByCoach),
       ));
     }
     out.sort((a, b) => b.at.compareTo(a.at));
@@ -477,6 +485,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         .where((c) => isOwner || coachClientScope != "own" || c.primaryTrainerId == trainerAuth)
         .toList();
     final records = ref.watch(trainerClientRecordsProvider);
+    final unreadKeys = ref.watch(unreadChatKeysProvider);
     final settings = ref.watch(platformSettingsProvider);
 
     final selectedMatches = roster.where((c) => c.id == _recipientId);
@@ -518,7 +527,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             ),
           Expanded(
             child: ConversationList(
-              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner), ..._staffConversations(), ..._pairConversations()]
+              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys), ..._staffConversations(unreadKeys), ..._pairConversations()]
                 ..sort((a, b) => b.at.compareTo(a.at)),
               emptyText: "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
               onOpen: (clientId) {
@@ -527,6 +536,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
                   return;
                 }
                 if (clientId.startsWith("staff:")) {
+                  SupabaseService.markChatRead(clientId);
+                  ref.read(unreadChatKeysProvider.notifier).clear(clientId);
                   _openStaffChat(clientId.substring(6), _channels);
                   return;
                 }

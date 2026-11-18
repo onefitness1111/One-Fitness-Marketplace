@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../chat/unread_dot.dart";
 import "../theme/app_colors.dart";
 import "widgets.dart";
 
@@ -130,11 +131,7 @@ class ConversationList extends StatelessWidget {
                                       ),
                                       if (c.unread) ...[
                                         const SizedBox(width: 8),
-                                        Container(
-                                          width: 8,
-                                          height: 8,
-                                          decoration: BoxDecoration(color: AppColors.gold, shape: BoxShape.circle),
-                                        ),
+                                        const UnreadDot(),
                                       ],
                                     ],
                                   ),

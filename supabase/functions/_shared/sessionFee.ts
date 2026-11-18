@@ -58,6 +58,8 @@ export async function collectSessionFee(
   const chargeType = kind === "late" ? "late" : "noshow";
 
   let charged = false;
+  let paymentIntentId: string | null = null;
+  let paymentMethodId: string | null = null;
   const { data: clientRow } = await admin
     .from("clients")
     .select("stripe_customer_id, balance_cents")
@@ -69,6 +71,7 @@ export async function collectSessionFee(
       const methods = await stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 1 });
       const pm = methods.data[0]?.id;
       if (pm) {
+        paymentMethodId = pm;
         const intent = await stripe.paymentIntents.create({
           amount: cents,
           currency: "usd",
@@ -79,9 +82,14 @@ export async function collectSessionFee(
           description,
           metadata: { booking_id: bookingId, fee_kind: kind },
         });
+        paymentIntentId = intent.id;
         charged = intent.status === "succeeded";
+        if (!charged) await cancelOpenIntent(intent.id);
       }
     } catch (e) {
+      const err = e as { payment_intent?: { id?: string }; message?: string };
+      paymentIntentId = err.payment_intent?.id ?? paymentIntentId;
+      if (paymentIntentId) await cancelOpenIntent(paymentIntentId);
       console.error("session fee card charge failed:", e instanceof Error ? e.message : String(e));
       charged = false;
     }
@@ -106,23 +114,52 @@ export async function collectSessionFee(
     return { charged: false, alreadyCharged: true, feeCents: cents, kind };
   }
 
+  let balanceRecorded = false;
+  let balanceCents = Number(clientRow?.balance_cents ?? 0);
   if (!charged) {
-    const current = Number(clientRow?.balance_cents ?? 0);
-    await admin.from("clients").update({ balance_cents: current - cents }).eq("profile_id", clientId);
+    const ledgerType = kind === "close" ? "close" : kind === "noshow" ? "noshow" : "late";
+    const { data: recorded, error: recordErr } = await admin.rpc("record_unpaid_fee", {
+      p_client: clientId,
+      p_type: ledgerType,
+      p_amount_cents: cents,
+      p_booking: bookingId,
+      p_created_by: booking?.trainer_id ?? null,
+      p_stripe_payment_intent: paymentIntentId,
+      p_stripe_payment_method: paymentMethodId,
+    });
+    if (recordErr) throw new Error(recordErr.message);
+    balanceRecorded = recorded?.alreadyRecorded !== true;
+    balanceCents = Number(recorded?.balanceCents ?? balanceCents - cents);
   }
 
-  if (!skipNotice) {
-    const amount = dollars(cents);
-    const returns = fee?.returnsSession !== false && kind !== "noshow";
-    const body = charged
-      ? (returns
-        ? `A ${amount} fee was charged. Your session is back on your plan.`
-        : `A ${amount} no-show fee was charged. This session was used.`)
-      : (returns
-        ? `We couldn't charge the ${amount} fee, so it's on your balance. Your session is back on your plan.`
-        : `We couldn't charge the ${amount} no-show fee, so it's on your balance. This session was used.`);
-    await notifyProfile(admin, clientId, charged ? "Fee charged" : "Fee added to your balance", body, true);
+  const amount = dollars(cents);
+  const returns = fee?.returnsSession !== false && kind !== "noshow";
+  const owed = dollars(Math.abs(balanceCents));
+  if (!charged && balanceRecorded) {
+    const body = `You have an outstanding balance of ${owed}. Please pay your balance to book sessions.`;
+    await notifyProfile(admin, clientId, "Outstanding balance", body, false);
+  } else if (!skipNotice && charged) {
+    const body = returns
+      ? `A ${amount} fee was charged. Your session is back on your plan.`
+      : `A ${amount} no-show fee was charged. This session was used.`;
+    await notifyProfile(admin, clientId, "Fee charged", body, false);
   }
 
-  return { charged, feeCents: cents, kind, returnsSession: fee?.returnsSession !== false && kind !== "noshow" };
+  return {
+    charged,
+    balanceRecorded: !charged,
+    balanceCents,
+    feeCents: cents,
+    kind,
+    returnsSession: returns,
+    alreadyRecorded: !charged && !balanceRecorded,
+  };
+}
+
+async function cancelOpenIntent(id: string) {
+  try {
+    await stripe.paymentIntents.cancel(id);
+  } catch (_) {
+    // Already canceled or already finished. The fee still goes on the balance.
+  }
 }

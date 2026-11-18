@@ -3370,7 +3370,7 @@ class SupabaseService {
     return (rows as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<void> updateBookingAttendance(String id, String? status) async {
+  static Future<Map<String, dynamic>?> updateBookingAttendance(String id, String? status) async {
     await client
         .from("bookings")
         .update({"attendance_status": status})
@@ -3389,25 +3389,56 @@ class SupabaseService {
     // full amount goes onto the client's balance. Never blocks marking.
     if (status == "late-cancel" || status == "no-show" || status == "early-cancel") {
       try {
-        // The phone already tells the client. skipNotice keeps the function
-        // from sending that same note a second time once it is deployed.
-        await client.functions.invoke("charge-attendance-fee", body: {
+        // The phone tells the client from the result. skipNotice keeps a
+        // successful charge from being announced twice. An unpaid balance
+        // still sends its own push from the server.
+        final res = await client.functions.invoke("charge-attendance-fee", body: {
           "bookingId": id,
           "skipNotice": true,
         });
+        final data = res.data;
+        if (data is Map) return data.cast<String, dynamic>();
       } catch (e) {
         // ignore: avoid_print
         print("[attendance fee] failed: $e");
       }
     }
+    return null;
   }
 
   /// A client's account balance in cents: negative = they owe the gym,
-  /// positive = credit.
+  /// positive = credit. The owner, the client, and that client's coach
+  /// can read the amount. The answer has no phone and no address.
   static Future<int> loadBalanceCents(String clientId) async {
+    try {
+      final rows = await _rpcList("client_balances_for", {"p_ids": [clientId]});
+      if (rows.isNotEmpty && rows.first is Map) {
+        return (rows.first["balance_cents"] as num?)?.toInt() ?? 0;
+      }
+    } catch (_) {}
     final rows = await _rpcList("client_billing_for", {"p_ids": [clientId]});
     if (rows.isEmpty || rows.first is! Map) return 0;
     return (rows.first["balance_cents"] as num?)?.toInt() ?? 0;
+  }
+
+  /// Owner only. Clears the negative balance and marks the unpaid fees waived.
+  static Future<int> waiveClientBalance(String clientId) async {
+    final res = await client.rpc("waive_client_balance", params: {"p_client": clientId});
+    return (res as num?)?.toInt() ?? 0;
+  }
+
+  /// Chat list keys that still have a message this person has not opened.
+  static Future<Set<String>> loadUnreadChatKeys() async {
+    final res = await client.rpc("my_unread_chat_keys");
+    if (res is List) return res.map((e) => e.toString()).toSet();
+    return {};
+  }
+
+  /// Opening a thread. Only this person's own read row is written.
+  static Future<void> markChatRead(String listKey) async {
+    try {
+      await client.rpc("mark_chat_read", params: {"p_list_key": listKey});
+    } catch (_) {}
   }
 
   /// Staff: set a client's balance to an exact amount (cents).
@@ -4159,9 +4190,12 @@ class SupabaseService {
   /// product grants no access and has stock to check — the server validates
   /// price and availability from the catalogue, never from this call.
   /// Intent for paying off the signed-in client's negative balance. The server
-  /// decides the amount; stripe-webhook credits the balance when it succeeds.
+  /// decides the amount. [confirmBalancePayment] marks the ledger paid.
   static Future<Map<String, dynamic>> createBalancePayment() =>
-      _invokeFunction("create-balance-payment", {});
+      _invokeFunction("pay-balance", {"action": "create"});
+
+  static Future<Map<String, dynamic>> confirmBalancePayment(String paymentIntentId) =>
+      _invokeFunction("pay-balance", {"action": "confirm", "paymentIntentId": paymentIntentId});
 
   // ── Single (one-off) sessions ─────────────────────────────────────────────
   // Price, the Allowed flag and eligibility are all decided server-side.
@@ -5453,12 +5487,14 @@ class SupabaseService {
     required String action,
     String kind = "late",
     Map<String, dynamic>? address,
+    String? ledgerId,
   }) =>
       _invokeFunction("charge-client", {
         "clientId": clientId,
         "action": action,
         "kind": kind,
         if (address != null) "address": address,
+        if (ledgerId != null && ledgerId.isNotEmpty) "ledgerId": ledgerId,
       });
 
   static Future<void> saveBillingAddress(String clientId, BillingAddress address) async {

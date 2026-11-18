@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -93,9 +94,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _channels = saved.isEmpty ? defaultChatChannels : saved;
       _prefsLoaded = true;
     });
-    if (_isSetUp) {
+    if (_isSetUp && _view == _ChatView.thread && _recipientId != null) {
+      _markOpen(_recipientId!);
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animate: false));
     }
+  }
+
+  void _markOpen(String recipientId) {
+    SupabaseService.markChatRead(recipientId);
+    ref.read(unreadChatKeysProvider.notifier).clear(recipientId);
   }
 
   Future<void> _confirmSetup(String recipientId, Set<ChatChannel> channels) async {
@@ -109,6 +116,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _channels = chosen;
       _view = _ChatView.thread;
     });
+    _markOpen(recipientId);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
 
@@ -246,10 +254,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Coaches this client has actually exchanged messages with, newest
   /// first. Messages with no trainerId are legacy/business-wide ones, which
   /// belong to whichever coach the thread view would show them under.
-  List<ChatConversation> _recentConversations(ClientRecord client, List<Trainer> candidates) {
+  List<ChatConversation> _recentConversations(ClientRecord client, List<Trainer> candidates, Set<String> unreadKeys) {
     final byCoach = <String, List<CommMessage>>{};
     for (final m in client.comms) {
-      final key = m.trainerId ?? (candidates.isEmpty ? "business" : candidates.first.id);
+      final key = m.trainerId == null || m.trainerId!.isEmpty ? "business" : m.trainerId!;
       byCoach.putIfAbsent(key, () => []).add(m);
     }
     final out = <ChatConversation>[];
@@ -265,6 +273,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         preview: last.text,
         at: last.sentAt,
         outgoing: last.who == "client",
+        unread: unreadKeys.contains(coach.id),
       ));
     });
     out.sort((a, b) => b.at.compareTo(a.at));
@@ -319,13 +328,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           Expanded(
             child: ConversationList(
-              conversations: _recentConversations(client, candidates),
+              conversations: _recentConversations(client, candidates, ref.watch(unreadChatKeysProvider)),
               emptyText: "No conversations yet. Message your coach below — they'll see it right away.",
               newChatLabel: "New message",
-              onOpen: (coachId) => setState(() {
-                _recipientId = coachId;
-                _view = _ChatView.thread;
-              }),
+              onOpen: (coachId) {
+                setState(() {
+                  _recipientId = coachId;
+                  _view = _ChatView.thread;
+                });
+                _markOpen(coachId);
+              },
               onNewChat: () => setState(() => _view = _ChatView.picker),
             ),
           ),

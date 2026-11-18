@@ -2,6 +2,8 @@ import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/chat/unread_chat.dart";
+import "../../../core/chat/unread_dot.dart";
 import "../../../core/live_log/live_log_store.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
@@ -377,6 +379,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                             child: AnimatedTabIcon(
                               icon: item.icon,
                               label: item.label,
+                              showDot: item.key == "chat" && ref.watch(unreadChatKeysProvider).isNotEmpty,
                               selected: on,
                               size: 20,
                             ),
@@ -626,6 +629,10 @@ class _TrainerDrawer extends ConsumerWidget {
                                   ),
                                 ),
                               ),
+                              if (e.key == "chat" && ref.watch(unreadChatKeysProvider).isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                const UnreadDot(),
+                              ],
                             ],
                           ),
                         ),

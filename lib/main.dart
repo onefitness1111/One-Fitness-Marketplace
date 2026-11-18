@@ -3,6 +3,7 @@ import "package:app_links/app_links.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "core/chat/unread_chat.dart";
 import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
 import "core/supabase/supabase_service.dart";
@@ -109,6 +110,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
         print("[resume] membership refresh failed: $e");
       });
       _checkAppUpdate();
+      ref.read(unreadChatKeysProvider.notifier).refresh();
     },
   );
 

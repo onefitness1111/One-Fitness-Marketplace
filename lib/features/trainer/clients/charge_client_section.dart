@@ -1,11 +1,11 @@
 import "package:flutter/material.dart";
 import "../../../core/payments/client_charge.dart";
+import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
-import "../../../data/providers/trainer_providers.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 /// Charges the fee on the card Stripe already has. Coaches see the brand
@@ -26,6 +26,7 @@ class _ChargeClientSectionState extends ConsumerState<ChargeClientSection> {
   bool _confirming = false;
   String? _error;
   String? _done;
+  String? _ledgerId;
   Map<String, dynamic>? _preview;
 
   @override
@@ -44,51 +45,53 @@ class _ChargeClientSectionState extends ConsumerState<ChargeClientSection> {
   }
 
   Future<void> _charge() async {
-    final isOwner = ref.read(trainerAuthProvider) == "owner";
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final result = await SupabaseService.chargeClient(clientId: widget.clientId, action: "charge", kind: _kind);
-      if (result["needsCard"] == true) {
-        final business = ref.read(platformSettingsProvider).businessName;
-        final saved = await PaymentSheetService.saveCardForCharge(
-          clientId: widget.clientId,
-          businessName: business,
-        );
-        if (!saved.ok) {
-          setState(() => _error = saved.cancelled ? "Card entry was cancelled." : (saved.error ?? "Couldn't save that card."));
-          return;
-        }
-        final again = await SupabaseService.chargeClient(clientId: widget.clientId, action: "charge", kind: _kind);
-        if (again["charged"] == true) {
-          final againCard = again["card"];
-          final againLast4 = againCard is Map ? againCard["last4"] : "";
-          setState(() => _done = "Charged ${feeLabelFor(_kind)} on the card ending $againLast4. The client was notified.");
-          return;
-        }
-        setState(() => _error = "The new card was saved, but the charge still needs attention.");
-        return;
-      }
-      if (result["needsAddress"] == true) {
-        setState(() {
-          _error = isOwner
-              ? "That card has no billing address yet. Add one on the client's profile, then charge again."
-              : "The card needs a billing address. Use Update under Billing address. The address is not shown here.";
-        });
-        return;
-      }
+      final result = await SupabaseService.chargeClient(
+        clientId: widget.clientId,
+        action: "charge",
+        kind: _kind,
+        ledgerId: _ledgerId,
+      );
       if (result["charged"] == true) {
         final card = result["card"];
         final last4 = card is Map ? card["last4"] : "";
-        setState(() => _done = "Charged ${feeLabelFor(_kind)} on the card ending $last4. The client was notified.");
+        setState(() {
+          _done = "Charged ${feeLabelFor(_kind)} on the card ending $last4. The client was notified.";
+          _ledgerId = null;
+        });
+        return;
+      }
+      if (result["balanceRecorded"] == true) {
+        final cents = (result["balanceCents"] as num?)?.toInt();
+        final shown = cents == null ? formatSignedMoney(-feeCentsFor(_kind)) : formatSignedMoney(cents);
+        setState(() {
+          _ledgerId = result["ledgerId"]?.toString();
+          _done = "Recorded as a balance of $shown. The client was notified. Adding a card is optional.";
+        });
       }
     } catch (_) {
       setState(() => _error = "The charge didn't go through.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _addCard() async {
+    final business = ref.read(platformSettingsProvider).businessName;
+    final saved = await PaymentSheetService.saveCardForCharge(
+      clientId: widget.clientId,
+      businessName: business,
+    );
+    if (!mounted) return;
+    if (!saved.ok) {
+      setState(() => _error = saved.cancelled ? null : (saved.error ?? "Couldn't save that card."));
+      return;
+    }
+    await _charge();
   }
 
   @override
@@ -110,8 +113,16 @@ class _ChargeClientSectionState extends ConsumerState<ChargeClientSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(_done!, style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: TextStyle(color: AppColors.txt, fontSize: 13)),
+            ],
+            if (_ledgerId != null) ...[
+              const SizedBox(height: 12),
+              BtnGold(onPressed: _busy ? null : _addCard, child: Text(_busy ? "Charging…" : "Add a card and charge")),
+            ],
             const SizedBox(height: 12),
-            BtnGhost(onPressed: widget.onClose, child: const Text("Back")),
+            BtnGhost(onPressed: widget.onClose, child: Text(_ledgerId == null ? "Back" : "Skip")),
           ],
         ),
       );

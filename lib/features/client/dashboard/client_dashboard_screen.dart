@@ -15,6 +15,7 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
 import "../../../data/models/earned_badge.dart";
 import "../../../data/models/membership_plan.dart";
+import "../booking/balance_due_sheet.dart";
 import "package_renewal_card.dart";
 import "sessions_remaining_badge.dart";
 import "workout_calendar.dart";
@@ -203,6 +204,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               onSkip: intakeFormsDone ? () => setState(() => _skipOnboarding = true) : null,
             )),
 
+          stag(BalanceDueBanner(clientId: info.id)),
           stag(SessionsRemainingBadge(info: info, bookings: bookings)),
           stag(const PackageRenewalCard()),
 

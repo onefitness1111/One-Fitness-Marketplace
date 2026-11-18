@@ -195,7 +195,21 @@ class PaymentSheetService {
     } catch (e) {
       return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));
     }
-    return _present(intent, businessName, billing);
+    if (intent["error"] != null) return PaymentResult.failed(intent["error"].toString());
+    if (intent["requiresPayment"] == false) return const PaymentResult.success();
+    final result = await _present(intent, businessName, billing, collectFullBilling: true);
+    if (!result.ok) return result;
+    final paymentIntentId = intent["paymentIntentId"] as String?;
+    if (paymentIntentId == null || paymentIntentId.isEmpty) {
+      return const PaymentResult.failed("The payment did not finish.");
+    }
+    try {
+      final confirmed = await SupabaseService.confirmBalancePayment(paymentIntentId);
+      if (confirmed["error"] != null) return PaymentResult.failed(confirmed["error"].toString());
+    } catch (e) {
+      return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));
+    }
+    return const PaymentResult.success();
   }
 
   /// Saving a card without buying anything — Profile Settings → Payment
@@ -352,7 +366,12 @@ class PaymentSheetService {
   /// Everything from "we have an intent" to "the sheet closed" — shared by
   /// the plan and product flows so the two can't drift apart on Apple Pay
   /// handling, key configuration or cancellation semantics.
-  static Future<PaymentResult> _present(Map<String, dynamic> intent, String businessName, BillingAddress? billing) async {
+  static Future<PaymentResult> _present(
+    Map<String, dynamic> intent,
+    String businessName,
+    BillingAddress? billing, {
+    bool collectFullBilling = false,
+  }) async {
     if (intent["requiresPayment"] == false) return const PaymentResult.nothingDue();
 
     final clientSecret = intent["clientSecret"] as String?;
@@ -381,7 +400,11 @@ class PaymentSheetService {
           customerEphemeralKeySecret: intent["ephemeralKey"] as String?,
           merchantDisplayName: businessName,
           billingDetails: _billingDetails(billing),
-          billingDetailsCollectionConfiguration: billing == null ? null : _billingConfig,
+          billingDetailsCollectionConfiguration: collectFullBilling
+              ? _fullBillingConfig
+              : billing == null
+                  ? null
+                  : _billingConfig,
           // Apple Pay is a card wallet layered on top of the sheet, so it's
           // switched on here rather than in the server's method list — and
           // only for packages, per the product-type rules, and only when

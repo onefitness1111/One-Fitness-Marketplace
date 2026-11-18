@@ -306,8 +306,9 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                           return TapHighlight(
                             onTap: () {
                               ref.read(allBookingsProvider.notifier).updateAttendance(b.id, opt.key);
-                              SupabaseService.updateBookingAttendance(b.id, opt.key).catchError((Object _) {
+                              final marked = SupabaseService.updateBookingAttendance(b.id, opt.key).catchError((Object _) {
                                 ref.read(allBookingsProvider.notifier).updateAttendance(b.id, null);
+                                return null;
                               });
                               if (opt.key == "checked-in") {
                                 final total = ref.read(allBookingsProvider).where((x) => x.clientId == client.id && x.attendanceStatus == "checked-in").length;
@@ -331,12 +332,15 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                                             closeCents: settings.noShowFeeCents,
                                           )
                                         : 0;
-                                notifyPush(
-                                  profileId: b.clientId,
-                                  title: opt.key == "no-show" ? "No-show fee" : "Session updated",
-                                  body: attendanceMarkedNotice(coachName: coachName, status: opt.key, cents: cents),
-                                  sms: true,
-                                );
+                                marked.then((fee) {
+                                  if (fee?["balanceRecorded"] == true) return;
+                                  notifyPush(
+                                    profileId: b.clientId,
+                                    title: opt.key == "no-show" ? "No-show fee" : "Session updated",
+                                    body: attendanceMarkedNotice(coachName: coachName, status: opt.key, cents: cents),
+                                    sms: true,
+                                  );
+                                });
                               }
                             },
                             borderRadius: BorderRadius.circular(7),

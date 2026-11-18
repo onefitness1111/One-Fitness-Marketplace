@@ -2,6 +2,7 @@ import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -733,6 +734,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                           icon: item.icon,
                           label: item.label,
                           selected: on,
+                          showDot: item.key == "chat" && ref.watch(unreadChatKeysProvider).isNotEmpty,
                         ),
                       ),
                     ),

@@ -1,13 +1,12 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../core/payments/outstanding_balance.dart";
 import "../../core/payments/payment_sheet_service.dart";
 import "../../core/supabase/supabase_service.dart";
 import "../../core/theme/app_colors.dart";
 import "../../core/widgets/widgets.dart";
 import "../../data/providers/platform_settings_provider.dart";
-
-String money(int cents) => "\$${(cents.abs() / 100).toStringAsFixed(2)}";
 
 /// A client's account balance. Negative = they owe the gym (an uncollected
 /// late-cancel / no-show fee), positive = credit.
@@ -16,10 +15,13 @@ String money(int cents) => "\$${(cents.abs() / 100).toStringAsFixed(2)}";
 /// Otherwise (the client's own profile): shows a Pay balance button while they
 /// owe, which opens the card sheet and lifts the booking block once paid.
 class BalanceCard extends ConsumerStatefulWidget {
-  const BalanceCard({super.key, required this.clientId, this.editable = false});
+  const BalanceCard({super.key, required this.clientId, this.editable = false, this.canPay = true});
 
   final String clientId;
   final bool editable;
+
+  /// The client's own profile. A coach looking at the amount cannot pay it.
+  final bool canPay;
 
   @override
   ConsumerState<BalanceCard> createState() => _BalanceCardState();
@@ -54,10 +56,17 @@ class _BalanceCardState extends ConsumerState<BalanceCard> {
     if (result.error != null) {
       _toast(result.error!);
     } else if (!result.cancelled) {
-      _toast("Payment received — your balance will update in a moment.");
-      // The webhook credits the balance; give it a moment, then re-read.
-      await Future<void>.delayed(const Duration(seconds: 3));
+      _toast("Payment received. You can book again.");
       await _load();
+    }
+  }
+
+  Future<void> _waive() async {
+    try {
+      final v = await SupabaseService.waiveClientBalance(widget.clientId);
+      if (mounted) setState(() => _cents = v);
+    } catch (_) {
+      _toast("Couldn't waive the balance — try again.");
     }
   }
 
@@ -137,13 +146,7 @@ class _BalanceCardState extends ConsumerState<BalanceCard> {
     final cents = _cents;
     final owes = (cents ?? 0) < 0;
     final color = cents == null || cents == 0 ? AppColors.mute : (owes ? AppColors.danger : AppColors.grn);
-    final label = cents == null
-        ? "…"
-        : cents == 0
-            ? "\$0.00"
-            : owes
-                ? "${money(cents)} owed"
-                : "${money(cents)} credit";
+    final label = cents == null ? "…" : formatSignedMoney(cents);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: AppCard(
@@ -165,10 +168,11 @@ class _BalanceCardState extends ConsumerState<BalanceCard> {
                 ],
               ),
             ),
-            if (widget.editable)
-              TextButton(onPressed: cents == null ? null : _edit, child: const Text("Edit"))
-            else if (owes)
-              FilledButton(onPressed: _busy ? null : _pay, child: Text(_busy ? "…" : "Pay balance")),
+            if (widget.editable) ...[
+              if (owes) TextButton(onPressed: _waive, child: const Text("Waive")),
+              TextButton(onPressed: cents == null ? null : _edit, child: const Text("Edit")),
+            ] else if (owes && widget.canPay)
+              FilledButton(onPressed: _busy ? null : _pay, child: Text(_busy ? "…" : "Pay now")),
           ],
         ),
       ),

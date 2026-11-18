@@ -57,6 +57,10 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
 
   String get _me => SupabaseService.currentUser?.id ?? "";
 
+  void _markRead(String key) {
+    SupabaseService.markChatRead(key == "market" ? "staff:market" : "staff:$key");
+  }
+
   void _close() {
     if (widget.initialKey != null) {
       Navigator.of(context).maybePop();
@@ -69,6 +73,8 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
   void initState() {
     super.initState();
     _open = widget.initialKey;
+    final initial = widget.initialKey;
+    if (initial != null) _markRead(initial);
     final ch = widget.initialChannels;
     if (ch != null && ch.isNotEmpty) _channels = {...ch, ChatChannel.inapp};
     _load();
@@ -264,10 +270,14 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
         FilledButton(
           onPressed: _pick == null
               ? null
-              : () => setState(() {
-                    _open = _pick;
-                    _toBottom();
-                  }),
+              : () {
+                    final key = _pick!;
+                    _markRead(key);
+                    setState(() {
+                      _open = key;
+                      _toBottom();
+                    });
+                  },
           child: const Text("Start chat"),
         ),
       ],

@@ -998,13 +998,14 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                       ref
                                           .read(allBookingsProvider.notifier)
                                           .updateAttendance(b.id, next);
-                                      SupabaseService.updateBookingAttendance(
+                                      final marked = SupabaseService.updateBookingAttendance(
                                         b.id,
                                         next,
                                       ).catchError((Object _) {
                                         ref
                                             .read(allBookingsProvider.notifier)
                                             .updateAttendance(b.id, prev);
+                                        return null;
                                       });
                                       if (next == "early-cancel" || next == "late-cancel" || next == "no-show") {
                                         final coachName = t.isNotEmpty ? t.first.displayTitle : "Your coach";
@@ -1023,14 +1024,22 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                                     closeCents: settings.noShowFeeCents,
                                                   )
                                                 : 0;
-                                        notifyClientAndCoach(
-                                          clientId: b.clientId,
-                                          coachId: b.trainerId,
-                                          clientTitle: next == "no-show" ? "No-show fee" : "Session updated",
-                                          clientBody: attendanceMarkedNotice(coachName: coachName, status: next!, cents: cents),
-                                          coachTitle: "Session updated",
-                                          coachBody: "${attendee.name} was marked ${next == "no-show" ? "a no-show" : next == "late-cancel" ? "a late cancel" : "an early cancel"}.",
-                                        );
+                                        marked.then((fee) {
+                                          final onBalance = fee?["balanceRecorded"] == true;
+                                          final coachBody = "${attendee.name} was marked ${next == "no-show" ? "a no-show" : next == "late-cancel" ? "a late cancel" : "an early cancel"}.";
+                                          if (onBalance) {
+                                            notifyPush(profileId: b.trainerId, title: "Session updated", body: coachBody);
+                                            return;
+                                          }
+                                          notifyClientAndCoach(
+                                            clientId: b.clientId,
+                                            coachId: b.trainerId,
+                                            clientTitle: next == "no-show" ? "No-show fee" : "Session updated",
+                                            clientBody: attendanceMarkedNotice(coachName: coachName, status: next!, cents: cents),
+                                            coachTitle: "Session updated",
+                                            coachBody: coachBody,
+                                          );
+                                        });
                                       }
                                       if (next == "checked-in" &&
                                           next != prev) {

@@ -23,6 +23,7 @@ import "../drawer_screens/waiver_signing_screen.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "balance_due_sheet.dart";
 
 const _kWeekdayOptions = [
   (1, "Mon"),
@@ -321,13 +322,8 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     required ClientInfo info,
     required List<Trainer> trainers,
   }) async {
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(blocked), duration: const Duration(seconds: 8)));
-      }
-      return;
-    }
+    if (!mounted) return;
+    if (await stopForOutstandingBalance(context, info.id)) return;
     setState(() => _busy = true);
     final seriesId = const Uuid().v4();
     var booked = 0, waitlisted = 0;
@@ -357,7 +353,12 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           firstBooked ??= saved;
           bookedIds.add(saved.id);
           booked++;
-        } catch (_) {
+        } catch (e) {
+          if (e.toString().contains("BALANCE_DUE")) {
+            final owed = await unpaidBalanceCents(info.id);
+            if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
+            break;
+          }
           skipped++;
         }
       } else if (o.status == "full" && o.decision == "waitlist") {
@@ -400,7 +401,12 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           );
           ref.read(waitlistProvider.notifier).add(entry);
           waitlisted++;
-        } catch (_) {
+        } catch (e) {
+          if (e.toString().contains("BALANCE_DUE")) {
+            final owed = await unpaidBalanceCents(info.id);
+            if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
+            break;
+          }
           skipped++;
         }
       } else if (o.status == "full") {
