@@ -56,6 +56,10 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(foodLog: next));
     try {
       await SupabaseService.updateClientFoodLog(id, next);
+      try {
+        final fresh = await SupabaseService.loadMeritBadgesFor(id);
+        ref.read(earnedBadgesProvider.notifier).replaceForClient(id, fresh);
+      } catch (_) {}
     } catch (e) {
       if (!mounted) return;
       final text = e.toString().replaceFirst("Exception: ", "");

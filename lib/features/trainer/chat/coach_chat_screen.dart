@@ -76,15 +76,22 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     super.initState();
     _loadPrefs();
     _loadStaff();
-    _staffChannel = SupabaseService.client
-        .channel("coach_chat_staff_live")
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: "public",
-          table: "staff_messages",
-          callback: (_) => _loadStaff(),
-        )
-        .subscribe();
+    // The trainer shell builds this page even when another tab is showing.
+    // A test, or a moment before sign-in finishes, has no live client yet.
+    // The thread still opens; the live staff list starts once the client is up.
+    try {
+      _staffChannel = SupabaseService.client
+          .channel("coach_chat_staff_live")
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: "public",
+            table: "staff_messages",
+            callback: (_) => _loadStaff(),
+          )
+          .subscribe();
+    } catch (_) {
+      _staffChannel = null;
+    }
   }
 
   Future<void> _loadStaff() async {
@@ -217,14 +224,24 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   @override
   void dispose() {
     final sc = _staffChannel;
-    if (sc != null) SupabaseService.client.removeChannel(sc);
+    if (sc != null) {
+      try {
+        SupabaseService.client.removeChannel(sc);
+      } catch (_) {}
+    }
     _msgController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      if (mounted) setState(() => _prefsLoaded = true);
+      return;
+    }
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // Values written by an older build come through the legacy spellings,
     // so a coach's remembered choice survives the update.
@@ -1022,7 +1039,7 @@ class _Bubble extends StatelessWidget {
               onTap: onReact == null ? null : () => onReact!("heart"),
               onLongPress: () async {
                 final action = await showMessageActions(context, canReport: false);
-                if (!context.mounted) return;
+                if (!context.mounted || action == null) return;
                 if (action == "heart" || action == "thumb") onReact?.call(action);
               },
               child: Container(

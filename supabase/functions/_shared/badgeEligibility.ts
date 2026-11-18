@@ -143,12 +143,8 @@ function capFor(client: any, plan: any, monthKey: string): number | null {
 
 async function foodDates(admin: any, clientId: string, c: Cache): Promise<string[]> {
   if (c.foodDates) return c.foodDates;
-  const probe = await admin.from("food_logs").select("id").eq("client_id", clientId).limit(400);
-  if (!probe.error && Array.isArray(probe.data)) {
-    const { data } = await admin.from("food_logs").select("logged_on, log_date, date").eq("client_id", clientId);
-    c.foodDates = (data || []).map((r: any) => String(r.logged_on || r.log_date || r.date || "").slice(0, 10)).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
-    return c.foodDates!;
-  }
+  // The nutrition update stores the log on the client record, under
+  // data.foodLog (days -> meal -> lines). There is no food_logs table.
   const rec = await record(admin, clientId, c);
   c.foodDates = foodLogDates(rec?.[FOOD_LOG_KEY]);
   return c.foodDates;

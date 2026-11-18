@@ -74,7 +74,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      if (mounted) setState(() => _prefsLoaded = true);
+      return;
+    }
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // A value saved by an older build decodes through the legacy spellings
     // — "inappSms" becomes In app + SMS, so nobody's remembered choice
@@ -973,7 +979,7 @@ class _Bubble extends StatelessWidget {
               onTap: onReact == null ? null : () => onReact!("heart"),
               onLongPress: () async {
                 final action = await showMessageActions(context, canReport: onReport != null);
-                if (!context.mounted) return;
+                if (!context.mounted || action == null) return;
                 if (action == "heart" || action == "thumb") onReact?.call(action);
                 if (action == "report") onReport?.call();
               },

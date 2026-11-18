@@ -318,26 +318,35 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
             FieldLabeled(label: "Address", child: AppField(controller: _locationAddress)),
             const SizedBox(height: 10),
             const Text("Location approval notice", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            CheckboxListTile(
-              value: _permission,
-              onChanged: (v) => setState(() => _permission = v ?? false),
-              title: const Text("I have permission to coach at this location", style: TextStyle(fontSize: 13)),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: EdgeInsets.zero,
+            Material(
+              type: MaterialType.transparency,
+              child: CheckboxListTile(
+                value: _permission,
+                onChanged: (v) => setState(() => _permission = v ?? false),
+                title: const Text("I have permission to coach at this location", style: TextStyle(fontSize: 13)),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
-            CheckboxListTile(
-              value: _clientsAllowed,
-              onChanged: (v) => setState(() => _clientsAllowed = v ?? false),
-              title: const Text("This location allows ONE Fitness clients", style: TextStyle(fontSize: 13)),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: EdgeInsets.zero,
+            Material(
+              type: MaterialType.transparency,
+              child: CheckboxListTile(
+                value: _clientsAllowed,
+                onChanged: (v) => setState(() => _clientsAllowed = v ?? false),
+                title: const Text("This location allows ONE Fitness clients", style: TextStyle(fontSize: 13)),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
-            CheckboxListTile(
-              value: _followRules,
-              onChanged: (v) => setState(() => _followRules = v ?? false),
-              title: const Text("I will follow the location's rules", style: TextStyle(fontSize: 13)),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: EdgeInsets.zero,
+            Material(
+              type: MaterialType.transparency,
+              child: CheckboxListTile(
+                value: _followRules,
+                onChanged: (v) => setState(() => _followRules = v ?? false),
+                title: const Text("I will follow the location's rules", style: TextStyle(fontSize: 13)),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
             BtnGhost(
               onPressed: _locationPhotos.length >= 8

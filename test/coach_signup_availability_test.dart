@@ -97,7 +97,8 @@ void main() {
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), "Sam");
     await tester.enterText(fields.at(1), "Coach");
-    await tester.enterText(fields.at(3), "sam@example.com");
+    // Coach name and the optional second name sit before email.
+    await tester.enterText(fields.at(4), "sam@example.com");
     final count = fields.evaluate().length;
     await tester.enterText(fields.at(count - 2), "secret123");
     await tester.enterText(fields.at(count - 1), "secret123");
@@ -129,8 +130,8 @@ void main() {
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), "Sam");
     await tester.enterText(fields.at(1), "Coach");
-    await tester.enterText(fields.at(3), "sam@example.com");
-    await tester.enterText(fields.at(4), "5550100");
+    await tester.enterText(fields.at(4), "sam@example.com");
+    await tester.enterText(fields.at(5), "5550100");
     final count = fields.evaluate().length;
     await tester.enterText(fields.at(count - 2), "secret123");
     await tester.enterText(fields.at(count - 1), "secret123");

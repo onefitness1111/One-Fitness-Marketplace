@@ -72,21 +72,29 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
     final ch = widget.initialChannels;
     if (ch != null && ch.isNotEmpty) _channels = {...ch, ChatChannel.inapp};
     _load();
-    _channel = SupabaseService.client
-        .channel("staff_messages_live")
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: "public",
-          table: "staff_messages",
-          callback: (_) => _load(quiet: true),
-        )
-        .subscribe();
+    try {
+      _channel = SupabaseService.client
+          .channel("staff_messages_live")
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: "public",
+            table: "staff_messages",
+            callback: (_) => _load(quiet: true),
+          )
+          .subscribe();
+    } catch (_) {
+      _channel = null;
+    }
   }
 
   @override
   void dispose() {
     final c = _channel;
-    if (c != null) SupabaseService.client.removeChannel(c);
+    if (c != null) {
+      try {
+        SupabaseService.client.removeChannel(c);
+      } catch (_) {}
+    }
     _text.dispose();
     _scroll.dispose();
     super.dispose();
@@ -234,6 +242,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
         const SectionLabel("Kind of message"),
         Wrap(
           spacing: 8,
+          runSpacing: 8,
           children: [
             for (final ch in chatChannelOrder)
               if (_pick != "market" || ch != ChatChannel.sms)
@@ -327,6 +336,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
                 const ChatSavedNotice(),
                 Wrap(
                   spacing: 8,
+                  runSpacing: 8,
                   children: [
                     for (final ch in chatChannelOrder)
                       if (available.contains(ch))

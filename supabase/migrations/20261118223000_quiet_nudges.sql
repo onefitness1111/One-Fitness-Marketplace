@@ -130,9 +130,14 @@ begin
     (
       c.sms_opt_in is true
       and c.marketing_opt_out is not true
+      -- STOP in chat sets profiles.sms_opted_out. That has to block this
+      -- text too. The column is added by the messaging migration, which
+      -- runs before this file.
+      and p.sms_opted_out is not true
       and (
         c.sms_opt_in_at is not null
         or nullif(btrim(c.sms_consent_text), '') is not null
+        or p.sms_consent_at is not null
       )
       and nullif(btrim(p.phone), '') is not null
     ),

@@ -1183,6 +1183,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                     trainers: trainers,
                     offeredTypes: ref.watch(platformSettingsProvider).offeredSessionTypes,
                     singleTypes: _singleTypes(ref.watch(platformSettingsProvider)),
+                    // The free first session is Semi-Private or One-on-One even
+                    // with no plan. The parent already worked that list out.
+                    presetTypes: types,
                     onPick: _pickType,
                   )
                 : chosenDisc == null
@@ -1336,6 +1339,7 @@ class _StepOne extends StatelessWidget {
     required this.offeredTypes,
     this.singleTypes = const {},
     this.isStaff = false,
+    this.presetTypes,
   });
 
   /// Types sold as one-off sessions, so they show even without a covering plan.
@@ -1352,9 +1356,13 @@ class _StepOne extends StatelessWidget {
   final List<Trainer> trainers;
   final bool isStaff;
 
+  /// When set, these are the types to show. The free first session uses this
+  /// so a client with no plan still sees Semi-Private and One-on-One.
+  final List<String>? presetTypes;
+
   @override
   Widget build(BuildContext context) {
-    final types = _bookableTypes(plans: plans, trainers: trainers, offeredTypes: offeredTypes, isStaff: isStaff, singleTypes: singleTypes);
+    final types = presetTypes ?? _bookableTypes(plans: plans, trainers: trainers, offeredTypes: offeredTypes, isStaff: isStaff, singleTypes: singleTypes);
     final allowedTypes = types;
     final anyLargeGroupOffered = types.contains("large-group");
     return Column(

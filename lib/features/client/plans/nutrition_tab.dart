@@ -119,6 +119,10 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(foodLog: next));
     try {
       await SupabaseService.updateClientFoodLog(id, next);
+      try {
+        final fresh = await SupabaseService.loadMeritBadgesFor(id);
+        ref.read(earnedBadgesProvider.notifier).replaceForClient(id, fresh);
+      } catch (_) {}
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save that. Try again.")));
@@ -632,6 +636,7 @@ class _MealSection extends StatelessWidget {
                     if (onEditMeal != null)
                       Wrap(
                         spacing: 4,
+                        runSpacing: 4,
                         children: [
                           TextButton.icon(
                             onPressed: () => onEditMeal!(meal),
@@ -712,6 +717,7 @@ class _MealSection extends StatelessWidget {
                       ),
                     Wrap(
                       spacing: 4,
+                      runSpacing: 4,
                       children: [
                         TextButton.icon(
                           onPressed: () {
@@ -744,6 +750,7 @@ class _MealSection extends StatelessWidget {
           if (onAddMeal != null || onRestaurant != null)
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
                 if (onAddMeal != null)
                   OutlinedButton(onPressed: onAddMeal, child: const Text("Add a meal")),

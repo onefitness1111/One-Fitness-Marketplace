@@ -180,6 +180,11 @@ revoke all on function public.start_live_day(uuid, date, text, text, text, uuid)
 grant execute on function public.start_live_day(uuid, date, text, text, text, uuid) to authenticated;
 
 -- Ending one day does not end a different day logged on the same date.
+-- The live database already has end_live_logs(uuid, date). A new argument
+-- does not replace that copy, so drop it first. Otherwise both exist and
+-- the app's call (which names the day) can miss the new one.
+drop function if exists public.end_live_logs(uuid, date);
+
 create or replace function public.end_live_logs(p_client uuid, p_date date, p_day text default null)
 returns void
 language plpgsql
@@ -201,6 +206,9 @@ begin
    where client_id = p_client and log_date = p_date and day_id = p_day and ended_at is null;
 end;
 $$;
+
+revoke all on function public.end_live_logs(uuid, date, text) from public, anon;
+grant execute on function public.end_live_logs(uuid, date, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- One workout log at a time, without rewriting the rest of the record

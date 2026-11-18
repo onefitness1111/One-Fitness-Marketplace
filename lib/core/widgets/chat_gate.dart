@@ -41,7 +41,12 @@ class _ChatEntryGateState extends ConsumerState<ChatEntryGate> {
       phone = null;
     }
     if (!mounted) return;
-    final me = SupabaseService.currentUser?.id;
+    String? me;
+    try {
+      me = SupabaseService.currentUser?.id;
+    } catch (_) {
+      me = null;
+    }
     final info = ref.read(clientInfoProvider);
     if (me != null && info.id == me && phone != null) {
       ref.read(clientInfoProvider.notifier).update((i) => i.copyWith(phone: phone));
@@ -56,7 +61,12 @@ class _ChatEntryGateState extends ConsumerState<ChatEntryGate> {
   Future<void> _scheduleIntro() async {
     if (_introScheduled) return;
     _introScheduled = true;
-    final prefs = await SharedPreferences.getInstance();
+    final SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      return;
+    }
     if (prefs.getBool(_introPrefKey) == true) return;
     final seen = await SupabaseService.chatIntroSeen();
     if (seen) {

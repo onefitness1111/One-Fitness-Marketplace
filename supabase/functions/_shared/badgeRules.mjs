@@ -16,8 +16,8 @@
 export const PACIFIC = "America/Los_Angeles";
 
 // The food log migration (20261118210000_food_log.sql) does not create its
-// own table. It stores the log on this table, under data.foodLog. If a
-// later migration adds public.food_logs, the award function prefers that.
+// own table. The real log is client_records.data.foodLog: a day, then a
+// meal, then the lines. Nutrition Streak reads that object.
 export const FOOD_LOG_TABLE = "client_records";
 export const FOOD_LOG_KEY = "foodLog";
 

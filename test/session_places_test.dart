@@ -47,7 +47,7 @@ void main() {
       expect(places.map((p) => p.name), ["ONE Fitness Burbank", "Iron Athletics"]);
       final theirs = places.last;
       expect(theirs.setBy, "coach");
-      expect(theirs.coachName, "Jess");
+      expect(theirs.coachName, "Coach Jess");
       expect(theirs.isCoachSet, isTrue);
     });
 

@@ -2551,6 +2551,14 @@ class SupabaseService {
       final next = [...current.workoutLogs.where((l) => l.id != entry.id), entry];
       await updateClientWorkoutLogs(profileId, next);
     }
+    // A client log counts for Progress Tracker and clears a quiet streak
+    // (the morning job reads workoutLogs). Check the badge now; the streak
+    // itself is just the saved log.
+    if (entry.loggedBy == "client") {
+      try {
+        await checkMeritBadges(profileId, "after_workout");
+      } catch (_) {}
+    }
   }
 
   /// Marks a program day as started, before the first set is typed.
@@ -3000,11 +3008,17 @@ class SupabaseService {
   /// and does not fall back to rewriting the rest of the record. The
   /// database function has to allow the `foodLog` key (see the food-log
   /// migration) before this succeeds.
+  ///
+  /// A saved line can earn Nutrition Streak immediately. This write does
+  /// not go through [patchClientRecord], so the badge check lives here too.
   static Future<void> updateClientFoodLog(String profileId, FoodLog log) async {
     await client.rpc("patch_client_record", params: {
       "p_client": profileId,
       "p_patch": {"foodLog": log.toJson()},
     });
+    try {
+      await checkMeritBadges(profileId, "after_food");
+    } catch (_) {}
   }
 
   /// A plate photo comes back as an estimate the client can edit. The
