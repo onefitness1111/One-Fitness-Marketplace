@@ -37,7 +37,7 @@ async function graphToken(): Promise<string> {
   return cachedToken.value;
 }
 
-export async function sendEmailOrThrow(to: string, subject: string, text: string): Promise<void> {
+export async function sendEmailOrThrow(to: string, subject: string, text: string, html?: string): Promise<void> {
   const from = emailFrom();
   if (!from) throw new Error("No sender address configured (set EMAIL_FROM or SMTP_USER).");
   if (!to) throw new Error("No recipient given.");
@@ -49,7 +49,7 @@ export async function sendEmailOrThrow(to: string, subject: string, text: string
     body: JSON.stringify({
       message: {
         subject,
-        body: { contentType: "Text", content: text },
+        body: { contentType: html ? "HTML" : "Text", content: html || text },
         toRecipients: [{ emailAddress: { address: to } }],
       },
       saveToSentItems: true,
@@ -58,10 +58,10 @@ export async function sendEmailOrThrow(to: string, subject: string, text: string
   if (!res.ok) throw new Error(`Microsoft Graph sendMail failed (${res.status}): ${await res.text()}`);
 }
 
-export async function sendEmail(to: string, subject: string, text: string): Promise<void> {
+export async function sendEmail(to: string, subject: string, text: string, html?: string): Promise<void> {
   if (!to) return;
   try {
-    await sendEmailOrThrow(to, subject, text);
+    await sendEmailOrThrow(to, subject, text, html);
   } catch (e) {
     console.error(`sendEmail: ${e instanceof Error ? e.message : String(e)}`);
   }

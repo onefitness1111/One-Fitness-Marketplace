@@ -10,5 +10,10 @@
 	     from the distribution provisioning profile at archive/export time. -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Apple Health, read only: steps, heart rate, and weight. The
+	     capability also has to be turned on for the App ID at
+	     developer.apple.com before a release build will include it. -->
+	<key>com.apple.developer.healthkit</key>
+	<true/>
 </dict>
 </plist>

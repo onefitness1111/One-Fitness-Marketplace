@@ -5,7 +5,9 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/photo_picker_utils.dart";
+import "../../../core/utils/progress_summary.dart";
 import "../../../core/widgets/progress_photo_view.dart";
+import "before_after_slider.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/progress_photo.dart";
 import "../../../data/models/squad_chat_message.dart";
@@ -142,6 +144,16 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
               child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
             ),
           const SizedBox(height: 12),
+          if (photos.length >= 2) ...[
+            Builder(builder: (context) {
+              final pair = beforeAfterPhotos(photos);
+              if (pair.length < 2) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: BeforeAfterSlider(before: pair.first, after: pair.last),
+              );
+            }),
+          ],
           if (photos.isEmpty)
             const HintBox(text: "No photos yet. Add progress photos to track visual change over time.")
           else

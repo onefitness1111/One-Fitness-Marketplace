@@ -15,6 +15,7 @@ import "../../data/models/exercise_prescription.dart";
 import "../../data/models/program_day.dart";
 import "../../data/models/saved_program.dart";
 import "../../data/models/workout_log.dart";
+import "../client/dashboard/rebook_card.dart";
 import "../client/plans/exercise_set_grid.dart";
 import "live_log_widgets.dart";
 
@@ -517,7 +518,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       return LocalBackScope(
         isOpen: true,
         onBack: () => setState(() => _saved = false),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             children: [
@@ -534,6 +535,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                 full: true,
                 child: const Text("Back to Days"),
               ),
+              if (widget.loggedBy == "client") ...[
+                const SizedBox(height: 16),
+                const RebookOfferCard(),
+              ],
             ],
           ),
         ),

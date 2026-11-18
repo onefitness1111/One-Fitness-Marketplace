@@ -7,6 +7,7 @@ import "intake_schema.dart";
 import "measurement.dart";
 import "nutrition_plan.dart";
 import "program_day.dart";
+import "progress_goal.dart";
 import "progress_photo.dart";
 import "saved_program.dart";
 import "session_feedback.dart";
@@ -36,6 +37,7 @@ class ClientRecord {
     this.intake = const {},
     this.measurements = const [],
     this.photos = const [],
+    this.progressGoal,
     this.trainerNotes = const [],
     this.sessionFeedback = const [],
     this.savedNutritionPrograms = const [],
@@ -111,6 +113,9 @@ class ClientRecord {
   /// Uploaded progress photos (client.photos).
   final List<ProgressPhoto> photos;
 
+  /// The one goal shown on Log Progress. Null until they set one.
+  final ProgressGoal? progressGoal;
+
   /// Coach-authored flag/notes on this client (client.trainerNotes).
   final List<TrainerNote> trainerNotes;
 
@@ -170,6 +175,8 @@ class ClientRecord {
     Map<String, IntakeRecord>? intake,
     List<Measurement>? measurements,
     List<ProgressPhoto>? photos,
+    ProgressGoal? progressGoal,
+    bool clearProgressGoal = false,
     List<TrainerNote>? trainerNotes,
     List<SessionFeedbackEntry>? sessionFeedback,
     List<NutritionProgramEntry>? savedNutritionPrograms,
@@ -202,6 +209,7 @@ class ClientRecord {
         intake: intake ?? this.intake,
         measurements: measurements ?? this.measurements,
         photos: photos ?? this.photos,
+        progressGoal: clearProgressGoal ? null : (progressGoal ?? this.progressGoal),
         trainerNotes: trainerNotes ?? this.trainerNotes,
         sessionFeedback: sessionFeedback ?? this.sessionFeedback,
         savedNutritionPrograms: savedNutritionPrograms ?? this.savedNutritionPrograms,

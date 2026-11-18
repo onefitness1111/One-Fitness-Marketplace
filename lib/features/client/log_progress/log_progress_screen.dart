@@ -1,9 +1,12 @@
 import "package:flutter/material.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
+import "apple_health_section.dart";
 import "exercise_lifts_tab.dart";
+import "goal_progress_bar.dart";
 import "measurements_tab.dart";
 import "progress_photos_tab.dart";
+import "results_card.dart";
 
 const _ranges = [(30, "30d"), (90, "90d"), (365, "1yr"), (0, "All")];
 
@@ -22,7 +25,12 @@ class _LogProgressScreenState extends State<LogProgressScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return SwipeableTabView(
+    return Column(
+      children: [
+        const GoalProgressBar(),
+        const AppleHealthSection(),
+        const ResultsShareButton(),
+        Expanded(child: SwipeableTabView(
       labels: const ["Body", "Lifts", "Photos"],
       children: [
         Column(
@@ -58,6 +66,8 @@ class _LogProgressScreenState extends State<LogProgressScreen> {
         ),
         const ExerciseLiftsTab(),
         const ProgressPhotosTab(),
+      ],
+        )),
       ],
     );
   }

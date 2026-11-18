@@ -50,6 +50,9 @@ dependencies:
   url_launcher: ^6.3.1
   uuid: ^4.6.0
   flutter_stripe: ^13.0.0
+  # Apple Health: steps, heart rate, and weight. iOS only in the app.
+  # The plugin also builds for Android, but the screen does not ask there.
+  health: 13.3.1
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0
   # Nearest-location distances on the booking screen: geolocator reads the

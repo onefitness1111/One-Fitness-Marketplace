@@ -276,6 +276,34 @@ class PaymentSheetService {
     return _present(intent, businessName, billing);
   }
 
+  /// Package renewal. The caller has already asked the client to confirm.
+  /// The sheet then charges the card on file (or lets them add one).
+  /// Returns the payment id so the confirmation can be sent once.
+  static Future<(PaymentResult, String?)> purchasePackageRenewal({
+    required String planId,
+    required String enrollmentStart,
+    required String businessName,
+    BillingAddress? billing,
+  }) async {
+    if (kIsWeb) {
+      return (const PaymentResult.failed("In-app payment isn't available on web yet."), null);
+    }
+    final Map<String, dynamic> intent;
+    try {
+      intent = await SupabaseService.createPaymentIntent(
+        planId: planId,
+        renewalEnrollmentStart: enrollmentStart,
+      );
+    } catch (e) {
+      return (PaymentResult.failed(e.toString().replaceFirst("Exception: ", "")), null);
+    }
+    if (intent["alreadyRenewed"] == true) {
+      return (const PaymentResult.success(), intent["paymentIntentId"] as String?);
+    }
+    final result = await _present(intent, businessName, billing);
+    return (result, intent["paymentIntentId"] as String?);
+  }
+
   /// Everything from "we have an intent" to "the sheet closed" — shared by
   /// the plan and product flows so the two can't drift apart on Apple Pay
   /// handling, key configuration or cancellation semantics.

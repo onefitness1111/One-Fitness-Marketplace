@@ -12,6 +12,7 @@ import { replayLedger, planRedemption, pointsToDiscountCents } from "../_shared/
 import { ensureProduct } from "../_shared/stripeProduct.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
+import { effectivePackageMax, renewalDiscountCents, renewalIdempotencyKey, renewalOffer } from "../_shared/packageRenewal.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -37,7 +38,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
 
   try {
-    const { planId, couponCode, targetClientId, paymentMethod, priceOverrideCents, accessExpiresAt } = await req.json();
+    const { planId, couponCode, targetClientId, paymentMethod, priceOverrideCents, accessExpiresAt, renewalEnrollmentStart } = await req.json();
     if (!planId) throw new Error("planId is required");
 
     const authedClient = createClient(
@@ -109,7 +110,7 @@ serve(async (req) => {
     const feeCents = calculateFeeCents(priceCents, feeConfig);
 
     const { data: clientRow } = await admin.from("clients")
-      .select("stripe_customer_id, redeem_points_next_renewal, referred_by_trainer_id, billing_anchor_day")
+      .select("stripe_customer_id, redeem_points_next_renewal, referred_by_trainer_id, billing_anchor_day, plans, session_count_override, session_count_override_month")
       .eq("profile_id", buyerId).maybeSingle();
 
     let referralSurchargeCents = 0;
@@ -141,9 +142,93 @@ serve(async (req) => {
     let redeemedPoints = 0;
     let appliedCouponCode: string | null = null;
     let stripeCouponId: string | null = null;
+    let renewalKey: string | null = null;
+    let renewalOfferName: "discount" | "full" | null = null;
+    const renewalStart = typeof renewalEnrollmentStart === "string" ? renewalEnrollmentStart.slice(0, 10) : "";
 
     const rawCode = typeof couponCode === "string" ? couponCode.trim() : "";
-    if (rawCode) {
+    if (renewalStart) {
+      if (buyerId !== user.id) throw new Error("A renewal is confirmed by the client on their own card.");
+      if (!isPackage || isSubscription) throw new Error("That renewal is for a session package.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(renewalStart)) throw new Error("That package was not found.");
+      const heldPlans = Array.isArray(clientRow?.plans) ? clientRow.plans : [];
+      const held = heldPlans.find((e: { status?: string; planId?: string; startDate?: string }) =>
+        e?.status === "active" && e?.planId === planId && String(e?.startDate || "").slice(0, 10) === renewalStart
+      );
+      if (!held) throw new Error("That package is not on your account.");
+
+      const { count: usedCount } = await admin.from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", buyerId)
+        .eq("plan_id", planId)
+        .in("attendance_status", ["checked-in", "no-show"])
+        .is("cancelled_at", null);
+      const todayMonth = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Los_Angeles",
+        year: "numeric",
+        month: "2-digit",
+      }).format(new Date()).slice(0, 7);
+      const maxSessions = effectivePackageMax(
+        plan,
+        clientRow?.session_count_override == null ? null : Number(clientRow.session_count_override),
+        clientRow?.session_count_override_month ?? null,
+        todayMonth,
+      );
+      const remaining = Math.max(0, maxSessions - (usedCount || 0));
+
+      const { data: alreadyPaid } = await admin.from("package_renewal_charges")
+        .select("payment_intent_id")
+        .eq("client_id", buyerId)
+        .eq("plan_id", planId)
+        .eq("enrollment_start", renewalStart)
+        .eq("status", "succeeded")
+        .maybeSingle();
+      if (alreadyPaid) {
+        return new Response(JSON.stringify({
+          alreadyRenewed: true,
+          requiresPayment: false,
+          mode: "payment",
+          paymentIntentId: alreadyPaid.payment_intent_id ?? null,
+        }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+      }
+
+      const { data: discountNotice } = await admin.from("client_notices")
+        .select("forfeited")
+        .eq("client_id", buyerId)
+        .eq("kind", "package_discount")
+        .eq("plan_id", planId)
+        .eq("enrollment_start", renewalStart)
+        .maybeSingle();
+      const offer = renewalOffer(remaining, maxSessions, priceCents, discountNotice?.forfeited === true, false);
+      if (offer === "none") throw new Error("This package does not have a renewal offer right now.");
+      if (offer === "discount") discountCents = renewalDiscountCents(priceCents);
+      renewalOfferName = offer;
+      renewalKey = renewalIdempotencyKey(buyerId, planId, renewalStart, offer);
+
+      const { data: started } = await admin.from("package_renewal_charges")
+        .select("payment_intent_id, attempt")
+        .eq("idempotency_key", renewalKey)
+        .maybeSingle();
+      if (started?.payment_intent_id) {
+        const prev = await stripe.paymentIntents.retrieve(started.payment_intent_id);
+        if (prev.status === "succeeded") {
+          await admin.from("package_renewal_charges").update({
+            status: "succeeded",
+            confirmed_at: new Date().toISOString(),
+          }).eq("idempotency_key", renewalKey);
+          return new Response(JSON.stringify({
+            alreadyRenewed: true,
+            requiresPayment: false,
+            mode: "payment",
+            paymentIntentId: prev.id,
+          }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+        }
+        if (prev.status === "canceled") {
+          const attempt = Number(started.attempt || 1) + 1;
+          renewalKey = renewalIdempotencyKey(buyerId, planId, renewalStart, offer, attempt);
+        }
+      }
+    } else if (rawCode) {
       const { data: coupons } = await admin.from("coupons").select("data");
       // deno-lint-ignore no-explicit-any
       const match = (coupons ?? []).map((r: any) => r.data).find((c: any) =>
@@ -175,6 +260,7 @@ serve(async (req) => {
       ...(referringTrainerId ? { referring_trainer_id: referringTrainerId, surcharge_cents: String(referralSurchargeCents) } : {}),
       ...(buyerId !== user.id ? { purchased_by: user.id } : {}),
       ...(accessExpiresAt ? { access_expires_at: String(accessExpiresAt) } : {}),
+      ...(renewalOfferName ? { renewal_offer: renewalOfferName, enrollment_start: renewalStart, renewal_key: renewalKey || "" } : {}),
     };
 
     const ephemeralKey = await stripe.ephemeralKeys.create(
@@ -284,17 +370,36 @@ serve(async (req) => {
       setup_future_usage: "off_session",
       description: plan.name || "Package",
       metadata,
-    });
+    }, renewalKey ? { idempotencyKey: renewalKey } : undefined);
+
+    if (renewalKey && renewalOfferName) {
+      const attempt = renewalKey.includes(`-${renewalOfferName}-`)
+        ? Number(renewalKey.split("-").pop())
+        : 1;
+      await admin.from("package_renewal_charges").upsert({
+        idempotency_key: renewalKey,
+        client_id: buyerId,
+        plan_id: planId,
+        enrollment_start: renewalStart,
+        offer: renewalOfferName,
+        payment_intent_id: intent.id,
+        amount_cents: amountCents,
+        status: intent.status === "succeeded" ? "succeeded" : "started",
+        attempt: Number.isFinite(attempt) && attempt > 1 ? attempt : 1,
+      }, { onConflict: "idempotency_key" });
+    }
 
     return new Response(JSON.stringify({
       mode: "payment",
       clientSecret: intent.client_secret,
+      paymentIntentId: intent.id,
       ephemeralKey: ephemeralKey.secret,
       customerId,
       publishableKey: Deno.env.get("STRIPE_PUBLISHABLE_KEY") ?? "",
       allowedMethods,
       amountCents,
       requiresPayment: true,
+      renewalOffer: renewalOfferName,
     }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

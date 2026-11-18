@@ -42,6 +42,7 @@ import "../../data/models/points_ledger_entry.dart";
 import "../../data/models/coupon.dart";
 import "../../data/models/product.dart";
 import "../../data/models/program_day.dart";
+import "../../data/models/progress_goal.dart";
 import "../../data/models/progress_photo.dart";
 import "../../data/models/quiet_nudge.dart";
 import "../../data/models/report_range.dart";
@@ -3762,6 +3763,9 @@ class SupabaseService {
     int? priceOverrideCents,
     /// ISO yyyy-MM-dd the access stops. Staff only, same as above.
     String? accessExpiresAt,
+    /// Set when the client is renewing a package they already hold. The
+    /// server decides the 5% and uses one idempotency key per package.
+    String? renewalEnrollmentStart,
   }) =>
       _invokeFunction("create-payment-intent", {
         "planId": planId,
@@ -3770,7 +3774,40 @@ class SupabaseService {
         if (targetClientId != null) "targetClientId": targetClientId,
         if (priceOverrideCents != null) "priceOverrideCents": priceOverrideCents,
         if (accessExpiresAt != null) "accessExpiresAt": accessExpiresAt,
+        if (renewalEnrollmentStart != null) "renewalEnrollmentStart": renewalEnrollmentStart,
       });
+
+  /// Asks the server which package renewals to show, and sends the phone
+  /// notification the first time. Empty when nothing is due.
+  static Future<List<Map<String, dynamic>>> syncPackageRenewals() async {
+    final res = await _invokeFunction("package-renewal-alerts", {});
+    final raw = res["offers"];
+    if (raw is! List) return const [];
+    return [
+      for (final e in raw)
+        if (e is Map) e.cast<String, dynamic>(),
+    ];
+  }
+
+  /// Closes a renewal reminder. A 5% offer that is skipped or dismissed
+  /// is forfeited for that package. The server keeps that decision.
+  static Future<void> dismissPackageRenewal({
+    required String planId,
+    required String enrollmentStart,
+    required String kind,
+  }) =>
+      client.rpc("dismiss_package_renewal", params: {
+        "p_plan": planId,
+        "p_start": enrollmentStart,
+        "p_kind": kind,
+      });
+
+  /// One confirmation after the payment sheet succeeds. Safe to call twice.
+  static Future<void> confirmPackageRenewal(String paymentIntentId) =>
+      _invokeFunction("confirm-package-renewal", {"paymentIntentId": paymentIntentId});
+
+  static Future<void> updateProgressGoal(String profileId, ProgressGoal? goal) =>
+      patchClientRecord(profileId, {"progressGoal": goal?.toJson()});
 
   /// Coach/owner creates a client account in person. Returns the new
   /// client's id plus a temporary password to hand over — the server
@@ -5487,6 +5524,7 @@ class SupabaseService {
         ((j["photos"] as List?) ?? const []).whereType<Map>(),
         (m) => _progressPhotoFromJson(m.cast<String, dynamic>()),
       ),
+      progressGoal: ProgressGoal.tryParse(j["progressGoal"]),
       // Not a persisted field in its own right — derived from workoutLogs
       // (union of logged dates), same as the legacy web-only `client.logs`
       // free-text path this port doesn't model.
