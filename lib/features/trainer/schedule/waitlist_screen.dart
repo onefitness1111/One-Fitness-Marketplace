@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
@@ -46,6 +47,12 @@ class _WaitlistScreenState extends ConsumerState<WaitlistScreen> {
       final semiPrivateCap = ref.read(platformSettingsProvider).semiPrivateCap;
       final stillOpen = bookedCount(bookings, w.trainerId, w.date, w.slot) < capFor(w.sessionType, semiPrivateCap: semiPrivateCap);
       if (stillOpen) {
+        if (!mounted) return;
+        final isOwner = ref.read(trainerAuthProvider) == "owner";
+        if (!await confirmStaffBalanceAdd(context, clientId: w.clientId, isOwner: isOwner)) {
+          if (mounted) setState(() => _busyId = null);
+          return;
+        }
         final saved = await SupabaseService.insertBooking(Booking(
           id: "",
           clientId: w.clientId,

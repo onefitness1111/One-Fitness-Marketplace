@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -332,6 +333,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                       if (!mounted || !ok) return;
                       overrideReason = "capacity";
                     }
+                    if (!await confirmStaffBalanceAdd(context, clientId: _client!.id, isOwner: isOwner) || !mounted) return;
                     setState(() {
                       _saving = true;
                       _error = null;
@@ -397,9 +399,12 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                       ref.read(allBookingsProvider.notifier).addBooking(saved);
                       if (context.mounted) Navigator.of(context).pop();
                     } catch (e) {
+                      final text = e.toString();
                       setState(() {
                         _saving = false;
-                        _error = "Couldn't book that session — check your connection and try again.";
+                        _error = text.contains("outstanding balance")
+                            ? staffBalanceWarningFromError(text)
+                            : "Couldn't book that session — check your connection and try again.";
                       });
                     }
                   },

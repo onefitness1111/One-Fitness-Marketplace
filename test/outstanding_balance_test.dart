@@ -92,6 +92,29 @@ void main() {
     expect(bookingBlocked(paid.balanceCents), isFalse);
   });
 
+  test("a coach is warned, may add one session, and is blocked after that", () {
+    var gate = const BalanceGate(balanceCents: -2500);
+    expect(staffBalanceWarning(gate.balanceCents), "This client has an outstanding balance of \$25.00.");
+    expect(staffAddDecision(isOwner: false, gate: gate), StaffAdd.warned);
+    gate = afterStaffAdd(isOwner: false, gate: gate);
+    expect(gate.graceUsed, isTrue);
+    expect(staffAddDecision(isOwner: false, gate: gate), StaffAdd.blocked);
+    expect(bookingBlocked(gate.balanceCents), isTrue);
+  });
+
+  test("the owner can keep adding, and paying resets the coach's one booking", () {
+    var gate = const BalanceGate(balanceCents: -2500, graceUsed: true);
+    expect(staffAddDecision(isOwner: true, gate: gate), StaffAdd.warned);
+    final afterOwner = afterStaffAdd(isOwner: true, gate: gate);
+    expect(afterOwner.graceUsed, isTrue);
+    expect(staffAddDecision(isOwner: false, gate: afterOwner), StaffAdd.blocked);
+    final cleared = afterBalanceCleared(afterOwner);
+    expect(cleared.balanceCents, 0);
+    expect(cleared.graceUsed, isFalse);
+    expect(staffAddDecision(isOwner: false, gate: cleared), StaffAdd.clear);
+    expect(bookingBlocked(cleared.balanceCents), isFalse);
+  });
+
   test("the owner can waive a balance", () {
     final owed = applyFeeCharge(
       account: empty,

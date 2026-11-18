@@ -125,6 +125,47 @@ BalanceAccount applyFeeCharge({
 
 bool bookingBlocked(int balanceCents) => balanceCents < 0;
 
+/// What staff see before they add someone who owes money.
+String staffBalanceWarning(int balanceCents) {
+  final owed = balanceCents < 0 ? -balanceCents : balanceCents;
+  return "This client has an outstanding balance of \$${(owed / 100).toStringAsFixed(2)}.";
+}
+
+/// One unpaid period. [graceUsed] is the coach's one booking for that period.
+class BalanceGate {
+  const BalanceGate({this.balanceCents = 0, this.graceUsed = false});
+
+  final int balanceCents;
+  final bool graceUsed;
+
+  bool get owes => balanceCents < 0;
+
+  BalanceGate copyWith({int? balanceCents, bool? graceUsed}) => BalanceGate(
+        balanceCents: balanceCents ?? this.balanceCents,
+        graceUsed: graceUsed ?? this.graceUsed,
+      );
+}
+
+enum StaffAdd { clear, warned, blocked }
+
+/// The owner can add the client any number of times. A coach can add them
+/// once. The client is never covered here — they stay fully blocked.
+StaffAdd staffAddDecision({required bool isOwner, required BalanceGate gate}) {
+  if (!gate.owes) return StaffAdd.clear;
+  if (isOwner) return StaffAdd.warned;
+  if (!gate.graceUsed) return StaffAdd.warned;
+  return StaffAdd.blocked;
+}
+
+/// A coach's first add uses the grace booking. The owner's adds do not.
+BalanceGate afterStaffAdd({required bool isOwner, required BalanceGate gate}) {
+  if (!gate.owes || isOwner) return gate;
+  return gate.copyWith(graceUsed: true);
+}
+
+/// Paying or waiving the balance back to zero opens a new grace period.
+BalanceGate afterBalanceCleared(BalanceGate gate) => const BalanceGate();
+
 /// Paying the full amount owed marks every unpaid row paid and lifts the block.
 BalanceAccount payOutstandingBalance(
   BalanceAccount account, {

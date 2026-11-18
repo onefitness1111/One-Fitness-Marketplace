@@ -10,6 +10,7 @@ import "../../../data/models/booking.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "balance_booking_warning.dart";
 import "session_move.dart";
 
 /// Carrying out the two drags on the Schedule screen, once [session_move.dart]
@@ -126,6 +127,7 @@ Future<void> performClientMove(
       }
   }
 
+  if (!await confirmStaffBalanceAdd(context, clientId: drag.booking.clientId, isOwner: isOwner) || !context.mounted) return;
   final original = drag.booking;
   // A move keeps whichever plan the booking was charged to — the client is
   // attending the same thing at a different time, so nothing about what they
@@ -224,6 +226,10 @@ Future<void> performSessionMove(
   }
 
   final now = DateTime.now().toUtc().toIso8601String();
+  for (final b in drag.group) {
+    if (!context.mounted) return;
+    if (!await confirmStaffBalanceAdd(context, clientId: b.clientId, isOwner: isOwner) || !context.mounted) return;
+  }
   // Every replacement is created before any original is removed. A class
   // half-moved — three clients on Tuesday and two still on Monday — is worse
   // than one that didn't move, so a failure part-way undoes what it managed

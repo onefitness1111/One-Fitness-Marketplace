@@ -4,6 +4,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/late_fee_notice.dart";
@@ -97,6 +98,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
               roster: roster,
               exclude: active.map((b) => b.clientId).toList(),
               onSelect: (c) async {
+                if (!await confirmStaffBalanceAdd(context, clientId: c.id, isOwner: isOwner) || !mounted) return;
                 // Adding past the class limit is allowed — staff know the
                 // room — but never silently. The count is what it will be
                 // once this client is in.
@@ -200,6 +202,11 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                     ));
                   }
                 } catch (e) {
+                  final text = e.toString();
+                  if (text.contains("This client has an outstanding balance") && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(staffBalanceWarningFromError(text))));
+                    return;
+                  }
                   _showError();
                 }
               },

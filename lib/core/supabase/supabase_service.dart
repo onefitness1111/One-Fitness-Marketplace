@@ -3421,6 +3421,22 @@ class SupabaseService {
     return (rows.first["balance_cents"] as num?)?.toInt() ?? 0;
   }
 
+  /// Amount owed and whether a coach already used the one grace booking.
+  /// Empty until the grace migration is applied. No phone and no address.
+  static Future<({int balanceCents, bool graceUsed})> loadBookingHold(String clientId) async {
+    try {
+      final rows = await _rpcList("client_booking_hold", {"p_client": clientId});
+      if (rows.isNotEmpty && rows.first is Map) {
+        final row = rows.first as Map;
+        return (
+          balanceCents: (row["balance_cents"] as num?)?.toInt() ?? 0,
+          graceUsed: row["grace_booking_used"] == true,
+        );
+      }
+    } catch (_) {}
+    return (balanceCents: await loadBalanceCents(clientId), graceUsed: false);
+  }
+
   /// Owner only. Clears the negative balance and marks the unpaid fees waived.
   static Future<int> waiveClientBalance(String clientId) async {
     final res = await client.rpc("waive_client_balance", params: {"p_client": clientId});
