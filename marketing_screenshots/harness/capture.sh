@@ -40,4 +40,4 @@ path.write_text(text)
 PY
 
 rm -f "$SNAPSHOT" "$STAMP"
-flutter test marketing_screenshots/harness/capture_test.dart --reporter expanded
+flutter test marketing_screenshots/harness/capture_test.dart marketing_screenshots/harness/logging_capture_test.dart --reporter expanded
