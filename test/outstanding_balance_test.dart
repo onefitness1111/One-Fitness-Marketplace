@@ -92,6 +92,33 @@ void main() {
     expect(bookingBlocked(paid.balanceCents), isFalse);
   });
 
+  test("buying a single session adds the outstanding balance to one charge", () {
+    final bill = singleSessionBill(sessionCents: 4000, accountBalanceCents: -2500);
+    expect(bill.sessionCents, 4000);
+    expect(bill.balanceCents, 2500);
+    expect(bill.totalCents, 6500);
+    expect(bill.breakdown, "Session \$40.00 + balance \$25.00 = total \$65.00");
+    final clear = singleSessionBill(sessionCents: 4000, accountBalanceCents: 0);
+    expect(clear.totalCents, 4000);
+    expect(clear.breakdown, isEmpty);
+  });
+
+  test("a filled session says the charge was refunded and the balance is unchanged", () {
+    expect(
+      filledSessionRefundNotice(chargedCents: 6500, balanceCents: 2500),
+      "This session filled before your booking went through. Your \$65.00 charge has been refunded. "
+      "Your outstanding balance of \$25.00 is unchanged.",
+    );
+    expect(
+      filledSessionRefundNotice(chargedCents: 4000),
+      "This session filled before your booking went through. Your \$40.00 charge has been refunded.",
+    );
+    final staff = filledSessionRefundNotice(chargedCents: 6500, balanceCents: 2500, clientName: "Alex Client");
+    expect(staff, startsWith("Alex Client's session filled"));
+    expect(staff, contains("Their outstanding balance of \$25.00 is unchanged."));
+    expect(staff.contains("phone"), isFalse);
+  });
+
   test("a coach is warned, may add one session, and is blocked after that", () {
     var gate = const BalanceGate(balanceCents: -2500);
     expect(staffBalanceWarning(gate.balanceCents), "This client has an outstanding balance of \$25.00.");
