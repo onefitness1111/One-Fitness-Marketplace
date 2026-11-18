@@ -3,6 +3,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/live_log/live_log_store.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/program_utils.dart";
+import "../../../core/utils/weight_suggestion.dart";
 import "../../../core/widgets/exercise_video.dart";
 import "../../../data/models/client_record.dart";
 import "../../../data/models/exercise_prescription.dart";
@@ -36,6 +37,7 @@ class ExerciseSetGrid extends StatefulWidget {
     this.logStore,
     this.sessionId = "",
     this.clientId = "",
+    this.coachLed = false,
   });
 
   final ExercisePrescription exercise;
@@ -58,6 +60,10 @@ class ExerciseSetGrid extends StatefulWidget {
   /// Bumped by the parent when the shared live log changed from another
   /// device, so the boxes redraw with what the coach (or client) just entered.
   final int syncTick;
+
+  /// A coach logging for the client sees a short note. The client logging
+  /// their own session sees the same suggestion written out.
+  final bool coachLed;
 
   @override
   State<ExerciseSetGrid> createState() => _ExerciseSetGridState();
@@ -207,6 +213,33 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
             ],
           ],
         ),
+        Consumer(builder: (context, ref, _) {
+          final catalog = ref.watch(exerciseCatalogProvider);
+          final matches = catalog.where((d) =>
+              (exercise.exerciseId != null && d.id == exercise.exerciseId) ||
+              (exercise.exerciseId == null && d.name.toLowerCase() == exercise.name.toLowerCase()));
+          final equipment = matches.isEmpty ? const <String>[] : matches.first.equipment;
+          final bump = suggestWeightIncrease(
+            logs: widget.client.workoutLogs,
+            exerciseName: exercise.name,
+            targetReps: exercise.reps,
+            targetWeight: parseTargetWeight(exercise.weight),
+            kind: plateKindFor(equipment),
+          );
+          if (bump == null) return const SizedBox.shrink();
+          final pounds = _fmtNum(bump);
+          return Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              widget.coachLed ? "suggested $pounds lb" : "Try $pounds lb next time",
+              style: TextStyle(
+                fontSize: widget.coachLed ? 11 : 13,
+                fontWeight: widget.coachLed ? FontWeight.w500 : FontWeight.w600,
+                color: widget.coachLed ? AppColors.mute : AppColors.txt,
+              ),
+            ),
+          );
+        }),
         if (exercise.weight != null || exercise.time != null || exercise.distance != null || exercise.rest != null)
           Padding(
             padding: const EdgeInsets.only(top: 6, bottom: 2),

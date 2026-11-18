@@ -9,6 +9,8 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
+import "../../../core/utils/quiet_nudge.dart";
+import "../../../data/models/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../data/providers/platform_settings_provider.dart";
@@ -63,6 +65,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   LiveSession? _run;
   List<String> _runClientIds = const [];
   bool _startingRun = false;
+  List<QuietNudge> _quietNudges = const [];
 
   /// Starting a session the coach is already running returns the existing
   /// row rather than a second one, so backing out of this screen and
@@ -148,6 +151,15 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       if (saved.openClientId != null) _openedClientIds.add(saved.openClientId!);
     }
     _sweepStaleAttendance();
+    unawaited(_loadQuietNudges());
+  }
+
+  Future<void> _loadQuietNudges() async {
+    try {
+      final rows = await SupabaseService.loadQuietNudges();
+      if (!mounted) return;
+      setState(() => _quietNudges = rows);
+    } catch (_) {}
   }
 
   /// Opportunistic, one-shot per screen visit — same "no cron, safe to call
@@ -217,6 +229,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       ...computeNeedsAttention(myRoster, clientRecords),
       ...computeUnloggedAttendance(myRoster, bookings),
       ...computeCoachCodeAlerts(myRoster),
+      ...quietClientAttention(
+        nudges: _quietNudges,
+        records: clientRecords,
+        rosterIds: roster.map((c) => c.id).toSet(),
+        isOwner: isOwner,
+        viewerId: isOwner ? null : trainerAuth,
+      ),
     ];
     final grouped = <String, List<AttentionItem>>{};
     for (final n in needsAttention) {

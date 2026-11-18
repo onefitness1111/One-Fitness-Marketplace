@@ -897,6 +897,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               logStore: widget._store,
                               sessionId: widget.sessionId,
                               clientId: client.id,
+                              coachLed: widget.loggedBy != "client",
                             ),
                             if (_live != null)
                               LiveNotesBox(
@@ -962,6 +963,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               logStore: widget._store,
                               sessionId: widget.sessionId,
                               clientId: client.id,
+                              coachLed: widget.loggedBy != "client",
                             ),
                             if (_live != null)
                               LiveNotesBox(

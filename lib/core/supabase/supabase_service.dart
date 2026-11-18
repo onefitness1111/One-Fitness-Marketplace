@@ -43,6 +43,7 @@ import "../../data/models/coupon.dart";
 import "../../data/models/product.dart";
 import "../../data/models/program_day.dart";
 import "../../data/models/progress_photo.dart";
+import "../../data/models/quiet_nudge.dart";
 import "../../data/models/report_range.dart";
 import "../../data/models/saved_program.dart";
 import "../../data/models/signature.dart";
@@ -3596,6 +3597,19 @@ class SupabaseService {
         .toList();
     await _attachContacts(people);
     return people;
+  }
+
+  /// Quiet-streak alerts the signed-in coach or owner is allowed to see.
+  /// Empty until the morning job has written a row. A missing table, before
+  /// that update is applied, is the caller's problem to ignore.
+  static Future<List<QuietNudge>> loadQuietNudges() async {
+    final rows = await client.from("quiet_nudges").select("client_id, last_activity_on, text_sent_on, coach_id");
+    final out = <QuietNudge>[];
+    for (final row in rows) {
+      final nudge = QuietNudge.fromJson((row as Map).cast<String, dynamic>());
+      if (nudge != null) out.add(nudge);
+    }
+    return out;
   }
 
   /// Staff messages the signed-in person may see (RLS narrows it), oldest first.
