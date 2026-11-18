@@ -1440,7 +1440,7 @@ class _CategoryTiles extends StatelessWidget {
         itemBuilder: (context, i) {
           final g = groups[i];
           final count = g.value.length;
-          return InkWell(
+          return TapHighlight(
             onTap: () => onTap(g.key),
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -1622,7 +1622,7 @@ class _TypeFilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(50),
       child: Container(

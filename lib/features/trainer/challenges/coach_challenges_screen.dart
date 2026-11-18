@@ -411,7 +411,7 @@ class _CoachChallengeDetailState extends ConsumerState<_CoachChallengeDetail> {
                       final isWinner = challenge.winnerClientId == e.clientId;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 6),
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => _pickWinner(e.clientId),
                           borderRadius: BorderRadius.circular(8),
                           child: Container(
@@ -862,7 +862,7 @@ class _CreateChallengeFormState extends ConsumerState<_CreateChallengeForm> {
                 child: Row(
                   children: [
                     for (final pts in const [1, 2, 3, 5]) ...[
-                      InkWell(
+                      TapHighlight(
                         onTap: () => setState(() => _rewardPoints = _rewardPoints == pts ? null : pts),
                         borderRadius: BorderRadius.circular(8),
                         child: Container(
@@ -1201,7 +1201,7 @@ class _CreateChallengeTypeFormState extends ConsumerState<_CreateChallengeTypeFo
               runSpacing: 6,
               children: _emojiChoices.map((e) {
                 final selected = _emoji == e;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(() => _emoji = e),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
@@ -1227,7 +1227,7 @@ class _CreateChallengeTypeFormState extends ConsumerState<_CreateChallengeTypeFo
                 final selected = basis == b.key;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: () => setState(() => _basis = b.key),
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
@@ -1355,7 +1355,7 @@ class _DateField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1378,7 +1378,7 @@ class _WinnerModeOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

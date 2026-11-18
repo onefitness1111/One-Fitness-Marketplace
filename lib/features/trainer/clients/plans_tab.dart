@@ -105,7 +105,7 @@ class _PlansTabState extends ConsumerState<PlansTab> {
             child: Row(
               children: [("training", "Training"), ("nutrition", "Nutrition"), ("programs", "Programs")]
                   .map((t) => Expanded(
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => widget.onSubChanged(t.$1),
                           borderRadius: BorderRadius.circular(7),
                           child: Container(
@@ -846,7 +846,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           child: Row(
             children: [("training", "Training"), ("nutrition", "Nutrition")]
                 .map((t) => Expanded(
-                      child: InkWell(
+                      child: TapHighlight(
                         onTap: () => setState(() {
                           if (_libraryTab == t.$1) return;
                           _libraryTabHistory.add(_libraryTab);
@@ -1029,7 +1029,7 @@ class _ActionChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = danger ? AppColors.errorText : AppColors.gold;
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

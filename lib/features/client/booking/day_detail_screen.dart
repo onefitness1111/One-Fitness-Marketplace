@@ -234,7 +234,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
                         style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic),
                       ),
                     ] else ...[
-                      InkWell(
+                      TapHighlight(
                         onTap: widget.onGoPlans,
                         child: Container(
                           margin: const EdgeInsets.only(top: 14),

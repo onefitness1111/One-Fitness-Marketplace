@@ -130,7 +130,7 @@ class ConsentCheckbox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: () => onChanged(!value),
       borderRadius: BorderRadius.circular(8),
       child: Padding(

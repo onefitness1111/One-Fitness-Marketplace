@@ -184,6 +184,18 @@ class AppColors {
   static Color get statusRed => _active.statusRed;
   static Color get statusYellow => _active.statusYellow;
   static Color get statusGreen => _active.statusGreen;
+
+  /// A wash shown while a finger is down. White on a dark page, near-black
+  /// on a light page, so the tap is visible and stays in the black, gray,
+  /// and white palette.
+  static Color get pressOverlay =>
+      _active.isDark ? const Color(0x29FFFFFF) : const Color(0x1F111113);
+
+  /// The same wash, held on a chosen chip, tab, meal, exercise, or menu row
+  /// until it is unchosen. A little stronger than [pressOverlay] so a press
+  /// still reads on top of it.
+  static Color get selectedOverlay =>
+      _active.isDark ? const Color(0x33FFFFFF) : const Color(0x29111113);
 }
 
 /// The web app's single-column layout is centered and capped at this width

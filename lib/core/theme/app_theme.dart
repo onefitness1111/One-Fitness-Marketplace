@@ -12,8 +12,24 @@ class AppTheme {
   ///
   /// [AppColors.apply] must run before this is called; [themeFor] does both
   /// together so they can't drift.
+  ///
+  /// Pressed buttons, menu rows, and icon buttons use this wash. A chosen
+  /// dropdown row keeps [AppColors.selectedOverlay] through [focusColor].
+  static WidgetStateProperty<Color?> pressedOverlay(Color wash) {
+    final hover = wash.withValues(alpha: (wash.a * 0.65).clamp(0.08, 0.14));
+    return WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.pressed)) return wash;
+      if (states.contains(WidgetState.hovered) || states.contains(WidgetState.focused)) return hover;
+      return null;
+    });
+  }
+
   static ThemeData get current {
     final p = AppColors.palette;
+    final wash = AppColors.pressOverlay;
+    final chosen = AppColors.selectedOverlay;
+    final pressed = pressedOverlay(wash);
+    final radius = RoundedRectangleBorder(borderRadius: BorderRadius.circular(10));
     final base = p.isDark
         ? ThemeData.dark(useMaterial3: true)
         : ThemeData.light(useMaterial3: true);
@@ -33,20 +49,37 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: p.gold,
           foregroundColor: p.onGold,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
+          shape: radius,
+        ).copyWith(overlayColor: pressed),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: p.gold,
           foregroundColor: p.onGold,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
+          shape: radius,
+        ).copyWith(overlayColor: pressed),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
+          shape: radius,
+        ).copyWith(overlayColor: pressed),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom().copyWith(overlayColor: pressed),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom().copyWith(overlayColor: pressed),
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: p.card,
+        selectedColor: p.gold,
+        checkmarkColor: p.onGold,
+        side: BorderSide(color: p.line),
+        pressElevation: 0,
+      ),
+      listTileTheme: ListTileThemeData(
+        selectedTileColor: chosen,
+        selectedColor: p.txt,
       ),
       checkboxTheme: CheckboxThemeData(
         checkColor: WidgetStatePropertyAll(p.onGold),
@@ -61,8 +94,13 @@ class AppTheme {
         backgroundColor: p.card,
         contentTextStyle: TextStyle(color: p.txt),
       ),
-      splashFactory: NoSplash.splashFactory,
-      highlightColor: Colors.transparent,
+      splashFactory: InkRipple.splashFactory,
+      splashColor: wash,
+      highlightColor: wash,
+      hoverColor: wash.withValues(alpha: (wash.a * 0.65).clamp(0.08, 0.14)),
+      // A picked dropdown row is painted with this and stays that way until
+      // another row is picked.
+      focusColor: chosen,
       dividerColor: p.line,
       appBarTheme: AppBarTheme(
         backgroundColor: p.bg,

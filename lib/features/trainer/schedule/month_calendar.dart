@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
@@ -69,7 +70,7 @@ class MonthCalendar extends StatelessWidget {
       // says there's more without the cell growing into the next row.
       final shown = slots.take(4).toList();
       final overflow = slots.length - shown.length;
-      cells.add(InkWell(
+      cells.add(TapHighlight(
         onTap: () => onSelectDay(date),
         borderRadius: BorderRadius.circular(9),
         child: Container(

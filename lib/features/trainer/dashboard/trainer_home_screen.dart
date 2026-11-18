@@ -454,7 +454,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                       final b = loggable[i];
                       final person = resolveAttendee(b.clientId, roster, trainers);
                       final active = b.clientId == activeClientId;
-                      return InkWell(
+                      return TapHighlight(
                         onTap: active
                             ? null
                             : () {
@@ -735,7 +735,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 ),
               ),
             ),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _calendarOpen = !_calendarOpen),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 2),
@@ -907,7 +907,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            InkWell(
+                            TapHighlight(
                               onTap: clickable
                                   ? () => openClient(rosterClient.id)
                                   : null,
@@ -989,7 +989,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                 runSpacing: 5,
                                 children: kAttendanceOptions.map((opt) {
                                   final active = b.attendanceStatus == opt.key;
-                                  return InkWell(
+                                  return TapHighlight(
                                     onTap: () {
                                       final prev = b.attendanceStatus;
                                       final next = active ? null : opt.key;
@@ -1091,7 +1091,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           if (isOwner && todayCharges.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: InkWell(
+              child: TapHighlight(
                 onTap: () => goMode("schedule"),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -1147,7 +1147,7 @@ class _StatBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(

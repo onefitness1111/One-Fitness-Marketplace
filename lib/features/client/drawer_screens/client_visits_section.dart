@@ -222,7 +222,7 @@ class _VisitsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

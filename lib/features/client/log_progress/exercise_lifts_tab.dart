@@ -109,7 +109,7 @@ class _ExerciseLiftsTabState extends ConsumerState<ExerciseLiftsTab> {
               final sel = _selected.contains(name);
               final colorIdx = _selected.indexOf(name);
               final color = sel ? _chartColors[colorIdx % _chartColors.length] : AppColors.mute;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() {
                   if (sel) {
                     _selected.remove(name);

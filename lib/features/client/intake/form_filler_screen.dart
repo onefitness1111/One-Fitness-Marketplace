@@ -352,7 +352,7 @@ class _QuestionInput extends StatelessWidget {
           runSpacing: 6,
           children: List.generate(max - min + 1, (i) => min + i).map((n) {
             final selected = value == n;
-            return InkWell(
+            return TapHighlight(
               onTap: () => onText(n),
               borderRadius: BorderRadius.circular(8),
               child: Container(
@@ -400,7 +400,7 @@ class _OptionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

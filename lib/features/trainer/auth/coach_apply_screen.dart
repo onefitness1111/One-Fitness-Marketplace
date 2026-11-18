@@ -605,7 +605,7 @@ class _PickHalf extends StatelessWidget {
           child: Material(
             color: AppColors.card,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: AppColors.line)),
-            child: InkWell(
+            child: TapHighlight(
               onTap: onPick,
               child: bytes == null
                   ? Center(child: Text("Add photo", style: TextStyle(color: AppColors.mute, fontSize: 12)))

@@ -128,7 +128,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
           SectionLabel("Habits — ${niceHabitDate(_dateTab)}"),
           ...habits.map((h) {
             final done = log.checked[h.id] == true;
-            return InkWell(
+            return TapHighlight(
               onTap: canEdit ? () => _toggle(h.id) : null,
               borderRadius: BorderRadius.circular(10),
               child: Container(

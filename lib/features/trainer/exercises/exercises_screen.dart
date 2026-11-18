@@ -391,7 +391,7 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
                     runSpacing: 6,
                     children: [
                       for (final name in [...library, ...extras])
-                        InkWell(
+                        TapHighlight(
                           onTap: () => setState(() {
                             if (!_equipment.remove(name)) _equipment.add(name);
                           }),
@@ -784,7 +784,7 @@ class _ChipPicker extends StatelessWidget {
       runSpacing: 6,
       children: options.map((o) {
         final selected = value == o;
-        return InkWell(
+        return TapHighlight(
           onTap: () => onChanged(o),
           borderRadius: BorderRadius.circular(8),
           child: Container(

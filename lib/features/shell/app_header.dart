@@ -1,3 +1,4 @@
+import "../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/theme/app_colors.dart";
@@ -47,7 +48,7 @@ class _PillButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(50),
         child: Container(

@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "../theme/app_colors.dart";
 import "pressable_scale.dart";
+import "tap_highlight.dart";
 
 /// Mirrors the web app's `card()` style helper (lib/helpers.js):
 /// CARD background, LINE border, 12px radius, 14px padding, 12px bottom margin.
@@ -34,9 +35,10 @@ class AppCard extends StatelessWidget {
     );
     if (onTap == null) return content;
     return PressableScale(
-      child: GestureDetector(
+      child: TapHighlight(
         onTap: onTap,
         behavior: HitTestBehavior.opaque,
+        borderRadius: BorderRadius.circular(12),
         child: content,
       ),
     );

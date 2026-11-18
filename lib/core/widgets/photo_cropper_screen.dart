@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "dart:convert";
 import "dart:math" as math;
 import "dart:typed_data";
@@ -242,7 +243,7 @@ class _ZoomButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(22),
       child: Container(

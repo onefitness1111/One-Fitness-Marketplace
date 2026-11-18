@@ -230,7 +230,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _open = !_open),
             child: Row(
               children: [
@@ -255,7 +255,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
                 runSpacing: 6,
                 children: [
                   for (final l in locations)
-                    InkWell(
+                    TapHighlight(
                       onTap: () => setState(() => _location = l.name),
                       borderRadius: BorderRadius.circular(7),
                       child: Container(

@@ -260,7 +260,7 @@ class _CustomMealFormState extends State<CustomMealForm> {
             runSpacing: 6,
             children: kDietTags.map((t) {
               final on = _tags.contains(t.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => on ? _tags.remove(t.$1) : _tags.add(t.$1)),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),

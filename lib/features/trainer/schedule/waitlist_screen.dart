@@ -139,7 +139,7 @@ class _WaitlistScreenState extends ConsumerState<WaitlistScreen> {
                 if (hasOther) ("other", "Other"),
               ]) ...[
                 Expanded(
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: () => setState(() => _category = _category == c.$1 ? null : c.$1),
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
@@ -284,7 +284,7 @@ class _WaitlistActionBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final disabled = onTap == null;
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

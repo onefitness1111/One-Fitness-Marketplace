@@ -212,7 +212,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                 if (widget.onOpenBadges != null)
                   Padding(
                     padding: EdgeInsets.only(top: earnedBadges.any((b) => b.clientId == widget.clientId && b.isActive) ? 10 : 12),
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: widget.onOpenBadges,
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -282,7 +282,7 @@ class _ToggleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onChanged == null ? null : () => onChanged!(!value),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),

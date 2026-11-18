@@ -41,7 +41,7 @@ class _LogProgressScreenState extends State<LogProgressScreen> {
                 children: _ranges
                     .map((r) => Padding(
                           padding: const EdgeInsets.only(right: 6),
-                          child: InkWell(
+                          child: TapHighlight(
                             onTap: () => setState(() => _range = r.$1),
                             borderRadius: BorderRadius.circular(16),
                             child: Container(

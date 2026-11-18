@@ -476,7 +476,7 @@ class _ProductEditFormState extends ConsumerState<_ProductEditForm> {
             runSpacing: 6,
             children: [
               for (final c in categories)
-                InkWell(
+                TapHighlight(
                   onTap: () => setState(() => _category = c),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
@@ -644,7 +644,7 @@ class _PhotoStrip extends StatelessWidget {
                   Positioned(
                     right: 2,
                     top: 2,
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: () => onRemove(i),
                       child: Container(
                         padding: const EdgeInsets.all(3),
@@ -794,7 +794,7 @@ class _Seg extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

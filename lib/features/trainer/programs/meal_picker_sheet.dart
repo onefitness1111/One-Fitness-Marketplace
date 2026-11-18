@@ -104,7 +104,7 @@ class _MealPickerBodyState extends ConsumerState<_MealPickerBody> {
                 final on = _tags.contains(t.$1);
                 return Padding(
                   padding: const EdgeInsets.only(right: 6),
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: () => setState(() => on ? _tags.remove(t.$1) : _tags.add(t.$1)),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),

@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "../theme/app_colors.dart";
 import "../../data/models/tour_step.dart";
@@ -140,7 +141,7 @@ class _CoachmarkOverlayState extends State<CoachmarkOverlay> {
     final bubbleLeft = rect == null ? 12.0 : rect.left.clamp(12.0, screen.width - bubbleW - 12.0);
     final arrowX = rect == null ? bubbleW / 2 : (rect.center.dx - bubbleLeft).clamp(20.0, bubbleW - 20.0);
 
-    return GestureDetector(
+    return TapHighlight(
       onTap: _advance,
       behavior: HitTestBehavior.opaque,
       child: Stack(
@@ -154,7 +155,7 @@ class _CoachmarkOverlayState extends State<CoachmarkOverlay> {
             Positioned.fill(
               child: CustomSingleChildLayout(
                 delegate: _BubbleLayout(target: rect, width: bubbleW, safe: safe),
-                child: GestureDetector(
+                child: TapHighlight(
                   onTap: () {},
                   child: _CoachmarkCard(
                     step: step,

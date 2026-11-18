@@ -612,7 +612,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                 Text("Your coach", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
                 const SizedBox(height: 4),
                 if (widget.realCandidates.length > 1)
-                  InkWell(
+                  TapHighlight(
                     onTap: () async {
                       final picked = await showModalBottomSheet<Trainer>(
                         context: context,
@@ -697,7 +697,7 @@ class _SelectableCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
@@ -841,7 +841,7 @@ class _SegOption extends StatelessWidget {
       child: Semantics(
         checked: multi ? selected : null,
         selected: multi ? null : selected,
-        child: InkWell(
+        child: TapHighlight(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
           child: Container(
@@ -975,7 +975,7 @@ class _Bubble extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: GestureDetector(
+            child: TapHighlight(
               onTap: onReact == null ? null : () => onReact!("heart"),
               onLongPress: () async {
                 final action = await showMessageActions(context, canReport: onReport != null);
@@ -1123,7 +1123,7 @@ class _ComposerState extends State<_Composer> {
               ),
             ),
             const SizedBox(width: 8),
-            InkWell(
+            TapHighlight(
               onTap: hasText ? widget.onSend : null,
               borderRadius: BorderRadius.circular(22),
               child: Container(

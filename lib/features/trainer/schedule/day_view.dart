@@ -257,7 +257,7 @@ class _DateCell extends ConsumerWidget {
                 : AppColors.line;
         return Padding(
           padding: const EdgeInsets.only(right: 6),
-          child: InkWell(
+          child: TapHighlight(
             onTap: () => onPick(date),
             borderRadius: BorderRadius.circular(9),
             child: AnimatedContainer(

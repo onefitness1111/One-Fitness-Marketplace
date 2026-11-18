@@ -1180,7 +1180,7 @@ class _IntakeStatusSummary extends StatelessWidget {
           final done = rec?.completed ?? false;
           return Padding(
             padding: const EdgeInsets.only(bottom: 5),
-            child: InkWell(
+            child: TapHighlight(
               onTap: () => onTap(key),
               borderRadius: BorderRadius.circular(10),
               child: Container(
@@ -1543,7 +1543,7 @@ class _AddChargeFormState extends State<_AddChargeForm> {
             children: _kChargeCategories.map((c) {
               final (key, label) = c;
               final selected = _category == key;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => _category = key),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -1799,7 +1799,7 @@ class _CancelModeOption extends StatelessWidget {
     final accent = danger ? AppColors.errorText : AppColors.gold;
     return Opacity(
       opacity: enabled ? 1 : 0.5,
-      child: InkWell(
+      child: TapHighlight(
         onTap: enabled ? onTap : null,
         borderRadius: BorderRadius.circular(10),
         child: Container(

@@ -1601,7 +1601,7 @@ class _StepTwo extends StatelessWidget {
               const SizedBox(width: 8),
               Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
               const SizedBox(width: 8),
-              GestureDetector(
+              TapHighlight(
                 onTap: onChangeType,
                 child: Text("Change", style: TextStyle(fontSize: 12, color: AppColors.mute, decoration: TextDecoration.underline)),
               ),
@@ -1643,7 +1643,7 @@ class _JumpToChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1823,11 +1823,11 @@ class _StepThreeState extends State<_StepThree> {
             Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
             Text(disciplineLabel(chosenDisc), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
             if (onChangeType != null)
-              GestureDetector(
+              TapHighlight(
                 onTap: onChangeType,
                 child: Text("Change type", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
               ),
-            GestureDetector(
+            TapHighlight(
               onTap: onChangeDisc,
               child: Text("Change discipline", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
             ),
@@ -1907,7 +1907,7 @@ class _StepThreeState extends State<_StepThree> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Column(
                         children: [
-                          InkWell(
+                          TapHighlight(
                             onTap: (a.mine || isFull) ? null : () => onSlotTap(a.trainer, chosenType, chosenDisc, slot, a.mine, isFull),
                             borderRadius: BorderRadius.circular(10),
                             child: Opacity(
@@ -1952,7 +1952,7 @@ class _StepThreeState extends State<_StepThree> {
                                           ),
                                           Padding(
                                             padding: const EdgeInsets.only(top: 3),
-                                            child: GestureDetector(
+                                            child: TapHighlight(
                                               onTap: () => CoachProfileCard.show(context, a.trainer),
                                               child: Row(
                                                 mainAxisSize: MainAxisSize.min,

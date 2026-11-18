@@ -1,3 +1,4 @@
+import "../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "../../core/theme/app_colors.dart";
 import "../../core/utils/date_utils.dart";
@@ -60,7 +61,7 @@ class _HistoryCardState extends State<_HistoryCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _open = !_open),
             borderRadius: BorderRadius.circular(12),
             child: Padding(

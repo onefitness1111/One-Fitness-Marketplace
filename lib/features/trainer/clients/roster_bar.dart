@@ -69,7 +69,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                InkWell(
+                TapHighlight(
                   onTap: () async {
                     final added = await showAddClientSheet(context);
                     if (added == true && context.mounted) {
@@ -104,7 +104,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
                       : ClientStatus.newClient;
                   return Padding(
                     padding: const EdgeInsets.only(left: 8),
-                    child: InkWell(
+                    child: TapHighlight(
                       // Through the shell's history, so back returns to the
                       // client that was open before this one.
                       onTap: () => ref.read(trainerModeProvider.notifier).openClient(c.id),

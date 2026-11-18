@@ -99,7 +99,7 @@ class _BillingAnchorSectionState extends ConsumerState<BillingAnchorSection> {
             runSpacing: 6,
             children: List.generate(28, (i) => i + 1).map((day) {
               final selected = day == _pickedDay;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() {
                   _pickedDay = day;
                   _preview = null;

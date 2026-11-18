@@ -410,7 +410,7 @@ class _SquadDashboardScreenState extends ConsumerState<SquadDashboardScreen> {
               children: tabs
                   .map(
                     (t) => Expanded(
-                      child: InkWell(
+                      child: TapHighlight(
                         onTap: () => setState(() {
                           if (_sub == t.$1) return;
                           _subHistory.add(_sub);

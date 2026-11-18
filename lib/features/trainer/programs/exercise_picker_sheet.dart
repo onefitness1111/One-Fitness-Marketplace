@@ -69,7 +69,7 @@ class _ExercisePickerBodyState extends ConsumerState<_ExercisePickerBody> {
                 runSpacing: 6,
                 children: kMuscleGroups.map((g) {
                   final selected = _customGroup == g;
-                  return InkWell(
+                  return TapHighlight(
                     onTap: () => setState(() => _customGroup = g),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
@@ -170,7 +170,7 @@ class _MuscleChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(

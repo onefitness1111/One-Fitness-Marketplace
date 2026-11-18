@@ -323,8 +323,9 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           if (_tab == "profile") ...[
           Row(
             children: [
-              GestureDetector(
+              TapHighlight(
                 onTap: _pickingPhoto ? null : _pickPhoto,
+                shape: BoxShape.circle,
                 child: Container(
                   width: 56,
                   height: 56,
@@ -801,7 +802,7 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
                 ("perSession", "Per session"),
               ].map((opt) {
                 final selected = _payoutMode == opt.$1;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(() => _payoutMode = opt.$1),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -999,7 +1000,7 @@ class _TabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Container(
@@ -1146,7 +1147,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                     Expanded(
                       child: FieldLabeled(
                         label: "Start date",
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => _pickDate(isStart: true),
                           child: InputDecorator(
                             decoration: InputDecoration(
@@ -1165,7 +1166,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                     Expanded(
                       child: FieldLabeled(
                         label: "End date",
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: _start == null ? null : () => _pickDate(isStart: false),
                           child: InputDecorator(
                             decoration: InputDecoration(
@@ -1227,7 +1228,7 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(

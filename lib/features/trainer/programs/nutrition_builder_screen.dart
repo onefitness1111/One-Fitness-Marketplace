@@ -648,7 +648,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                   ],
                 ),
               )),
-          InkWell(
+          TapHighlight(
             onTap: _pickAttachment,
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -728,7 +728,7 @@ class _DayTypeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(

@@ -248,7 +248,7 @@ class _IngredientEditor extends StatelessWidget {
                 ],
               ),
             if (hits.isNotEmpty)
-              ...hits.map((food) => InkWell(
+              ...hits.map((food) => TapHighlight(
                     onTap: () {
                       line.food = food;
                       line.search.text = food.name;
@@ -300,7 +300,7 @@ class _TagChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(

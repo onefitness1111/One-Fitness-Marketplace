@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
@@ -291,7 +292,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
               runSpacing: 10,
               children: [
                 if (exercise.weight != null)
-                  GestureDetector(
+                  TapHighlight(
                     onTap: () => _showPlates(context, parseTargetWeight(exercise.weight)),
                     child: Text("@ ${exercise.weight} $_unit", style: TextStyle(fontSize: 12, color: AppColors.txt, fontWeight: FontWeight.w600)),
                   ),
@@ -569,7 +570,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     final last = getLastSetData(widget.client, exercise.name, setNum, widget.dayId);
     final suggested = double.tryParse(exercise.weight ?? "");
     final label = last.weight > 0 ? "${_fmtNum(last.weight)}×${last.reps}" : (suggested != null ? "Sugg. ${_fmtNum(suggested)}" : "—");
-    return _cellWrap(GestureDetector(
+    return _cellWrap(TapHighlight(
       onTap: () => _showPlates(context, last.weight > 0 ? last.weight : parseTargetWeight(exercise.weight)),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 7),

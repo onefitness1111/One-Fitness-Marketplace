@@ -220,7 +220,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                 Expanded(
                   child: FieldLabeled(
                     label: "Access expires",
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: _pickExpiry,
                       borderRadius: BorderRadius.circular(8),
                       child: Container(

@@ -396,7 +396,7 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -437,7 +437,7 @@ class _CheckRow extends StatelessWidget {
           runSpacing: 6,
           children: [
             for (final opt in options)
-              InkWell(
+              TapHighlight(
                 onTap: () => onToggle(opt),
                 borderRadius: BorderRadius.circular(8),
                 child: ConstrainedBox(
@@ -488,7 +488,7 @@ class _RadioRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

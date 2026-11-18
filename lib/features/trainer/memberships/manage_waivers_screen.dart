@@ -521,7 +521,7 @@ class _WaiverEditFormState extends State<_WaiverEditForm> {
             ),
           ),
           const SizedBox(height: 10),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _required = !_required),
             child: Row(
               children: [
@@ -598,7 +598,7 @@ class _ScopeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

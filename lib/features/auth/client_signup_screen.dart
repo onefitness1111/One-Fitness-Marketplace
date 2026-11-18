@@ -237,8 +237,9 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
               Center(
                 child: Column(
                   children: [
-                    GestureDetector(
+                    TapHighlight(
                       onTap: _pickingPhoto ? null : _pickPhoto,
+                      shape: BoxShape.circle,
                       child: Container(
                         width: 80,
                         height: 80,
@@ -320,7 +321,7 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
               const SizedBox(height: 10),
               FieldLabeled(
                 label: "Birthday (optional)",
-                child: InkWell(
+                child: TapHighlight(
                   onTap: _pickBirthday,
                   child: InputDecorator(
                     decoration: InputDecoration(
@@ -372,7 +373,7 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     const Text("I agree to the ", style: TextStyle(fontSize: 13, height: 1.4)),
-                    GestureDetector(
+                    TapHighlight(
                       onTap: () => setState(() => _readingTerms = true),
                       child: Text(
                         "Terms of Use",

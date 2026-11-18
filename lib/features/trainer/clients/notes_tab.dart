@@ -556,7 +556,7 @@ class _NoteFormState extends State<_NoteForm> {
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: () => setState(() => _flag = f),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
@@ -630,7 +630,7 @@ class _NoteFormState extends State<_NoteForm> {
             runSpacing: 6,
             children: kBodyAreas.map((a) {
               final selected = _bodyArea == a;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => _bodyArea = selected ? null : a),
                 borderRadius: BorderRadius.circular(6),
                 child: Container(
@@ -664,7 +664,7 @@ class _NoteFormState extends State<_NoteForm> {
             child: AppField(kind: FieldKind.date, controller: _resolveBy),
           ),
           const SizedBox(height: 10),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _followUp = !_followUp),
             child: Row(
               children: [

@@ -343,7 +343,7 @@ class _ReportCard extends StatelessWidget {
               ],
             ),
           ),
-          InkWell(
+          TapHighlight(
             onTap: onToggleFavorite,
             borderRadius: BorderRadius.circular(20),
             child: Padding(

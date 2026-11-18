@@ -370,7 +370,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       final on = mode == item.key;
                       return Expanded(
                         key: kStaffTourKeys["staff-nav-${item.key}"],
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => go(item.key),
                           child: Padding(
                             padding: const EdgeInsets.only(top: 9, bottom: 11),
@@ -598,7 +598,7 @@ class _TrainerDrawer extends ConsumerWidget {
                 child: Column(
                   children: [
                     for (final e in entries)
-                      InkWell(
+                      TapHighlight(
                         key: kStaffTourKeys["staff-drawer-${e.key}"],
                         onTap: () => onGo(e.key),
                         child: Container(
@@ -634,7 +634,7 @@ class _TrainerDrawer extends ConsumerWidget {
                 ),
               ),
             ),
-            InkWell(
+            TapHighlight(
               onTap: () {
                 SupabaseService.signOut();
                 ref.read(trainerAuthProvider.notifier).signOut();

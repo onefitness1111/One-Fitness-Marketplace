@@ -213,7 +213,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
           const SizedBox(height: 14),
           Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
             const SizedBox(height: 6),
-            InkWell(
+            TapHighlight(
               onTap: () => setState(() => _pickingCoach = true),
               borderRadius: BorderRadius.circular(8),
               child: Container(
@@ -249,7 +249,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
               Expanded(
                 child: FieldLabeled(
                   label: "Date",
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: _pickDate,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -424,7 +424,7 @@ class _ChoiceRow<T> extends StatelessWidget {
       runSpacing: 6,
       children: options.map((o) {
         final selected = value == o.$1;
-        return InkWell(
+        return TapHighlight(
           onTap: () => onChanged(o.$1),
           borderRadius: BorderRadius.circular(8),
           child: Container(

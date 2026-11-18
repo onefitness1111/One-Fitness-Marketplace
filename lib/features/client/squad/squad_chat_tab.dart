@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "dart:convert";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
@@ -445,7 +446,7 @@ class _SquadComposerState extends State<_SquadComposer> {
               ),
             ),
             const SizedBox(width: 8),
-            InkWell(
+            TapHighlight(
               onTap: hasText ? widget.onSend : null,
               borderRadius: BorderRadius.circular(22),
               child: Container(

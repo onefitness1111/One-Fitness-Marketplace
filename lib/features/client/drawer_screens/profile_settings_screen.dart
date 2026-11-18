@@ -690,8 +690,9 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
           Center(
             child: Column(
               children: [
-                GestureDetector(
+                TapHighlight(
                   onTap: _pickingPhoto ? null : _pickPhoto,
+                  shape: BoxShape.circle,
                   child: Container(
                     width: 80,
                     height: 80,
@@ -773,7 +774,7 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
           const SizedBox(height: 10),
           FieldLabeled(
             label: "Birthday",
-            child: InkWell(
+            child: TapHighlight(
               onTap: _pickBirthday,
               child: InputDecorator(
                 decoration: InputDecoration(

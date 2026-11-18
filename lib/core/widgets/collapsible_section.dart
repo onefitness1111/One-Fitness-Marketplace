@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../theme/app_colors.dart";
@@ -32,7 +33,7 @@ class _CollapsibleSectionState extends State<CollapsibleSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _open = !_open),
             borderRadius: BorderRadius.circular(10),
             child: Container(

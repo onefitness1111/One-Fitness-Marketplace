@@ -160,7 +160,7 @@ class _ScaledMealCardState extends State<ScaledMealCard> {
                   if (hasOverrides)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: GestureDetector(
+                      child: TapHighlight(
                         onTap: () => widget.onUpdate(meal.copyWith(clearOverrides: true)),
                         child: Text("Reset all to auto-scaled", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
                       ),
@@ -171,7 +171,7 @@ class _ScaledMealCardState extends State<ScaledMealCard> {
           if (meal.instructions != null && meal.instructions!.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: GestureDetector(
+              child: TapHighlight(
                 onTap: () => setState(() => _showInstructions = !_showInstructions),
                 child: Text(
                   _showInstructions ? "Hide instructions ▲" : "Show instructions ▼",

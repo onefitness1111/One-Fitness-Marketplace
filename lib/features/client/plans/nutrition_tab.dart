@@ -364,7 +364,7 @@ class _DayTypeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(6),
         child: Container(

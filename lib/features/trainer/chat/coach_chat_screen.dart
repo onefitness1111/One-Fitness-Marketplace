@@ -761,7 +761,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
               final selected = c.id == _recipientId;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => setState(() => _recipientId = c.id),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -811,7 +811,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             for (final t in teamMatches)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => setState(() => _recipientId = "staff:${t["id"]}"),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -912,7 +912,7 @@ class _SegOption extends StatelessWidget {
       child: Semantics(
         checked: multi ? selected : null,
         selected: multi ? null : selected,
-        child: InkWell(
+        child: TapHighlight(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
           child: Container(
@@ -1035,7 +1035,7 @@ class _Bubble extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: GestureDetector(
+            child: TapHighlight(
               onTap: onReact == null ? null : () => onReact!("heart"),
               onLongPress: () async {
                 final action = await showMessageActions(context, canReport: false);
@@ -1181,7 +1181,7 @@ class _ComposerState extends State<_Composer> {
               ),
             ),
             const SizedBox(width: 8),
-            InkWell(
+            TapHighlight(
               onTap: hasText ? widget.onSend : null,
               borderRadius: BorderRadius.circular(22),
               child: Container(

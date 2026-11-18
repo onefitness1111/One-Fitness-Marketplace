@@ -96,7 +96,7 @@ class _VisitsTabState extends ConsumerState<VisitsTab> {
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.only(right: t.$1 == "upcoming" ? 8 : 0),
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: () => setState(() => _tab = t.$1),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(

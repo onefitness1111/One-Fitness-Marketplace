@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
@@ -80,7 +81,7 @@ class _DateStripState extends State<DateStrip> {
                     return Expanded(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: past ? null : () => widget.onSelect(d),
                           borderRadius: BorderRadius.circular(10),
                           child: Container(
@@ -142,7 +143,7 @@ class _NavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: disabled ? null : onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(

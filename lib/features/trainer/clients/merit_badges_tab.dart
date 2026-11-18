@@ -244,7 +244,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionLabel("Merit Badges — ${info.name}"),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _showGymCitizen = true),
             borderRadius: BorderRadius.circular(10),
             child: Container(

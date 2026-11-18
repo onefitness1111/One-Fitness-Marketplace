@@ -248,7 +248,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                       Avatar(src: client?.photo, name: client?.name ?? "Removed", size: 34),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: client != null
                               ? () {
                                   Navigator.of(context).pop();
@@ -303,7 +303,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                         spacing: 5,
                         runSpacing: 5,
                         children: kAttendanceOptions.map((opt) {
-                          return InkWell(
+                          return TapHighlight(
                             onTap: () {
                               ref.read(allBookingsProvider.notifier).updateAttendance(b.id, opt.key);
                               SupabaseService.updateBookingAttendance(b.id, opt.key).catchError((Object _) {

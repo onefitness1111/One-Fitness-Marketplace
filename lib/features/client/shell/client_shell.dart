@@ -532,7 +532,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                               ),
                               const SizedBox(width: 4),
                             ],
-                            InkWell(
+                            TapHighlight(
                               onTap: () => go("settings"),
                               borderRadius: BorderRadius.circular(20),
                               child: (info.photo != null && info.photo!.isNotEmpty)
@@ -723,7 +723,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                   final on = screen == item.key;
                   return Expanded(
                     key: kDashboardTourKeys["dash-nav-${item.key}"],
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: item.key == "booking"
                           ? goBooking
                           : () => go(item.key),
@@ -895,7 +895,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                   child: Column(
                   children: _drawerItems.map((item) {
                     final on = screen == item.key;
-                    return InkWell(
+                    return TapHighlight(
                       key: kDrawerTourKeys["drawer-${item.key}"],
                       onTap: () => onGo(item.key),
                       borderRadius: BorderRadius.circular(8),
@@ -935,7 +935,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                 ),
               ),
               Divider(color: AppColors.line, height: 1),
-              InkWell(
+              TapHighlight(
                 onTap: () {
                   SupabaseService.signOut();
                   ref.read(clientSignedInProvider.notifier).signOut();

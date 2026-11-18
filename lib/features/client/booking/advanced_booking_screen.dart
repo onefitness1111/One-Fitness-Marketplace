@@ -970,7 +970,7 @@ class _DecisionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1043,7 +1043,7 @@ class _BracketEditor extends StatelessWidget {
                 ),
               ),
               if (canRemove)
-                InkWell(
+                TapHighlight(
                   onTap: onRemove,
                   child: Text(
                     "Remove",
@@ -1067,7 +1067,7 @@ class _BracketEditor extends StatelessWidget {
             runSpacing: 6,
             children: _kWeekdayOptions.map((opt) {
               final on = bracket.days.contains(opt.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => toggleDay(opt.$1),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -1104,7 +1104,7 @@ class _BracketEditor extends StatelessWidget {
           const SizedBox(height: 8),
           Builder(
             builder: (context) {
-              return InkWell(
+              return TapHighlight(
                 onTap: () async {
                   final picked = await showTimePicker(
                     context: context,

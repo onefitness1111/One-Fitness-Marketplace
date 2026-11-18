@@ -156,7 +156,7 @@ class _HabitsTabState extends ConsumerState<HabitsTab> {
                   final on = record.habits.contains(h.id);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6),
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: () => _writeHabitSettings(
                         on ? (record.habits.where((x) => x != h.id).toList()) : [...record.habits, h.id],
                         record.customHabits,

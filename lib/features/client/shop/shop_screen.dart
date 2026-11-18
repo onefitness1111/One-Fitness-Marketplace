@@ -95,7 +95,7 @@ class _ProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final soldOut = !product.inStock;
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
@@ -239,7 +239,7 @@ class _ProductDetailState extends ConsumerState<_ProductDetail> {
                   scrollDirection: Axis.horizontal,
                   itemCount: p.photos.length,
                   separatorBuilder: (context, i) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) => InkWell(
+                  itemBuilder: (context, i) => TapHighlight(
                     onTap: () => setState(() => _photoIndex = i),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(6),
@@ -276,7 +276,7 @@ class _ProductDetailState extends ConsumerState<_ProductDetail> {
             children: p.sizes.map((sz) {
               final selected = sz.label == _size;
               final out = !sz.inStock;
-              return InkWell(
+              return TapHighlight(
                 onTap: out ? null : () => setState(() {
                   _size = sz.label;
                   _error = null;

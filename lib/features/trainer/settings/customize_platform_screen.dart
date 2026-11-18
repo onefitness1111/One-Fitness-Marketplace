@@ -766,7 +766,7 @@ class _ToggleRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => onChange(!value),
             child: Row(
               children: [
@@ -928,7 +928,7 @@ class _ChoiceRow extends StatelessWidget {
             runSpacing: 6,
             children: options.map((o) {
               final selected = value == o.$1;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => onChange(o.$1),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -979,7 +979,7 @@ class _MultiChoiceRow extends StatelessWidget {
             runSpacing: 6,
             children: options.map((o) {
               final selected = value.contains(o.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => onChange(selected ? value.where((k) => k != o.$1).toList() : [...value, o.$1]),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -1135,7 +1135,7 @@ class _CatalogEditor extends StatelessWidget {
                   ),
                 // Add one of the gym's own — it then behaves exactly like a
                 // built-in everywhere in the app.
-                InkWell(
+                TapHighlight(
                   onTap: () => _add(context),
                   borderRadius: BorderRadius.circular(7),
                   child: Container(
@@ -1165,7 +1165,7 @@ class _CatalogEditor extends StatelessWidget {
               runSpacing: 6,
               children: [
                 for (final o in deleted)
-                  InkWell(
+                  TapHighlight(
                     onTap: () => onChange([...value, o.$1]),
                     borderRadius: BorderRadius.circular(7),
                     child: Container(
@@ -1224,7 +1224,7 @@ class _DefaultLocationPicker extends StatelessWidget {
             )
           else
             for (final l in all)
-              InkWell(
+              TapHighlight(
                 onTap: () => onChange(l.name),
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
@@ -1759,8 +1759,8 @@ class _CustomFieldsEditorState extends State<_CustomFieldsEditor> {
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      InkWell(onTap: i == 0 ? null : () => _move(i, -1), child: Icon(LucideIcons.chevronUp, size: 14, color: i == 0 ? AppColors.line : AppColors.mute)),
-                      InkWell(onTap: i == widget.fields.length - 1 ? null : () => _move(i, 1), child: Icon(LucideIcons.chevronDown, size: 14, color: i == widget.fields.length - 1 ? AppColors.line : AppColors.mute)),
+                      TapHighlight(onTap: i == 0 ? null : () => _move(i, -1), child: Icon(LucideIcons.chevronUp, size: 14, color: i == 0 ? AppColors.line : AppColors.mute)),
+                      TapHighlight(onTap: i == widget.fields.length - 1 ? null : () => _move(i, 1), child: Icon(LucideIcons.chevronDown, size: 14, color: i == widget.fields.length - 1 ? AppColors.line : AppColors.mute)),
                     ],
                   ),
                   const SizedBox(width: 6),
@@ -1817,7 +1817,7 @@ class _FeeProfileEditor extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => onChange(FeeProfile(enabled: !profile.enabled, label: profile.label, structure: profile.structure, percent: profile.percent, flatCents: profile.flatCents)),
             child: Row(
               children: [
@@ -2027,7 +2027,7 @@ class _SoundChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

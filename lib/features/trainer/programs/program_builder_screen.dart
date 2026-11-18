@@ -265,7 +265,7 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               Expanded(
-                                child: InkWell(
+                                child: TapHighlight(
                                   onTap: () =>
                                       setState(() => _activeDayId = day.id),
                                   child: Row(
@@ -850,7 +850,7 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                                   ("unilateral", "Unilateral"),
                                 ].map((opt) {
                                   final on = (ex.laterality) == opt.$1;
-                                  return InkWell(
+                                  return TapHighlight(
                                     onTap: () => _updateItem(
                                       ex.id,
                                       (e) => e.copyWith(laterality: opt.$1),
@@ -930,7 +930,7 @@ class _ReorderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: disabled ? null : onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(
@@ -956,7 +956,7 @@ class _MiniActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(7),
       child: Container(
@@ -1146,7 +1146,7 @@ class _SaveProgramSheetState extends ConsumerState<_SaveProgramSheet> {
     return Stack(
       children: [
         Positioned.fill(
-          child: GestureDetector(
+          child: TapHighlight(
             onTap: _saved ? null : widget.onDone,
             child: Container(color: Colors.black54),
           ),

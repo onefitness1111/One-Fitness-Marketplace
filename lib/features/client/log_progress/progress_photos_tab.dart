@@ -181,7 +181,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                         Positioned(
                           top: 6,
                           left: 6,
-                          child: InkWell(
+                          child: TapHighlight(
                             onTap: () => showDialog(
                               context: context,
                               builder: (ctx) => AlertDialog(
@@ -209,7 +209,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                                   height: 22,
                                   child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
                                 )
-                              : InkWell(
+                              : TapHighlight(
                                   onTap: _sharingId == null ? () => _shareWithSquad(p) : null,
                                   borderRadius: BorderRadius.circular(14),
                                   child: Container(
@@ -246,7 +246,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                                       height: 12,
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFE0A0A0)),
                                     )
-                                  : InkWell(
+                                  : TapHighlight(
                                       onTap: _removingId == null ? () => _remove(p.id) : null,
                                       child: const Icon(LucideIcons.trash2, size: 13, color: Color(0xFFE0A0A0)),
                                     ),

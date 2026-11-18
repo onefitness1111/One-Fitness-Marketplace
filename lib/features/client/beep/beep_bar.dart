@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "dart:async";
 
 import "package:flutter/material.dart";
@@ -339,7 +340,7 @@ class _BeepOptionsSheetState extends State<_BeepOptionsSheet> {
                   separatorBuilder: (_, _) => const SizedBox(width: 6),
                   itemBuilder: (ctx, i) {
                     final on = i == _exerciseIndex;
-                    return InkWell(
+                    return TapHighlight(
                       onTap: () => setState(() => _exerciseIndex = i),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -416,7 +417,7 @@ class _BeepChoice extends StatelessWidget {
     final waiting = remaining > Duration.zero;
     final accent = kind.isUrgent ? AppColors.danger : AppColors.gold;
 
-    return InkWell(
+    return TapHighlight(
       onTap: waiting ? null : onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(

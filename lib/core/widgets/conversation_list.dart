@@ -74,7 +74,7 @@ class ConversationList extends StatelessWidget {
                   separatorBuilder: (context, i) => Divider(height: 1, color: AppColors.line, indent: 70),
                   itemBuilder: (context, i) {
                     final c = conversations[i];
-                    return InkWell(
+                    return TapHighlight(
                       onTap: () => onOpen(c.id),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),

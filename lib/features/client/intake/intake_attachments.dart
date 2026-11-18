@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "dart:typed_data";
 
 import "package:file_picker/file_picker.dart";
@@ -305,7 +306,7 @@ class _AttachmentRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final a = attachment;
-    return InkWell(
+    return TapHighlight(
       onTap: opening ? null : onOpen,
       borderRadius: BorderRadius.circular(10),
       child: Container(

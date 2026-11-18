@@ -140,7 +140,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
     required bool on,
     required VoidCallback onTap,
   }) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
@@ -471,8 +471,9 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
               Center(
                 child: Column(
                   children: [
-                    GestureDetector(
+                    TapHighlight(
                       onTap: _pickingPhoto ? null : _pickPhoto,
+                      shape: BoxShape.circle,
                       child: Container(
                         width: 72,
                         height: 72,
@@ -992,7 +993,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     const Text("I agree to the ", style: TextStyle(fontSize: 13, height: 1.4)),
-                    GestureDetector(
+                    TapHighlight(
                       onTap: () => setState(() => _readingTerms = true),
                       child: Text(
                         "Terms of Use",

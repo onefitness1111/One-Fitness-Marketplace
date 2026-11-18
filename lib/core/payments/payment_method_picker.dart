@@ -1,3 +1,4 @@
+import "../widgets/tap_highlight.dart";
 import "dart:io" show Platform;
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
@@ -80,7 +81,7 @@ Future<PayTender?> showPaymentMethodPicker(BuildContext context, MembershipPlan 
             for (final t in options)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => Navigator.pop(ctx, t),
                   borderRadius: BorderRadius.circular(10),
                   child: Container(

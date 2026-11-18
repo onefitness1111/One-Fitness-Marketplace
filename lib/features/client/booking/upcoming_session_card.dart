@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/theme/app_colors.dart";
@@ -68,7 +69,7 @@ class _UpcomingSessionCardState extends ConsumerState<UpcomingSessionCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            InkWell(
+            TapHighlight(
               onTap: () => setState(() => _expanded = !_expanded),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
