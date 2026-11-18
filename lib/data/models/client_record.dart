@@ -1,5 +1,6 @@
 import "challenge.dart";
 import "comm_message.dart";
+import "food_log.dart";
 import "habit_def.dart";
 import "habit_log_entry.dart";
 import "intake_schema.dart";
@@ -39,6 +40,7 @@ class ClientRecord {
     this.sessionFeedback = const [],
     this.savedNutritionPrograms = const [],
     this.myMeals = const {},
+    this.foodLog = const FoodLog(),
     this.challengeBadges = const [],
     this.adoptedSignatureImage,
     this.adoptedInitialsImage,
@@ -124,6 +126,10 @@ class ClientRecord {
   /// alongside them, chosen against the calorie budget for that meal.
   final Map<String, List<NutritionMeal>> myMeals;
 
+  /// What this client logged themselves (search, quick add, a photo
+  /// estimate, or a restaurant suggestion). Separate from the meal plan.
+  final FoodLog foodLog;
+
   /// Challenge badges awarded to this client (client.challengeBadges) — a
   /// winner badge and/or a "complete-{challengeId}" participation badge per
   /// finished challenge, written by a coach's "Award badges" action.
@@ -168,6 +174,7 @@ class ClientRecord {
     List<SessionFeedbackEntry>? sessionFeedback,
     List<NutritionProgramEntry>? savedNutritionPrograms,
     Map<String, List<NutritionMeal>>? myMeals,
+    FoodLog? foodLog,
     List<ChallengeBadge>? challengeBadges,
     bool? tourSeenDashboard,
     bool? tourSeenDrawer,
@@ -199,6 +206,7 @@ class ClientRecord {
         sessionFeedback: sessionFeedback ?? this.sessionFeedback,
         savedNutritionPrograms: savedNutritionPrograms ?? this.savedNutritionPrograms,
         myMeals: myMeals ?? this.myMeals,
+        foodLog: foodLog ?? this.foodLog,
         challengeBadges: challengeBadges ?? this.challengeBadges,
         adoptedSignatureImage: adoptedSignatureImage ?? this.adoptedSignatureImage,
         adoptedInitialsImage: adoptedInitialsImage ?? this.adoptedInitialsImage,

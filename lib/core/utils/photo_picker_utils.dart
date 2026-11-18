@@ -53,6 +53,23 @@ Future<String?> pickProgressPhotoDataUrl() async {
   return "data:image/jpeg;base64,${base64Encode(bytes)}";
 }
 
+/// A plate or meal photo, from the camera or the library, compressed the
+/// same way as a progress photo so it stays small.
+Future<Uint8List?> pickPlatePhotoBytes({required bool camera}) async {
+  try {
+    final picked = await ImagePicker().pickImage(
+      source: camera ? ImageSource.camera : ImageSource.gallery,
+      maxWidth: 1024,
+      imageQuality: 70,
+    );
+    if (picked == null) return null;
+    final bytes = await picked.readAsBytes();
+    return await compute(_compressProgressPhotoBytes, bytes);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Compressed JPEG bytes for the private progress-photo bucket.
 Future<Uint8List?> pickProgressPhotoBytes() async {
   try {

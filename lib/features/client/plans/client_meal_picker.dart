@@ -2,25 +2,27 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/food_catalog.dart";
+import "../../../core/utils/meal_resize.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/meal_def.dart";
 import "../../../data/models/nutrition_plan.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "add_meal_screen.dart";
 
 /// Lets a client pick their own meal for breakfast / lunch / dinner once
 /// their program has calorie targets and per-meal budgets. Meals come from
 /// the same catalogue coaches build programs from, so what a client picks
 /// carries real ingredients and macros into their grocery list.
 ///
-/// [budget] is that meal's calorie budget: meals within 15% of it are marked
-/// "fits your budget" and listed first, but nothing is hidden — the budget
-/// is guidance, not a lock.
+/// [budget] is that meal's calorie and macro budget. Choosing a meal copies
+/// it and fits the portions to the budget. The library meal is not changed.
 Future<NutritionMeal?> showClientMealPicker(
   BuildContext context,
   WidgetRef ref, {
   required String category,
   required String label,
-  int? budget,
+  required SlotBudget budget,
 }) {
   return showModalBottomSheet<NutritionMeal>(
     context: context,
@@ -35,10 +37,10 @@ Future<NutritionMeal?> showClientMealPicker(
 }
 
 class _ClientMealPickerBody extends ConsumerStatefulWidget {
-  const _ClientMealPickerBody({required this.category, required this.label, this.budget});
+  const _ClientMealPickerBody({required this.category, required this.label, required this.budget});
   final String category;
   final String label;
-  final int? budget;
+  final SlotBudget budget;
 
   @override
   ConsumerState<_ClientMealPickerBody> createState() => _ClientMealPickerBodyState();
@@ -46,7 +48,7 @@ class _ClientMealPickerBody extends ConsumerStatefulWidget {
 
 class _ClientMealPickerBodyState extends ConsumerState<_ClientMealPickerBody> {
   final _search = TextEditingController();
-  bool _budgetOnly = false;
+  String _diet = "";
 
   @override
   void dispose() {
@@ -54,38 +56,20 @@ class _ClientMealPickerBodyState extends ConsumerState<_ClientMealPickerBody> {
     super.dispose();
   }
 
-  bool _fitsBudget(MealDef m) {
-    final b = widget.budget;
-    if (b == null || b <= 0 || m.calories <= 0) return false;
-    return (m.calories - b).abs() <= b * 0.15;
-  }
-
-  NutritionMeal _toMeal(MealDef m) => NutritionMeal(
-        id: m.id,
-        name: m.name,
-        calories: m.calories,
-        protein: m.protein,
-        carbs: m.carbs,
-        fats: m.fats,
-        ingredients: m.ingredients,
-        instructions: m.instructions,
-        notes: m.notes,
-        isCustom: m.isCustom,
-        targetCalories: widget.budget,
-      );
+  NutritionMeal _toMeal(MealDef m) => mealFittedToBudget(m, widget.budget);
 
   @override
   Widget build(BuildContext context) {
     final q = _search.text.trim().toLowerCase();
+    final calorieBudget = widget.budget.calories;
     final all = [...ref.watch(mealCatalogProvider), ...ref.watch(customMealsProvider)]
         .where((m) => m.mealType == widget.category)
+        .where((m) => mealMatchesDiet(m, _diet))
         .where((m) => q.isEmpty || m.name.toLowerCase().contains(q) || m.ingredients.any((i) => i.item.toLowerCase().contains(q)))
-        .where((m) => !_budgetOnly || _fitsBudget(m))
         .toList()
-      // Closest to the budget first when there is one.
       ..sort((a, b) {
-        if (widget.budget == null) return a.name.compareTo(b.name);
-        return (a.calories - widget.budget!).abs().compareTo((b.calories - widget.budget!).abs());
+        if (calorieBudget == null) return a.name.compareTo(b.name);
+        return (a.calories - calorieBudget).abs().compareTo((b.calories - calorieBudget).abs());
       });
 
     return SafeArea(
@@ -96,44 +80,64 @@ class _ClientMealPickerBodyState extends ConsumerState<_ClientMealPickerBody> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SectionLabel("Choose your ${widget.label.toLowerCase()}"),
-            if (widget.budget != null)
-              Text(
-                "Your program allows about ${widget.budget} kcal for ${widget.label.toLowerCase()}.",
-                style: TextStyle(fontSize: 12, color: AppColors.mute),
-              ),
+            Text(
+              calorieBudget == null
+                  ? "Search or filter, then pick a meal."
+                  : "Portions are adjusted so the meal lands at or just under about $calorieBudget kcal.",
+              style: TextStyle(fontSize: 12, color: AppColors.mute),
+            ),
             const SizedBox(height: 10),
             AppField(kind: FieldKind.search,
               controller: _search,
               placeholder: "Search meals or ingredients…",
               onChanged: (_) => setState(() {}),
             ),
-            if (widget.budget != null) ...[
-              const SizedBox(height: 8),
-              Row(
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 32,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
                 children: [
-                  Switch(
-                    value: _budgetOnly,
-                    onChanged: (v) => setState(() => _budgetOnly = v),
-                    activeThumbColor: AppColors.gold,
-                  ),
-                  Text("Only show meals that fit my budget", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                  for (final tag in kClientDietFilters)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(tag.$2, style: TextStyle(fontSize: 11, color: _diet == tag.$1 ? AppColors.onGold : AppColors.mute)),
+                        selected: _diet == tag.$1,
+                        selectedColor: AppColors.gold,
+                        backgroundColor: AppColors.bg,
+                        side: BorderSide(color: _diet == tag.$1 ? AppColors.gold : AppColors.line),
+                        onSelected: (_) => setState(() => _diet = tag.$1),
+                      ),
+                    ),
                 ],
               ),
-            ],
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () async {
+                  final created = await Navigator.of(context).push<MealDef>(
+                    MaterialPageRoute(builder: (_) => AddMealScreen(mealType: widget.category, label: widget.label)),
+                  );
+                  if (created == null || !context.mounted) return;
+                  Navigator.of(context).pop(mealFittedToBudget(created, widget.budget));
+                },
+                child: Text("Add a meal", style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 12)),
+              ),
+            ),
             const SizedBox(height: 8),
             Flexible(
               child: all.isEmpty
-                  ? const HintBox(text: "No meals match. Try a different search, or switch off the budget filter.")
+                  ? const HintBox(text: "No meals match. Try another search or diet, or add your own meal.")
                   : ListView.separated(
                       shrinkWrap: true,
                       itemCount: all.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
                         final m = all[i];
-                        final fits = _fitsBudget(m);
                         return AppCard(
                           margin: EdgeInsets.zero,
-                          borderColor: fits ? AppColors.gold : null,
                           onTap: () => Navigator.of(context).pop(_toMeal(m)),
                           child: Row(
                             children: [
@@ -147,10 +151,10 @@ class _ClientMealPickerBodyState extends ConsumerState<_ClientMealPickerBody> {
                                       "${m.calories} kcal · P ${m.protein.toInt()} · C ${m.carbs.toInt()} · F ${m.fats.toInt()}",
                                       style: TextStyle(fontSize: 11.5, color: AppColors.mute),
                                     ),
-                                    if (fits)
+                                    if (calorieBudget != null)
                                       Padding(
-                                        padding: EdgeInsets.only(top: 2),
-                                        child: Text("Fits your budget", style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700)),
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text("Portions fit your budget", style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700)),
                                       ),
                                   ],
                                 ),

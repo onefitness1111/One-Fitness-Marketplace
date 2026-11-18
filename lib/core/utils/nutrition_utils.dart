@@ -1,5 +1,6 @@
 import "../../data/models/ingredient_grocery_item.dart";
 import "../../data/models/nutrition_plan.dart";
+import "nutrition_helpers.dart" show effectiveIngredients;
 
 /// Mirrors nutritionHelpers.js `macroShortLabel`.
 String macroShortLabel(String key) => const {
@@ -27,13 +28,13 @@ class TargetMatch {
   final int color; // ARGB packed elsewhere via Color(); kept as int to avoid a Flutter import here
 }
 
-/// Mirrors nutritionHelpers.js `buildGroceryList`, simplified to a single
-/// merged/deduplicated list rather than per-ingredient-category buckets —
-/// the mock meals here don't carry the full ingredient category taxonomy.
+/// Combined grocery lines. Uses each meal's fitted amounts when the client
+/// resized it, and the original amounts when nobody did. The same ingredient
+/// and unit are added together.
 List<IngredientGroceryItem> buildGroceryList(List<NutritionMeal> meals) {
   final byKey = <String, IngredientGroceryItem>{};
   for (final meal in meals) {
-    for (final ing in meal.ingredients) {
+    for (final ing in effectiveIngredients(meal)) {
       final key = "${ing.item.trim().toLowerCase()}|${(ing.unit ?? '').trim().toLowerCase()}";
       final existing = byKey[key];
       if (existing != null && existing.qty != null && ing.qty != null) {

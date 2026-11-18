@@ -26,6 +26,7 @@ import "../../data/models/coach_pr_event.dart";
 import "../../data/models/comm_message.dart";
 import "../../data/models/earned_badge.dart";
 import "../../data/models/exercise_def.dart";
+import "../../data/models/food_log.dart";
 import "../../data/models/exercise_prescription.dart";
 import "../../data/models/habit_def.dart";
 import "../../data/models/habit_log_entry.dart";
@@ -1164,6 +1165,7 @@ class SupabaseService {
         .whereType<String>()
         .toList(),
     isCustom: j["isCustom"] as bool? ?? true,
+    photoDataUrl: j["photoDataUrl"] as String?,
   );
 
   /// Real data's key is `equipmentIds`, not `equipment` (confirmed against a
@@ -2808,6 +2810,7 @@ class SupabaseService {
     if (m.scaledMacros != null) "scaledMacros": m.scaledMacros!.toJson(),
     if (m.overrides.isNotEmpty)
       "overrides": m.overrides.map((k, v) => MapEntry(k.toString(), v)),
+    if (m.photoDataUrl != null) "photoDataUrl": m.photoDataUrl,
   };
 
   static Map<String, dynamic> _nutritionPlanToJson(NutritionPlan n) => {
@@ -2858,6 +2861,26 @@ class SupabaseService {
       for (final e in byCategory.entries) e.key: e.value.map(_nutritionMealToJson).toList(),
     },
   });
+
+  /// `client_records.data.foodLog` only. Goes through the row-locked patch
+  /// and does not fall back to rewriting the rest of the record. The
+  /// database function has to allow the `foodLog` key (see the food-log
+  /// migration) before this succeeds.
+  static Future<void> updateClientFoodLog(String profileId, FoodLog log) async {
+    await client.rpc("patch_client_record", params: {
+      "p_client": profileId,
+      "p_patch": {"foodLog": log.toJson()},
+    });
+  }
+
+  /// A plate photo comes back as an estimate the client can edit. The
+  /// response never describes how the numbers were produced.
+  static Future<Map<String, dynamic>> estimatePlate(String jpegBase64) =>
+      _invokeFunction("estimate-plate", {"image": jpegBase64});
+
+  /// Restaurant name search and menu suggestions for one meal slot.
+  static Future<Map<String, dynamic>> recommendRestaurant(Map<String, dynamic> body) =>
+      _invokeFunction("recommend-restaurant", body);
 
   /// `client_records.data.savedNutritionPrograms` — the AI-draft review
   /// queue plus any coach-saved target sets. Whole-list replace (same
@@ -4665,6 +4688,7 @@ class SupabaseService {
     "notes": m.notes,
     "dietTags": m.dietTags,
     "isCustom": m.isCustom,
+    if (m.photoDataUrl != null) "photoDataUrl": m.photoDataUrl,
   };
 
   static Future<void> insertCustomMeal(MealDef m) =>
@@ -5422,6 +5446,7 @@ class SupabaseService {
         for (final e in ((j["myMeals"] as Map?) ?? const {}).entries)
           e.key.toString(): _nutritionMealListFromJson(e.value),
       },
+      foodLog: FoodLog.fromJson(j["foodLog"]),
       savedNutritionPrograms: _safeMap(
         ((j["savedNutritionPrograms"] as List?) ?? const [])
             .whereType<Map>()
@@ -5621,6 +5646,7 @@ class SupabaseService {
               (k, v) => MapEntry(int.tryParse(k.toString()) ?? 0, v.toString()),
             )
           : const {},
+      photoDataUrl: m["photoDataUrl"] as String?,
     );
   }
 
