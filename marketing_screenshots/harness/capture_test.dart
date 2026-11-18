@@ -32,6 +32,7 @@ import "package:onefitness/data/providers/trainer_providers.dart";
 import "package:onefitness/features/client/booking/date_strip.dart";
 import "package:onefitness/features/client/shell/client_shell.dart";
 import "package:onefitness/features/client/shell/client_shell_state.dart";
+import "package:onefitness/features/trainer/shell/trainer_shell.dart";
 
 /// Marketing captures of the client booking journey.
 ///
@@ -482,6 +483,72 @@ void main() {
     await tester.drag(find.byType(SingleChildScrollView).first, const Offset(0, 120));
     await _settle(tester);
     await _shoot(tester, "05_upcoming_schedule_dark");
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets("coach can change a self check-in", (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("ofm.staffTour.coach-will.coach-home", true);
+    final container = ProviderContainer(
+      overrides: [initialThemeModeProvider.overrideWithValue(ThemeMode.light)],
+    );
+    addTearDown(container.dispose);
+    container.read(trainerAuthProvider.notifier).signIn(_will.id);
+    container.read(trainersProvider.notifier).setAll([_will, _maya]);
+    container.read(trainerRosterProvider.notifier).setAll([_tina]);
+    container.read(trainerClientRecordsProvider.notifier).setAll({_tina.id: _record(signed: true)});
+    container.read(allBookingsProvider.notifier).setAll([
+      Booking(
+        id: "tina-self-checkin",
+        clientId: _tina.id,
+        trainerId: _will.id,
+        date: isoToday(),
+        slot: 1290,
+        sessionType: "semi-private",
+        discipline: "personal-training",
+        locationName: "ONE Fitness",
+        planId: _plan.id,
+        attendanceStatus: "checked-in",
+        clientStartedAt: "2026-11-18T21:00:00.000Z",
+      ),
+    ]);
+    container.read(membershipPlansProvider.notifier).setAll(const [_plan]);
+    container.read(blockedTimesProvider.notifier).setAll(const []);
+    container.read(earnedBadgesProvider.notifier).setAll(const []);
+    container.read(platformSettingsProvider.notifier).update(
+          (s) => s.copyWith(
+            businessName: "ONE Fitness Marketplace",
+            locationName: "ONE Fitness",
+            locationAddress: "11300 Magnolia Blvd, North Hollywood, CA",
+          ),
+        );
+
+    tester.view.physicalSize = const Size(1290, 2796);
+    tester.view.devicePixelRatio = 3;
+    tester.view.padding = FakeViewPadding.zero;
+    tester.view.viewPadding = FakeViewPadding.zero;
+    tester.view.viewInsets = FakeViewPadding.zero;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: PaletteScope(
+          builder: (context, theme) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: theme,
+            darkTheme: theme,
+            home: const RepaintBoundary(key: _shotKey, child: TrainerShell()),
+          ),
+        ),
+      ),
+    );
+    await _settle(tester);
+    final noShow = find.text("No Show");
+    expect(noShow, findsWidgets);
+    await tester.ensureVisible(noShow.first);
+    expect(find.text("Tina Alvarez"), findsWidgets);
+    expect(find.text("Check In"), findsWidgets);
+    await _shoot(tester, "09_coach_change_checkin");
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets("dark mode rebook", (tester) async {
