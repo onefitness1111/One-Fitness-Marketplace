@@ -12,6 +12,8 @@ class ExerciseDef {
     this.coachNotes,
     this.videoPath,
     this.videoName,
+    this.photoPath,
+    this.photoName,
   });
 
   final String id;
@@ -34,6 +36,13 @@ class ExerciseDef {
   /// The file as the coach picked it, so the editor can name what's attached
   /// instead of showing them a uuid.
   final String? videoName;
+
+  /// Object name of the equipment photo in the `exercise-photos` bucket.
+  /// A picture, not a video. Null until a coach or the owner adds one.
+  final String? photoPath;
+  final String? photoName;
+
+  bool get hasPhoto => (photoPath ?? "").isNotEmpty;
 
   /// True when a client has something to watch. [videoName] is cosmetic and
   /// an older record may not carry one, so it is never part of this test.

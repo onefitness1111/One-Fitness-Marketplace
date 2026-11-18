@@ -1,13 +1,21 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/live_log/live_log_store.dart";
+import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/plate_math.dart";
 import "../../../core/utils/program_utils.dart";
 import "../../../core/utils/weight_suggestion.dart";
+import "../../../core/utils/workout_logging.dart";
+import "../../../core/widgets/app_buttons.dart";
 import "../../../core/widgets/exercise_video.dart";
 import "../../../data/models/client_record.dart";
+import "../../../data/models/workout_log.dart";
+import "../../../data/models/exercise_def.dart";
 import "../../../data/models/exercise_prescription.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../log_progress/line_chart_painter.dart";
 
 /// One set's live (unsaved) input while a session is in progress.
 class SetDraft {
@@ -38,7 +46,11 @@ class ExerciseSetGrid extends StatefulWidget {
     this.sessionId = "",
     this.clientId = "",
     this.coachLed = false,
+    this.onSwap,
   });
+
+  /// Today's session only. The program is not rewritten.
+  final void Function(ExerciseDef replacement)? onSwap;
 
   final ExercisePrescription exercise;
   final ClientRecord client;
@@ -194,6 +206,17 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            Consumer(builder: (context, ref, _) {
+              final catalog = ref.watch(exerciseCatalogProvider);
+              final matches = catalog.where((d) =>
+                  (exercise.exerciseId != null && d.id == exercise.exerciseId) ||
+                  (exercise.exerciseId == null && d.name.toLowerCase() == exercise.name.toLowerCase()));
+              final photo = matches.isEmpty ? null : matches.first.photoPath;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _EquipmentPicture(photoPath: photo),
+              );
+            }),
             Flexible(
               child: Text(exercise.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
             ),
@@ -240,6 +263,26 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
             ),
           );
         }),
+        if (widget.coachLed)
+          _LiftTrend(logs: widget.client.workoutLogs, exerciseName: exercise.name),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              BtnGhost(
+                onPressed: _sameAsLast,
+                child: const Text("Same as last time"),
+              ),
+              if (widget.onSwap != null)
+                BtnGhost(
+                  onPressed: () => _openSwap(context),
+                  child: const Text("Swap"),
+                ),
+            ],
+          ),
+        ),
         if (exercise.weight != null || exercise.time != null || exercise.distance != null || exercise.rest != null)
           Padding(
             padding: const EdgeInsets.only(top: 6, bottom: 2),
@@ -248,7 +291,10 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
               runSpacing: 10,
               children: [
                 if (exercise.weight != null)
-                  Text("@ ${exercise.weight} $_unit", style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600)),
+                  GestureDetector(
+                    onTap: () => _showPlates(context, parseTargetWeight(exercise.weight)),
+                    child: Text("@ ${exercise.weight} $_unit", style: TextStyle(fontSize: 12, color: AppColors.txt, fontWeight: FontWeight.w600)),
+                  ),
                 if (exercise.time != null)
                   Text("Time: ${exercise.time}", style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600)),
                 if (exercise.distance != null)
@@ -353,6 +399,122 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     );
   }
 
+  void _sameAsLast() {
+    final exercise = widget.exercise;
+    final count = exercise.sets > 0 ? exercise.sets : 3;
+    var filled = false;
+    for (var i = 0; i < count; i++) {
+      final last = lastTimeFor(widget.client.workoutLogs, exercise.name, i + 1);
+      if (last == null) continue;
+      filled = true;
+      if (last.reps != null) {
+        final text = "${last.reps}";
+        _repsControllers[i].text = text;
+        _remember("reps", i + 1, text);
+        widget.onSetChange(exercise.name, i + 1, "reps", last.reps);
+      }
+      if (last.weight != null && last.weight! > 0) {
+        final text = _fmtNum(last.weight!);
+        _weightControllers[i].text = text;
+        _remember("weight", i + 1, text);
+        widget.onSetChange(exercise.name, i + 1, "weight", last.weight);
+      }
+    }
+    if (!filled && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No finished sets for this exercise yet.")),
+      );
+    }
+    setState(() {});
+  }
+
+  void _showPlates(BuildContext context, double? total) {
+    final catalog = ProviderScope.containerOf(context).read(exerciseCatalogProvider);
+    final matches = catalog.where((d) =>
+        (widget.exercise.exerciseId != null && d.id == widget.exercise.exerciseId) ||
+        (widget.exercise.exerciseId == null && d.name.toLowerCase() == widget.exercise.name.toLowerCase()));
+    final kind = plateKindFor(matches.isEmpty ? const <String>[] : matches.first.equipment);
+    if (kind != PlateKind.barbell) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Plate math is for a barbell.")),
+      );
+      return;
+    }
+    final plan = total == null ? null : platesPerSide(total);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.card,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Plates per side", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(
+              "45 lb bar. Plates: 45, 35, 25, 10, 5, 2.5.",
+              style: TextStyle(color: AppColors.mute, fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              plan?.label ?? "Enter a weight first.",
+              style: TextStyle(color: AppColors.txt, fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openSwap(BuildContext context) {
+    final catalog = ProviderScope.containerOf(context).read(exerciseCatalogProvider);
+    final exercise = widget.exercise;
+    final matches = catalog.where((d) =>
+        (exercise.exerciseId != null && d.id == exercise.exerciseId) ||
+        (exercise.exerciseId == null && d.name.toLowerCase() == exercise.name.toLowerCase()));
+    final muscle = matches.isEmpty ? "" : matches.first.primaryMuscle;
+    final options = sameMuscleAlternatives(
+      catalog,
+      exerciseId: exercise.exerciseId,
+      name: exercise.name,
+      muscle: muscle,
+    );
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.card,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Swap ${exercise.name}", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(
+              "Same muscles, for this session only. Changing the program needs approval by a lead coach.",
+              style: TextStyle(color: AppColors.mute, fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            if (options.isEmpty)
+              Text("Nothing else in the library works those muscles.", style: TextStyle(color: AppColors.txt, fontSize: 13))
+            else
+              for (final option in options.take(8))
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(option.name, style: TextStyle(color: AppColors.txt, fontSize: 14, fontWeight: FontWeight.w700)),
+                  subtitle: Text(option.primaryMuscle, style: TextStyle(color: AppColors.mute, fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onSwap?.call(option);
+                  },
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _cellWrap(Widget child) => Padding(padding: const EdgeInsets.only(left: 5, top: 2.5, bottom: 2.5), child: child);
 
   Widget _targetRepsCell(ExercisePrescription exercise, int setNum) {
@@ -407,10 +569,13 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     final last = getLastSetData(widget.client, exercise.name, setNum, widget.dayId);
     final suggested = double.tryParse(exercise.weight ?? "");
     final label = last.weight > 0 ? "${_fmtNum(last.weight)}×${last.reps}" : (suggested != null ? "Sugg. ${_fmtNum(suggested)}" : "—");
-    return _cellWrap(Container(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      decoration: BoxDecoration(color: AppColors.bg, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(8)),
-      child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+    return _cellWrap(GestureDetector(
+      onTap: () => _showPlates(context, last.weight > 0 ? last.weight : parseTargetWeight(exercise.weight)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        decoration: BoxDecoration(color: AppColors.bg, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(8)),
+        child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+      ),
     ));
   }
 
@@ -496,3 +661,68 @@ class _RowLabel extends StatelessWidget {
 }
 
 String _fmtNum(double n) => n % 1 == 0 ? n.toInt().toString() : n.toString();
+
+class _EquipmentPicture extends StatelessWidget {
+  const _EquipmentPicture({required this.photoPath});
+
+  final String? photoPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = photoPath ?? "";
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 44,
+        height: 44,
+        color: AppColors.card,
+        alignment: Alignment.center,
+        child: path.isEmpty
+            ? Icon(LucideIcons.dumbbell, size: 18, color: AppColors.mute)
+            : Image.network(
+                SupabaseService.exercisePhotoUrl(path),
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Icon(LucideIcons.dumbbell, size: 18, color: AppColors.mute),
+              ),
+      ),
+    );
+  }
+}
+
+class _LiftTrend extends StatelessWidget {
+  const _LiftTrend({required this.logs, required this.exerciseName});
+
+  final List<WorkoutLogEntry> logs;
+  final String exerciseName;
+
+  @override
+  Widget build(BuildContext context) {
+    final points = liftTrend(logs, exerciseName);
+    if (points.length < 2) return const SizedBox.shrink();
+    final minY = points.reduce((a, b) => a < b ? a : b);
+    final maxY = points.reduce((a, b) => a > b ? a : b);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Recent weights", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 42,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: LineChartPainter(
+                series: [ChartSeries(values: points, color: AppColors.txt)],
+                minY: minY,
+                maxY: maxY,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

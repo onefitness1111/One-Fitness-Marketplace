@@ -9,6 +9,9 @@ import "../../core/supabase/supabase_service.dart";
 import "../../core/theme/app_colors.dart";
 import "../../core/utils/date_utils.dart";
 import "../../core/utils/program_utils.dart";
+import "../../core/utils/workout_logging.dart";
+import "../../data/models/exercise_def.dart";
+import "../client/log_progress/results_card.dart";
 import "../../core/widgets/widgets.dart";
 import "../../data/models/client_record.dart";
 import "../../data/models/exercise_prescription.dart";
@@ -134,6 +137,8 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   final Map<String, SetDraft> _sessionData = {};
   bool _saved = false;
   bool _saving = false;
+  WorkoutLogEntry? _finished;
+  final Map<String, ExerciseDef> _swaps = {};
 
   // ── shared live log ──────────────────────────────────────────────────────
   LiveLogController? _live;
@@ -427,8 +432,15 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     _live?.setField(exerciseName, setNum, field, value);
   }
 
+  ExercisePrescription _shown(ExercisePrescription ex) {
+    final swap = _swaps[ex.id];
+    if (swap == null) return ex;
+    return ex.copyWith(name: swap.name, exerciseId: swap.id, setExerciseId: true);
+  }
+
   Future<void> _saveSession(SavedProgram prog, ProgramDay day) async {
-    final exercises = day.exercises.map((ex) {
+    final exercises = day.exercises.map((raw) {
+      final ex = _shown(raw);
       final sets = List.generate(ex.sets > 0 ? ex.sets : 3, (i) {
         final setNum = i + 1;
         final d = _sessionData["${ex.name}__$setNum"];
@@ -459,6 +471,11 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       exercises: exercises,
       loggedBy: widget.loggedBy,
       loggedByName: widget.loggedByName,
+      swaps: [
+        for (final raw in day.exercises)
+          if (_swaps[raw.id] case final swap?)
+            LoggedSwap(fromName: raw.name, toName: swap.name, muscle: swap.primaryMuscle),
+      ],
     );
 
     setState(() => _saving = true);
@@ -484,8 +501,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     setState(() {
       _saving = false;
       _sessionData.clear();
+      _finished = entry;
       _saved = true;
       _sessionStarted = false;
+      _swaps.clear();
     });
   }
 
@@ -525,10 +544,14 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
               const SizedBox(height: 20),
               const Text("\u{1F4AA}", style: TextStyle(fontSize: 44)),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 "Session logged!",
-                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: AppColors.txt),
               ),
+              if (_finished != null) ...[
+                const SizedBox(height: 16),
+                _SummaryBlock(session: _finished!, earlier: widget.client.workoutLogs),
+              ],
               const SizedBox(height: 20),
               BtnGold(
                 onPressed: () => setState(() => _saved = false),
@@ -537,6 +560,8 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
               ),
               if (widget.loggedBy == "client") ...[
                 const SizedBox(height: 16),
+                const ResultsShareButton(),
+                const SizedBox(height: 12),
                 const RebookOfferCard(),
               ],
             ],
@@ -892,8 +917,9 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             ExerciseSetGrid(
-                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${ex.exerciseId ?? ex.id}"),
-                              exercise: ex,
+                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${_shown(ex).exerciseId ?? ex.id}|${_shown(ex).name}"),
+                              exercise: _shown(ex),
+                              onSwap: (replacement) => setState(() => _swaps[ex.id] = replacement),
                               client: client,
                               sessionData: _sessionData,
                               onSetChange: _onSetChange,
@@ -908,10 +934,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               LiveNotesBox(
                                 key: ValueKey("notes-${ex.id}-${_live.hashCode}"),
                                 controller: _live!,
-                                exercise: ex.name,
+                                exercise: _shown(ex).name,
                               ),
                             if (widget.exerciseFooterBuilder != null)
-                              widget.exerciseFooterBuilder!(prog, activeDay, ex),
+                              widget.exerciseFooterBuilder!(prog, activeDay, _shown(ex)),
                           ],
                         ),
                       ),
@@ -958,8 +984,9 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                             ),
                             const SizedBox(height: 14),
                             ExerciseSetGrid(
-                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${ex.exerciseId ?? ex.id}"),
-                              exercise: ex,
+                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${_shown(ex).exerciseId ?? ex.id}|${_shown(ex).name}"),
+                              exercise: _shown(ex),
+                              onSwap: (replacement) => setState(() => _swaps[ex.id] = replacement),
                               client: client,
                               sessionData: _sessionData,
                               onSetChange: _onSetChange,
@@ -974,10 +1001,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               LiveNotesBox(
                                 key: ValueKey("notes-${ex.id}-${_live.hashCode}"),
                                 controller: _live!,
-                                exercise: ex.name,
+                                exercise: _shown(ex).name,
                               ),
                             if (widget.exerciseFooterBuilder != null)
-                              widget.exerciseFooterBuilder!(prog, activeDay, ex),
+                              widget.exerciseFooterBuilder!(prog, activeDay, _shown(ex)),
                             const SizedBox(height: 14),
                             Row(
                               children: [
@@ -1237,6 +1264,45 @@ class _SuggestedHeading extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SummaryBlock extends StatelessWidget {
+  const _SummaryBlock({required this.session, required this.earlier});
+
+  final WorkoutLogEntry session;
+  final List<WorkoutLogEntry> earlier;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = workoutSummary(
+      session: session,
+      earlierLogs: earlier.where((log) => log.id != session.id).toList(),
+    );
+    final volume = summary.volume % 1 == 0 ? summary.volume.toInt().toString() : summary.volume.toStringAsFixed(1);
+    final prs = summary.prs.isEmpty ? "No PRs this session" : "PRs: ${summary.prs.join(", ")}";
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Volume: $volume lb", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: 15)),
+          const SizedBox(height: 6),
+          Text(prs, style: TextStyle(color: AppColors.txt, fontSize: 13, height: 1.35)),
+          const SizedBox(height: 6),
+          Text(
+            summary.streakDays == 1 ? "Streak: 1 day" : "Streak: ${summary.streakDays} days",
+            style: TextStyle(color: AppColors.mute, fontSize: 13),
+          ),
+        ],
+      ),
     );
   }
 }

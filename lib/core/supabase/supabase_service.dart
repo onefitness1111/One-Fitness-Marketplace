@@ -1123,6 +1123,14 @@ class SupabaseService {
         loggedByName: j["loggedByName"] as String?,
         coachComment: j["coachComment"] as String?,
         coachCommentAt: j["coachCommentAt"] as String?,
+        swaps: _safeMap(
+          ((j["swaps"] as List?) ?? const []).whereType<Map>(),
+          (m) => LoggedSwap(
+            fromName: m["from"]?.toString() ?? "",
+            toName: m["to"]?.toString() ?? "",
+            muscle: m["muscle"]?.toString() ?? "",
+          ),
+        ),
       );
 
   static LoggedExercise _loggedExerciseFromJson(Map<String, dynamic> j) =>
@@ -1201,6 +1209,8 @@ class SupabaseService {
         coachNotes: j["coachNotes"] as String?,
         videoPath: j["videoPath"] as String?,
         videoName: j["videoName"] as String?,
+        photoPath: j["photoPath"] as String?,
+        photoName: j["photoName"] as String?,
       );
 
   static Future<List<Challenge>> loadChallenges() async {
@@ -4827,6 +4837,10 @@ class SupabaseService {
     if (w.loggedByName != null) "loggedByName": w.loggedByName,
     "coachComment": w.coachComment,
     "coachCommentAt": w.coachCommentAt,
+    if (w.swaps.isNotEmpty)
+      "swaps": [
+        for (final swap in w.swaps) {"from": swap.fromName, "to": swap.toName, "muscle": swap.muscle},
+      ],
   };
 
   static Map<String, dynamic> _loggedExerciseToJson(LoggedExercise e) => {
@@ -4955,6 +4969,8 @@ class SupabaseService {
     "coachNotes": e.coachNotes,
     "videoPath": e.videoPath,
     "videoName": e.videoName,
+    "photoPath": e.photoPath,
+    "photoName": e.photoName,
   };
 
   static Future<void> upsertExercise(ExerciseDef e) =>
@@ -4968,6 +4984,29 @@ class SupabaseService {
   /// a clip of a squat is not a client's private data, and a public URL
   /// cannot expire halfway through playback the way a signed one can.
   /// Writing is staff-only, enforced by the bucket's policies.
+  static const kExercisePhotosBucket = "exercise-photos";
+
+  /// A picture of the equipment. Stored beside the demo clip, as its own
+  /// file, so the catalogue still only carries the path.
+  static Future<String> uploadExercisePhoto({
+    required String exerciseId,
+    required Uint8List bytes,
+  }) async {
+    final folder = exerciseId
+        .replaceAll(RegExp(r"[^A-Za-z0-9_-]+"), "-")
+        .replaceAll(RegExp(r"^-+|-+$"), "");
+    final path = "${folder.isEmpty ? "exercise" : folder}/${const Uuid().v4()}.jpg";
+    await client.storage.from(kExercisePhotosBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(contentType: "image/jpeg", upsert: true),
+        );
+    return path;
+  }
+
+  static String exercisePhotoUrl(String path) =>
+      client.storage.from(kExercisePhotosBucket).getPublicUrl(path);
+
   static const kExerciseVideosBucket = "exercise-videos";
 
   /// Per-file ceiling, the same number migration 36 set on the bucket, so a

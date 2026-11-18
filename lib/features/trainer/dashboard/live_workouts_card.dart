@@ -7,6 +7,7 @@ import "../../../core/live_log/live_log_sync.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
@@ -115,6 +116,13 @@ class LiveWorkoutPage extends ConsumerWidget {
       final rec = ref.read(trainerClientRecordsProvider)[clientId];
       final logs = [...?rec?.workoutLogs.where((l) => l.id != entry.id), entry];
       await SupabaseService.appendWorkoutLog(clientId, entry);
+      final roster = ref.read(trainerRosterProvider);
+      final matches = roster.where((c) => c.id == clientId);
+      flagSessionSwaps(
+        entry: entry,
+        clientName: clientName,
+        coachId: matches.isEmpty ? null : matches.first.primaryTrainerId,
+      );
       ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(workoutLogs: logs));
     }
 

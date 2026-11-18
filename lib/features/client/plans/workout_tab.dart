@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/legal/health_sources.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/source_citations.dart";
@@ -48,6 +49,8 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     // Same id = the same live session: replace, never log it twice.
     final updatedLogs = [...client.workoutLogs.where((l) => l.id != entry.id), entry];
     await SupabaseService.appendWorkoutLog(client.id, entry);
+    final info = ref.read(clientInfoProvider);
+    flagSessionSwaps(entry: entry, clientName: info.name, coachId: info.primaryTrainerId);
     await SupabaseService.awardAutomaticPoints(client.id, "workout_streak", "scan");
     final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
     ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);

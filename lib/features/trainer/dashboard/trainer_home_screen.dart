@@ -18,6 +18,7 @@ import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/notification_triggers.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
@@ -196,6 +197,14 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final record = ref.read(trainerClientRecordsProvider)[clientId];
     final updatedLogs = [...?record?.workoutLogs.where((l) => l.id != entry.id), entry];
     await SupabaseService.appendWorkoutLog(clientId, entry);
+    final roster = ref.read(trainerRosterProvider);
+    final matches = roster.where((c) => c.id == clientId);
+    final person = matches.isEmpty ? null : matches.first;
+    flagSessionSwaps(
+      entry: entry,
+      clientName: person?.name ?? "A client",
+      coachId: person?.primaryTrainerId,
+    );
     ref
         .read(trainerClientRecordsProvider.notifier)
         .update(clientId, (r) => r.copyWith(workoutLogs: updatedLogs));
