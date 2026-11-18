@@ -162,7 +162,7 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     var total = 0;
     for (final plan in plans) {
       if (type != null && type != "large-group" && !plan.allowedTypes.contains(type)) continue;
-      total += (effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, bookings)).clamp(0, 1 << 30);
+      total += sessionsLeftToBook(info, plan, bookings);
     }
     return total;
   }

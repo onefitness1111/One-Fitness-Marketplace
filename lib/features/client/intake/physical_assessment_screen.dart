@@ -26,6 +26,7 @@ class PhysicalAssessmentScreen extends StatefulWidget {
     required this.clientName,
     required this.onBack,
     required this.onSave,
+    this.isOwner = false,
   });
 
   /// The previously saved assessment, so it opens as an edit rather than a
@@ -39,6 +40,9 @@ class PhysicalAssessmentScreen extends StatefulWidget {
   /// `notes`, `painScreen`, `overall`, `programmingFlags`, `coachSummary`,
   /// `programStatus`, `photos` — for writing beside `completed`.
   final void Function(Map<String, dynamic> payload) onSave;
+
+  /// The sentence that mentions AI is only shown to the owner.
+  final bool isOwner;
 
   @override
   State<PhysicalAssessmentScreen> createState() => _PhysicalAssessmentScreenState();
@@ -265,7 +269,9 @@ class _PhysicalAssessmentScreenState extends State<PhysicalAssessmentScreen> {
             title: "Coach Summary",
             children: [
               Text(
-                "Movement quality, limitations, strengths, and what it means for their programming. This is what the AI program drafter reads.",
+                widget.isOwner
+                    ? "Movement quality, limitations, strengths, and what it means for their programming. This is what the AI program drafter reads."
+                    : "Movement quality, limitations, strengths, and what it means for their programming.",
                 style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
               ),
               const SizedBox(height: 8),

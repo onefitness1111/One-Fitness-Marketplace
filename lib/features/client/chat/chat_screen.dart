@@ -8,6 +8,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/widgets/widgets.dart";
@@ -184,8 +185,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }) async {
     // Clients write in the app. Email and SMS are not offered from here.
     const channels = {ChatChannel.inapp};
-    final text = _msgController.text.trim();
-    if (text.isEmpty) return;
+    final typed = _msgController.text.trim();
+    if (typed.isEmpty) return;
+    final text = prefixMessage(info.name.trim().isEmpty ? "Client" : info.name.trim(), typed);
     // Optimistic bubble, with a temporary local id. The real row — and its
     // real id — comes back from the server, which is also where the content
     // filter and the block rules are applied.
@@ -761,7 +763,7 @@ class _CoachSearchSheetState extends State<_CoachSearchSheet> {
                           onTap: () => Navigator.of(context).pop(t),
                           child: Row(
                             children: [
-                              Avatar(src: t.photo, name: t.name, size: 40),
+                              Avatar(src: t.photo, name: t.displayTitle, size: 40),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -867,7 +869,7 @@ class _ContextBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Avatar(src: coach.photo, name: coach.name, size: 34),
+          Avatar(src: coach.photo, name: coach.displayTitle, size: 34),
           const SizedBox(width: 10),
           Expanded(
             child: Column(

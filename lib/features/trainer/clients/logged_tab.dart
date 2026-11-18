@@ -99,7 +99,7 @@ class _LoggedTabState extends ConsumerState<LoggedTab> {
             return CollapsibleSection(
               title: day.dayTitle,
               meta: Text(
-                "${_niceDate(day.date)} · ${day.loggedBy == "coach" ? "Logged by coach" : "Self-logged"}",
+                "${_niceDate(day.date)} · ${day.loggedBy == "coach" ? "Logged by ${day.loggedByName?.trim().isNotEmpty == true ? day.loggedByName : "coach"}" : "Self-logged"}",
                 style: TextStyle(fontSize: 11, color: AppColors.mute),
               ),
               children: [

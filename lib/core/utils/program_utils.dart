@@ -135,6 +135,7 @@ class DayProgression {
     required this.exercises,
     required this.sourceId,
     required this.loggedBy,
+    this.loggedByName,
   });
   final String dayId;
   final String dayTitle;
@@ -144,6 +145,7 @@ class DayProgression {
 
   /// "client" (self-logged) | "coach" — see WorkoutLogEntry.loggedBy.
   final String loggedBy;
+  final String? loggedByName;
 }
 
 class _RawSession {
@@ -154,12 +156,14 @@ class _RawSession {
     required this.sourceId,
     required this.exercises,
     required this.loggedBy,
+    this.loggedByName,
   });
   final String date;
   final String dayId;
   final String dayTitle;
   final String sourceId;
   final String loggedBy;
+  final String? loggedByName;
   final List<
     ({String name, List<({int setNum, double weight, int reps})> sets})
   >
@@ -198,6 +202,7 @@ List<DayProgression> getDayProgressionSummary(ClientRecord client) {
         sourceId: log.id,
         exercises: exercises,
         loggedBy: log.loggedBy,
+        loggedByName: log.loggedByName,
       ),
     );
   }
@@ -260,6 +265,7 @@ List<DayProgression> getDayProgressionSummary(ClientRecord client) {
         exercises: exercises,
         sourceId: current.sourceId,
         loggedBy: current.loggedBy,
+        loggedByName: current.loggedByName,
       ),
     );
   });

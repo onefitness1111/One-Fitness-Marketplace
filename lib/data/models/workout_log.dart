@@ -36,6 +36,7 @@ class WorkoutLogEntry {
     this.exercises = const [],
     this.loggedAt,
     this.loggedBy = "client",
+    this.loggedByName,
     this.coachComment,
     this.coachCommentAt,
   });
@@ -53,6 +54,9 @@ class WorkoutLogEntry {
   /// the coach's own Start Session flow) — see SessionLoggerView.
   final String loggedBy;
 
+  /// Public coach name when [loggedBy] is "coach". Never a legal name.
+  final String? loggedByName;
+
   /// A coach's note left on this specific session (Notifications spec —
   /// "Coach comments on a workout"), shown to the client and emailed once
   /// on save. One comment per session, editable — not a full thread.
@@ -69,6 +73,7 @@ class WorkoutLogEntry {
         exercises: exercises,
         loggedAt: loggedAt,
         loggedBy: loggedBy,
+        loggedByName: loggedByName,
         coachComment: coachComment ?? this.coachComment,
         coachCommentAt: coachCommentAt ?? this.coachCommentAt,
       );

@@ -6,14 +6,27 @@ import "date_utils.dart";
 /// Session-accounting helpers ported from src/lib/helpers.js and
 /// src/data/membershipPlans.js — trimmed to what the client dashboard needs.
 
-/// Mirrors constants/domain.js `GIVE_BACK_ATTENDANCE_STATUSES` — these
-/// attendance outcomes hand the session back, so they don't count against
-/// the plan. Everything else — including a plain upcoming/not-yet-attended
-/// booking, and a no-show — does count, same as the real app. A no-show
-/// deliberately costs the client both the fee AND the session itself
-/// (Attendance & Cancellation Charging Policy, July 2026) — only a
-/// cancellation, early or late, gives the session back.
+/// Early and late cancels do not use a session. The spot goes back to the
+/// client's balance and to their booking limit immediately. A late-cancel
+/// fee, when there is one, is money — it is not part of this count.
 const kGiveBackAttendanceStatuses = {"early-cancel", "late-cancel"};
+
+/// A session is used up only when the client is checked in or marked as a
+/// no-show. Booking it does not use it.
+const kConsumingAttendanceStatuses = {"checked-in", "no-show"};
+
+/// True when this attendance has used the session up.
+bool sessionIsConsumed(String? attendance) =>
+    kConsumingAttendanceStatuses.contains(attendance);
+
+/// True when the booking still counts toward how many sessions the client
+/// may have on the books at once. A future booking holds a spot but is not
+/// used up. A check-in or no-show holds a spot too, because it has been used,
+/// and it is counted once — never both as "booked" and as "used".
+bool bookingOccupiesLimit(Booking b) =>
+    !b.isPhysicalAssessment &&
+    b.status != "cancelled" &&
+    !kGiveBackAttendanceStatuses.contains(b.attendanceStatus);
 
 /// Every membership or package the client currently holds, in the order
 /// booking should draw on them: the recurring membership first (its sessions
@@ -88,30 +101,50 @@ String? planToChargeFor(
       .toList();
   if (covering.isEmpty) return null;
   for (final p in covering) {
-    if (sessionsUsedThisPeriod(info, p, bookings) < effectiveMaxSessions(info, p)) return p.id;
+    if (sessionsTowardBookingLimit(info, p, bookings) < effectiveMaxSessions(info, p)) return p.id;
   }
   return covering.first.id;
 }
 
-/// Takes the client's full booking list (not pre-filtered to checked-in —
-/// an upcoming booking counts against the plan the moment it's made, only
-/// a give-back attendance status or a physical assessment excuses it).
-///
-/// A booking is charged to the plan it recorded at booking time (`planId`).
-/// Rows from before that existed carry none, and fall back to being charged
-/// to any plan covering their session type — the only attribution possible
-/// for them, and exactly what the app did when they were made.
-int sessionsUsedThisPeriod(ClientInfo info, MembershipPlan plan, List<Booking> bookings) {
+/// Bookings that belong to [plan] for this client. A row that recorded its
+/// plan at booking time counts only for that plan. Older rows have no plan
+/// and fall back to any plan that covers their session type.
+Iterable<Booking> _planBookings(ClientInfo info, MembershipPlan plan, List<Booking> bookings) {
   final mine = bookings.where((b) =>
       b.clientId == info.id &&
       (b.planId == null ? plan.allowedTypes.contains(b.sessionType) : b.planId == plan.id) &&
-      !b.isPhysicalAssessment &&
-      !kGiveBackAttendanceStatuses.contains(b.attendanceStatus));
+      (b.planId == null || !b.planId!.startsWith("single:")));
   if (plan.kind == PlanKind.membership) {
     final thisMonth = isoToday().substring(0, 7);
-    return mine.where((b) => b.date.substring(0, 7) == thisMonth).length;
+    return mine.where((b) => b.date.substring(0, 7) == thisMonth);
   }
-  return mine.length; // package: lifetime count against the plan
+  return mine;
+}
+
+/// Sessions used up this period: checked in or no-show only.
+///
+/// A booking does not reduce this. An early cancel or a late cancel does
+/// not either — the session is back on the balance as soon as it is cancelled.
+int sessionsUsedThisPeriod(ClientInfo info, MembershipPlan plan, List<Booking> bookings) =>
+    _planBookings(info, plan, bookings).where((b) => sessionIsConsumed(b.attendanceStatus)).length;
+
+/// How many sessions currently count against the booking limit: every
+/// booking that is not an early or late cancel. Checked-in and no-show
+/// count once here (they are used). A future booking counts once here and
+/// not at all in [sessionsUsedThisPeriod].
+int sessionsTowardBookingLimit(ClientInfo info, MembershipPlan plan, List<Booking> bookings) =>
+    _planBookings(info, plan, bookings).where(bookingOccupiesLimit).length;
+
+/// Sessions still on the balance — not yet checked in or marked no-show.
+int sessionsRemainingBalance(ClientInfo info, MembershipPlan plan, List<Booking> bookings) {
+  final max = effectiveMaxSessions(info, plan);
+  return (max - sessionsUsedThisPeriod(info, plan, bookings)).clamp(0, max);
+}
+
+/// How many more sessions the client may book right now.
+int sessionsLeftToBook(ClientInfo info, MembershipPlan plan, List<Booking> bookings) {
+  final max = effectiveMaxSessions(info, plan);
+  return (max - sessionsTowardBookingLimit(info, plan, bookings)).clamp(0, max);
 }
 
 /// Mirrors lib/helpers.js `effectiveMaxSessions` — a membership-kind plan's

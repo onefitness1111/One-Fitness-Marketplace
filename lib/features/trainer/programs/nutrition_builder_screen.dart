@@ -463,6 +463,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
               ),
             ),
 
+          if (isOwner)
           for (final p in aiDrafts)
             Container(
               padding: const EdgeInsets.all(14),

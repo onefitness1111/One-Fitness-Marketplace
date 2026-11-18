@@ -62,7 +62,7 @@ class BookingPickingScreen extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Avatar(src: t.photo, name: t.name, size: 40, active: true),
+                    Avatar(src: t.photo, name: t.displayTitle, size: 40, active: true),
                     const SizedBox(width: 12),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

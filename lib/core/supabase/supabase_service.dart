@@ -97,11 +97,14 @@ class SupabaseService {
   static Future<Map<String, dynamic>?> getSessionProfile() async {
     final user = currentUser;
     if (user == null) return null;
-    final row = await client
-        .from("profiles")
-        .select(_profileColumns)
-        .eq("id", user.id)
-        .maybeSingle();
+    final directory = await loadProfileDirectory();
+    Map<String, dynamic>? row;
+    for (final p in directory) {
+      if (p["id"] == user.id) {
+        row = p;
+        break;
+      }
+    }
     if (row == null) return null;
     final profile = Map<String, dynamic>.from(row);
     await _attachContacts([profile]);
@@ -283,6 +286,8 @@ class SupabaseService {
     String? firstName,
     String? lastName,
     String? title,
+    String? coachName,
+    String? secondaryCoachName,
     String? phone,
     required String approvalCode,
     String? photo,
@@ -319,6 +324,9 @@ class SupabaseService {
         "reviewed_by_owner": false,
         "signup_at": isoToday(),
         if (title != null && title.trim().isNotEmpty) "title": title.trim(),
+        if (coachName != null && coachName.trim().isNotEmpty) "coach_name": coachName.trim(),
+        if (secondaryCoachName != null && secondaryCoachName.trim().isNotEmpty)
+          "secondary_coach_name": secondaryCoachName.trim(),
         // Set at signup so a new coach is bookable straight away rather
         // than invisible in the booking flow until they remember to fill
         // this in from their profile later.
@@ -473,12 +481,6 @@ class SupabaseService {
 
   // ── Read ──────────────────────────────────────────────────────────
 
-  /// Columns a signed-in member may read on any profile. Email, phone, and
-  /// the calendar token are filled in afterwards, and only for the caller
-  /// or the owner.
-  static const _profileColumns =
-      "id, role, name, first_name, last_name, photo_url, created_at, push_opt_in, accepted_terms_at, accepted_terms_version, over_18_confirmed_at, banned_at, ban_reason, deleted_at";
-
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
@@ -486,7 +488,15 @@ class SupabaseService {
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =
-      "profile_id, disciplines, session_types, slot_interval, availability, programmer_availability, locations, bio, before_afters, avail_lock_until, signup_at, reviewed_by_owner, updated_at, coach_code, unavailability, title";
+      "profile_id, disciplines, session_types, slot_interval, availability, programmer_availability, locations, bio, before_afters, avail_lock_until, signup_at, reviewed_by_owner, updated_at, coach_code, unavailability, title, coach_name";
+
+  /// Profiles the signed-in person is allowed to see. A coach's legal name
+  /// is already removed unless the caller is the owner or that coach.
+  static Future<List<Map<String, dynamic>>> loadProfileDirectory() async {
+    final rows = await client.rpc("profile_directory");
+    if (rows is! List) return [];
+    return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+  }
 
   static Future<List<dynamic>> _rpcList(String name, Map<String, dynamic> params) async {
     try {
@@ -551,11 +561,14 @@ class SupabaseService {
   /// client doesn't need the whole-gym roster fetched first just to find
   /// their own row in it.
   static Future<ClientInfo?> loadClientById(String id) async {
-    final profile = await client
-        .from("profiles")
-        .select(_profileColumns)
-        .eq("id", id)
-        .maybeSingle();
+    final directory = await loadProfileDirectory();
+    Map<String, dynamic>? profile;
+    for (final p in directory) {
+      if (p["id"] == id) {
+        profile = p;
+        break;
+      }
+    }
     if (profile == null) return null;
     final profileRow = Map<String, dynamic>.from(profile);
     await _attachContacts([profileRow]);
@@ -570,10 +583,7 @@ class SupabaseService {
   }
 
   static Future<List<ClientInfo>> loadRoster() async {
-    final profiles = await client
-        .from("profiles")
-        .select(_profileColumns)
-        .eq("role", "client");
+    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "client").toList();
     if (profiles.isEmpty) return [];
     final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
     await _attachContacts(profileRows);
@@ -592,7 +602,7 @@ class SupabaseService {
   }
 
   static Future<List<Trainer>> loadTrainers() async {
-    final profiles = await client.from("profiles").select(_profileColumns).eq("role", "coach");
+    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "coach").toList();
     if (profiles.isEmpty) return [];
     final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
     await _attachContacts(profileRows);
@@ -1106,6 +1116,7 @@ class SupabaseService {
         ),
         loggedAt: j["loggedAt"] as String?,
         loggedBy: j["loggedBy"] as String? ?? "client",
+        loggedByName: j["loggedByName"] as String?,
         coachComment: j["coachComment"] as String?,
         coachCommentAt: j["coachCommentAt"] as String?,
       );
@@ -1869,7 +1880,10 @@ class SupabaseService {
     int? payoutRateCents,
     num? referralCommissionPercent,
     List<TrainerUnavailability>? unavailability,
-      String? title,
+    String? title,
+    String? coachName,
+    String? secondaryCoachName,
+    bool clearSecondaryCoachName = false,
   }) async {
     // Oversized (older, 1600px) photos made this request too big to upload
     // reliably from a phone — re-encode those before sending.
@@ -1900,6 +1914,9 @@ class SupabaseService {
     }
     final trainerFields = <String, dynamic>{
       if (title != null) "title": title,
+      if (coachName != null) "coach_name": coachName,
+      if (secondaryCoachName != null || clearSecondaryCoachName)
+        "secondary_coach_name": clearSecondaryCoachName ? null : secondaryCoachName,
       if (disciplines != null) "disciplines": disciplines,
       if (sessionTypes != null) "session_types": sessionTypes,
       if (locations != null)
@@ -2264,13 +2281,15 @@ class SupabaseService {
     if (me == null) return [];
     final rows = await client
         .from("blocks")
-        .select("blocked_id, created_at, profiles!blocks_blocked_id_fkey(name)")
+        .select("blocked_id, created_at")
         .eq("blocker_id", me)
         .order("created_at", ascending: false);
+    final directory = await loadProfileDirectory();
+    final names = {for (final p in directory) p["id"] as String: (p["name"] as String?) ?? ""};
     return (rows as List).cast<Map<String, dynamic>>().map((r) {
-      final p = r["profiles"];
-      final name = p is Map ? (p["name"] as String?) ?? "Deleted user" : "Deleted user";
-      return (id: r["blocked_id"] as String, name: name);
+      final id = r["blocked_id"] as String;
+      final name = (names[id] ?? "").trim();
+      return (id: id, name: name.isEmpty ? "Deleted user" : name);
     }).toList();
   }
 
@@ -3354,11 +3373,10 @@ class SupabaseService {
   /// Everyone who can be messaged in Team Chat: coaches and the owner.
   /// Email and phone are filled in only for the caller and the owner.
   static Future<List<Map<String, dynamic>>> loadStaffDirectory() async {
-    final rows = await client
-        .from("profiles")
-        .select("id, name, role, photo_url")
-        .inFilter("role", ["coach", "owner"]);
-    final people = [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+    final people = (await loadProfileDirectory())
+        .where((p) => p["role"] == "coach" || p["role"] == "owner")
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
     await _attachContacts(people);
     return people;
   }
@@ -4338,6 +4356,7 @@ class SupabaseService {
     "exercises": w.exercises.map(_loggedExerciseToJson).toList(),
     "loggedAt": w.loggedAt,
     "loggedBy": w.loggedBy,
+    if (w.loggedByName != null) "loggedByName": w.loggedByName,
     "coachComment": w.coachComment,
     "coachCommentAt": w.coachCommentAt,
   };
@@ -4898,7 +4917,7 @@ class SupabaseService {
         oldValue: _asInt(row["old_value"]),
         newValue: _asInt(row["new_value"]) ?? 0,
         changedAt: row["changed_at"] as String? ?? "",
-        changedByName: (row["profiles"] as Map?)?["name"] as String?,
+        changedByName: null,
         proratedAmountCents: _asInt(row["prorated_amount_cents"]),
         nextChargeDate: row["next_charge_date"] as String?,
       );
@@ -4908,7 +4927,7 @@ class SupabaseService {
   static Future<List<BillingAnchorHistoryEntry>> loadBillingAnchorHistory(String clientId) async {
     final rows = await client
         .from("client_billing_anchor_history")
-        .select("id, old_value, new_value, changed_at, prorated_amount_cents, next_charge_date, profiles!changed_by(name)")
+        .select("id, old_value, new_value, changed_at, prorated_amount_cents, next_charge_date")
         .eq("client_id", clientId)
         .order("changed_at", ascending: false);
     return _safeMap(rows, _billingAnchorHistoryFromRow);
@@ -4924,6 +4943,10 @@ class SupabaseService {
       id: profile["id"] as String,
       name: (profile["name"] as String?) ?? "",
       title: t["title"] as String?,
+      coachName: (profile["coach_name"] as String?) ?? t["coach_name"] as String?,
+      secondaryCoachName: profile["secondary_coach_name"] as String?,
+      firstName: profile["first_name"] as String?,
+      lastName: profile["last_name"] as String?,
       photo: profile["photo_url"] as String?,
       phone: profile["phone"] as String?,
       email: profile["email"] as String?,

@@ -1,3 +1,4 @@
+import "../../../core/live_log/live_log_store.dart";
 import "../../../core/live_log/live_log_sync.dart";
 import "dart:async";
 
@@ -86,6 +87,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         location: first?.locationName,
       );
       if (!mounted) return;
+      LiveLogStore.instance.rememberPlace(slot: slot);
       setState(() => _run = run);
       if (run != null) ref.read(liveSessionsProvider.notifier).apply(run);
     } catch (e) {
@@ -139,6 +141,12 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   @override
   void initState() {
     super.initState();
+    final saved = LiveLogStore.instance;
+    if (saved.openSlot != null) {
+      _sessionSlot = saved.openSlot;
+      _sessionClientId = saved.openClientId;
+      if (saved.openClientId != null) _openedClientIds.add(saved.openClientId!);
+    }
     _sweepStaleAttendance();
   }
 
@@ -247,11 +255,14 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       // dashboard offered "Start Session" again as though nothing had
       // happened, and Beep Your Coach switched off under the clients still
       // training. Eleven separate runs were recorded for one slot that way.
-      void closeSession() => setState(() {
-        _sessionSlot = null;
-        _sessionClientId = null;
-        _openedClientIds.clear();
-      });
+      void closeSession() {
+        LiveLogStore.instance.rememberPlace(clear: true);
+        setState(() {
+          _sessionSlot = null;
+          _sessionClientId = null;
+          _openedClientIds.clear();
+        });
+      }
 
       // Ending it is its own, deliberate act — and it asks first, because
       // it takes Beep Your Coach away from everyone in the session.
@@ -331,7 +342,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               ...loggable.map((b) {
                 final attendee = resolveAttendee(b.clientId, roster, trainers);
                 return AppCard(
-                  onTap: () => setState(() => _sessionClientId = b.clientId),
+                  onTap: () {
+                    LiveLogStore.instance.rememberPlace(clientId: b.clientId, slot: slot);
+                    setState(() => _sessionClientId = b.clientId);
+                  },
                   child: Row(
                     children: [
                       Avatar(src: attendee.photo, name: attendee.name, size: 36),
@@ -415,7 +429,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                       return InkWell(
                         onTap: active
                             ? null
-                            : () => setState(() => _sessionClientId = b.clientId),
+                            : () {
+                                LiveLogStore.instance.rememberPlace(clientId: b.clientId, slot: slot);
+                                setState(() => _sessionClientId = b.clientId);
+                              },
                         borderRadius: BorderRadius.circular(10),
                         child: Container(
                           width: 76,
@@ -474,7 +491,16 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                               key: ValueKey(id),
                               client: clientRecords[id]!,
                               loggedBy: "coach",
-                              authorName: myName,
+                              loggedByName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
+                              sessionId: _run?.id ?? "${_viewDate}|$slot|${group.isEmpty ? (trainerAuth ?? "") : group.first.trainerId}",
+                              initialFocusIndex: LiveLogStore.instance.exerciseIndexByClient[id] ?? 0,
+                              onFocusIndex: (index) => LiveLogStore.instance.rememberPlace(
+                                clientId: id,
+                                slot: slot,
+                                exerciseClientId: id,
+                                exerciseIndex: index,
+                              ),
+                              authorName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
                               authorRole: isOwner ? "owner" : "coach",
                               emptyProgramText:
                                   "This client doesn't have an active workout program yet.",

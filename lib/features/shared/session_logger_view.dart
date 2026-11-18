@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "dart:async";
 import "package:supabase_flutter/supabase_flutter.dart";
+import "../../core/live_log/live_log_store.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/navigation/local_back_stack.dart";
 import "../../core/supabase/supabase_service.dart";
@@ -45,6 +46,7 @@ class SessionLoggerView extends StatefulWidget {
     required this.client,
     required this.onSave,
     this.loggedBy = "client",
+    this.loggedByName,
     this.emptyProgramText =
         "No active workout program yet. Your coach will assign one to your profile.",
     this.exerciseFooterBuilder,
@@ -54,6 +56,10 @@ class SessionLoggerView extends StatefulWidget {
     this.authorRole,
     this.initialDayId,
     this.liveSync = true,
+    this.sessionId = "",
+    this.logStore,
+    this.initialFocusIndex = 0,
+    this.onFocusIndex,
   });
 
   final ClientRecord client;
@@ -61,6 +67,15 @@ class SessionLoggerView extends StatefulWidget {
   /// Shared live log: what the coach, client and owner enter during the
   /// session is one log, synced in real time (and queued while offline).
   final bool liveSync;
+
+  /// The running session. Logged values are stored under this plus the
+  /// client and the exercise, so two clients never share a box.
+  final String sessionId;
+  final LiveLogStore? logStore;
+  final int initialFocusIndex;
+  final void Function(int index)? onFocusIndex;
+
+  LiveLogStore get _store => logStore ?? LiveLogStore.instance;
 
   /// Name / role (client | coach | owner) attached to notes written here.
   final String? authorName;
@@ -76,6 +91,9 @@ class SessionLoggerView extends StatefulWidget {
 
   /// "client" (self-logged) | "coach" (logged on the client's behalf).
   final String loggedBy;
+
+  /// Public name shown as "Logged by …". Coaches pass their coach name.
+  final String? loggedByName;
 
   /// Persists the newly-completed entry (real backend write + the
   /// caller's own local provider update) — throw to signal failure, which
@@ -191,16 +209,88 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   /// drafts the grid shows.
   void _applyLive(LiveLogController c) {
     if (!mounted || _live != c) return;
+    final store = widget._store;
+    final day = _currentDay();
     setState(() {
       c.sets.forEach((k, v) {
-        final existing = _sessionData[k];
-        if (existing == null && v.reps == null && v.weight == null) return;
-        final d = existing ?? (_sessionData[k] = SetDraft());
-        d.reps = v.reps;
-        d.weight = v.weight;
+        final parts = k.split("__");
+        if (parts.length < 2) return;
+        final name = parts.sublist(0, parts.length - 1).join("__");
+        final setNum = int.tryParse(parts.last);
+        if (setNum == null) return;
+        final matches = day?.exercises.where((e) => e.name == name) ?? const <ExercisePrescription>[];
+        final exerciseId = matches.isEmpty
+            ? name
+            : ((matches.first.exerciseId != null && matches.first.exerciseId!.isNotEmpty)
+                ? matches.first.exerciseId!
+                : matches.first.id);
+        if (v.reps != null && v.repsAt != null) {
+          store.remember(
+            sessionId: widget.sessionId,
+            clientId: widget.client.id,
+            exerciseId: exerciseId,
+            setIndex: setNum,
+            field: "reps",
+            raw: "${v.reps}",
+            at: v.repsAt!,
+          );
+        }
+        if (v.weight != null && v.weightAt != null) {
+          final whole = v.weight! % 1 == 0 ? v.weight!.toInt().toString() : v.weight!.toString();
+          store.remember(
+            sessionId: widget.sessionId,
+            clientId: widget.client.id,
+            exerciseId: exerciseId,
+            setIndex: setNum,
+            field: "weight",
+            raw: whole,
+            at: v.weightAt!,
+          );
+        }
       });
+      _seedDraftsFromStore();
       _syncTick++;
     });
+  }
+
+  ProgramDay? _currentDay() {
+    final prog = _currentProgram();
+    if (prog == null || _dayId == null) return null;
+    final days = prog.programDays.where((d) => d.id == _dayId);
+    return days.isEmpty ? null : days.first;
+  }
+
+  void _seedDraftsFromStore() {
+    final day = _currentDay();
+    if (day == null) return;
+    final store = widget._store;
+    for (final ex in day.exercises) {
+      final exerciseId = (ex.exerciseId != null && ex.exerciseId!.isNotEmpty) ? ex.exerciseId! : ex.id;
+      final sets = ex.sets > 0 ? ex.sets : 3;
+      for (var n = 1; n <= sets; n++) {
+        final reps = store.raw(
+          sessionId: widget.sessionId,
+          clientId: widget.client.id,
+          exerciseId: exerciseId,
+          setIndex: n,
+          field: "reps",
+        );
+        final weight = store.raw(
+          sessionId: widget.sessionId,
+          clientId: widget.client.id,
+          exerciseId: exerciseId,
+          setIndex: n,
+          field: "weight",
+        );
+        if ((reps == null || reps.isEmpty) && (weight == null || weight.isEmpty)) continue;
+        final draft = _sessionData.putIfAbsent("${ex.name}__$n", () => SetDraft());
+        final parsedReps = liveLogReps(reps);
+        final parsedWeight = liveLogWeight(weight);
+        if (reps != null && reps.isNotEmpty) draft.reps = parsedReps;
+        if (weight != null && weight.isNotEmpty) draft.weight = parsedWeight;
+        _sessionData["${exerciseId}__$n"] = draft;
+      }
+    }
   }
 
   void _leaveDay() {
@@ -209,7 +299,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   }
 
   /// Which exercise the one-at-a-time view is showing.
-  int _focusIndex = 0;
+  late int _focusIndex = widget.initialFocusIndex;
 
   /// Clients can switch to seeing the whole day at once. Deliberately NOT
   /// persisted anywhere: the spec calls for every new session to start in
@@ -224,9 +314,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       _sessionData.clear();
       // Both reset per session — a client who switched to full view last time
       // still starts focused this time.
-      _focusIndex = 0;
+      _focusIndex = widget.initialFocusIndex;
       _fullView = false;
     });
+    _seedDraftsFromStore();
     final prog = _currentProgram();
     if (prog != null) _attachLive(prog, dayId);
   }
@@ -283,6 +374,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       loggedAt: DateTime.now().toIso8601String(),
       exercises: exercises,
       loggedBy: widget.loggedBy,
+      loggedByName: widget.loggedByName,
     );
 
     setState(() => _saving = true);
@@ -629,6 +721,8 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                                       _dayId = d.id;
                                       _sessionData.clear();
                                       _focusIndex = 0;
+                                      widget.onFocusIndex?.call(0);
+                                      unawaited(widget._store.flush());
                                     });
                                     _attachLive(prog, d.id);
                                   },
@@ -707,13 +801,16 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             ExerciseSetGrid(
-                              key: ValueKey(ex.id),
+                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${ex.exerciseId ?? ex.id}"),
                               exercise: ex,
                               client: client,
                               sessionData: _sessionData,
                               onSetChange: _onSetChange,
                               dayId: activeDay.id,
                               syncTick: _syncTick,
+                              logStore: widget._store,
+                              sessionId: widget.sessionId,
+                              clientId: client.id,
                             ),
                             if (_live != null)
                               LiveNotesBox(
@@ -769,13 +866,16 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                             ),
                             const SizedBox(height: 14),
                             ExerciseSetGrid(
-                              key: ValueKey(ex.id),
+                              key: ValueKey("${widget.client.id}|${widget.sessionId}|${ex.exerciseId ?? ex.id}"),
                               exercise: ex,
                               client: client,
                               sessionData: _sessionData,
                               onSetChange: _onSetChange,
                               dayId: activeDay.id,
                               syncTick: _syncTick,
+                              logStore: widget._store,
+                              sessionId: widget.sessionId,
+                              clientId: client.id,
                             ),
                             if (_live != null)
                               LiveNotesBox(
@@ -792,7 +892,11 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                                   child: BtnGhost(
                                     onPressed: index == 0
                                         ? null
-                                        : () => setState(() => _focusIndex = index - 1),
+                                        : () {
+                                            setState(() => _focusIndex = index - 1);
+                                            widget.onFocusIndex?.call(index - 1);
+                                            unawaited(widget._store.flush());
+                                          },
                                     child: const Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       mainAxisSize: MainAxisSize.min,
@@ -809,7 +913,11 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                                   child: BtnGold(
                                     onPressed: index >= total - 1
                                         ? null
-                                        : () => setState(() => _focusIndex = index + 1),
+                                        : () {
+                                            setState(() => _focusIndex = index + 1);
+                                            widget.onFocusIndex?.call(index + 1);
+                                            unawaited(widget._store.flush());
+                                          },
                                     child: const Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       mainAxisSize: MainAxisSize.min,

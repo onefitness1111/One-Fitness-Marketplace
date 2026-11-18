@@ -42,7 +42,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
     if (auth == null) return "Coach";
     if (auth == "owner") return "Admin";
     final me = ref.read(trainersProvider).where((t) => t.id == auth);
-    return me.isNotEmpty ? me.first.name : "Coach";
+    return me.isNotEmpty ? me.first.displayTitle : "Coach";
   }
 
   Future<void> _addPhoto() async {

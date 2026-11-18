@@ -3,6 +3,7 @@ import "package:app_links/app_links.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
 import "core/supabase/supabase_service.dart";
 import "core/theme/app_colors.dart";
@@ -91,6 +92,12 @@ class _RootGateState extends ConsumerState<_RootGate> {
   /// or freeze made on another device (staff cancelling a client's
   /// membership, say) shows without signing out and in again.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onPause: () {
+      LiveLogStore.instance.flush();
+    },
+    onInactive: () {
+      LiveLogStore.instance.flush();
+    },
     onResume: () => refreshClientInfos(ref).catchError((Object e) {
       // ignore: avoid_print
       print("[resume] membership refresh failed: $e");
@@ -106,6 +113,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
     // deep link instead — see membership_hub_screen.dart's returnUrl and
     // the matching intent-filter/CFBundleURLTypes entries.
     if (!kIsWeb) _initDeepLinks();
+    LiveLogStore.instance.ensureLoaded();
     _lifecycle; // created now so it's listening from the first frame
   }
 

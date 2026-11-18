@@ -355,7 +355,7 @@ BookingCheck canBookOffering(
   MembershipPlan? exhausted;
   for (final plan in covering) {
     if (plan.kind == PlanKind.membership && membershipEnded) continue;
-    final used = sessionsUsedThisPeriod(info, plan, bookings);
+    final used = sessionsTowardBookingLimit(info, plan, bookings);
     final max = effectiveMaxSessions(info, plan);
     if (used < max) return BookingCheck(ok: true, planId: plan.id);
     exhausted ??= plan;
@@ -367,10 +367,10 @@ BookingCheck canBookOffering(
     return BookingCheck(ok: false, reason: "membership-ending", msg: "Your membership ends on ${info.membershipCancelsAt} — you can't book sessions after that date.");
   }
   if (covering.length > 1) {
-    return const BookingCheck(ok: false, reason: "budget", msg: "You've used all the sessions on your plans that cover this session type.");
+    return const BookingCheck(ok: false, reason: "budget", msg: "You've booked all the sessions on your plans that cover this session type.");
   }
   final period = exhausted.kind == PlanKind.membership ? "this month" : "on your package";
-  return BookingCheck(ok: false, reason: "budget", msg: "You've used all $exhaustedMax sessions $period.");
+  return BookingCheck(ok: false, reason: "budget", msg: "You've booked all $exhaustedMax sessions $period. A cancel frees the spot right away.");
 }
 
 /// Variable & Signature Capture spec §5: "Block session booking until

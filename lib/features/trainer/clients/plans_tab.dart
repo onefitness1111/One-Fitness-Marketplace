@@ -4,6 +4,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/ai_visibility.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/write_failure.dart";
@@ -590,6 +591,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               ],
             ),
           ),
+        if (isOwner)
         for (final p in workoutDrafts)
           Container(
             padding: const EdgeInsets.all(14),
@@ -690,6 +692,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               ],
             ),
           ),
+        if (isOwner)
         for (final p in nutritionDrafts)
           Container(
             padding: const EdgeInsets.all(14),
@@ -783,7 +786,9 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _ProgramCard(
                   name: p.name,
-                  meta: "${p.trainingTargets.calories ?? "—"} kcal/day · ${p.createdBy ?? "—"}${p.createdAt != null ? " · ${p.createdAt}" : ""}",
+                  meta: "${p.trainingTargets.calories ?? "—"} kcal/day"
+                      "${() { final who = attributionForRole(p.createdBy, isOwner: isOwner); return who.isEmpty ? "" : " · $who"; }()}"
+                      "${p.createdAt != null ? " · ${p.createdAt}" : ""}",
                   archived: p.status == "archived",
                   busy: _busy,
                   onEdit: () => widget.onEditNutrition(),

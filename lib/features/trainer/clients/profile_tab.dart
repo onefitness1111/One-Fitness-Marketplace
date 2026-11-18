@@ -1424,8 +1424,9 @@ class _SessionOverrideRowState extends State<_SessionOverrideRow> {
             (currentRemaining != null
                     ? "Currently set to $currentRemaining remaining — the plan default right now would be $_defaultRemaining."
                     : "Using the plan's default of $_defaultRemaining remaining. Leave blank to clear an override.") +
+                " This number drops when a client checks in or is a no-show, not when they book. Cancelling gives the session back right away." +
                 (widget.plan.kind == PlanKind.membership
-                    ? " This only applies to the current month — it reverts to the plan default next month."
+                    ? " A membership override only applies to the current month — it reverts to the plan default next month."
                     : ""),
             style: TextStyle(fontSize: 11, color: AppColors.mute),
           ),

@@ -40,7 +40,7 @@ class _NotesTabState extends ConsumerState<NotesTab> {
     final myName = isOwner
         ? "Owner"
         : (trainers.where((t) => t.id == trainerAuth).isNotEmpty
-              ? trainers.firstWhere((t) => t.id == trainerAuth).name
+              ? trainers.firstWhere((t) => t.id == trainerAuth).displayTitle
               : "Coach");
 
     void mutateNotes(List<TrainerNote> Function(List<TrainerNote>) f) {

@@ -91,6 +91,8 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
                   t.id,
                   name: t.name,
                   title: t.title,
+                  coachName: t.coachName ?? "",
+                  secondaryCoachName: t.secondaryCoachName,
                   email: t.email,
                   phone: t.phone,
                   photo: t.photo,

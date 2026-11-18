@@ -5,6 +5,7 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 
@@ -13,9 +14,15 @@ import "../../../core/widgets/widgets.dart";
 /// owner and go by In app or Email only, never SMS.
 /// A teammate as people see them: coaches are "Coach {first name}" everywhere.
 String staffLabel(Map<String, dynamic>? p) {
+  if (p?["role"] == "coach") {
+    return coachPublicName(
+      coachName: p?["coach_name"] as String?,
+      firstName: p?["first_name"] as String?,
+      legalName: p?["name"] as String?,
+    );
+  }
   final name = ((p?["name"] as String?) ?? "").trim();
   if (name.isEmpty) return "Teammate";
-  if (p?["role"] == "coach") return "Coach ${name.split(RegExp(r"\s+")).first}";
   return name;
 }
 

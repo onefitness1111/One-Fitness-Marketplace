@@ -48,7 +48,12 @@ class HistoryScreen extends ConsumerWidget {
           const SectionLabel("Your history"),
           ...days.map((day) => CollapsibleSection(
                 title: day.dayTitle,
-                meta: Text(_niceDate(day.date), style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                meta: Text(
+                  day.loggedBy == "coach"
+                      ? "${_niceDate(day.date)} · Logged by ${day.loggedByName?.trim().isNotEmpty == true ? day.loggedByName : "your coach"}"
+                      : _niceDate(day.date),
+                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
                 children: day.exercises
                     .map((ex) => CollapsibleSection(
                           title: ex.name,

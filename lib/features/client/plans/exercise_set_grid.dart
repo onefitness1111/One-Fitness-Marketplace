@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../core/live_log/live_log_store.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/program_utils.dart";
 import "../../../core/widgets/exercise_video.dart";
@@ -32,6 +33,9 @@ class ExerciseSetGrid extends StatefulWidget {
     required this.onSetChange,
     required this.dayId,
     this.syncTick = 0,
+    this.logStore,
+    this.sessionId = "",
+    this.clientId = "",
   });
 
   final ExercisePrescription exercise;
@@ -39,6 +43,17 @@ class ExerciseSetGrid extends StatefulWidget {
   final Map<String, SetDraft> sessionData;
   final void Function(String exerciseName, int setNum, String field, Object? value) onSetChange;
   final String? dayId;
+
+  /// Where every keystroke is saved, keyed by session, client, exercise and set.
+  final LiveLogStore? logStore;
+  final String sessionId;
+  final String clientId;
+
+  String get logExerciseId {
+    final catalogId = exercise.exerciseId;
+    if (catalogId != null && catalogId.isNotEmpty) return catalogId;
+    return exercise.id;
+  }
 
   /// Bumped by the parent when the shared live log changed from another
   /// device, so the boxes redraw with what the coach (or client) just entered.
@@ -64,22 +79,61 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
   @override
   void didUpdateWidget(covariant ExerciseSetGrid old) {
     super.didUpdateWidget(old);
-    if (old.syncTick != widget.syncTick) _pullFromDrafts();
+    final identityChanged = old.clientId != widget.clientId ||
+        old.sessionId != widget.sessionId ||
+        old.exercise.id != widget.exercise.id ||
+        old.logExerciseId != widget.logExerciseId;
+    if (identityChanged) {
+      _disposeControllers();
+      _buildControllers();
+    } else if (old.syncTick != widget.syncTick) {
+      _pullFromStore();
+    }
   }
 
-  /// Shows values entered elsewhere, but never overwrites a box the person
-  /// is typing in right now.
-  void _pullFromDrafts() {
+  String _stored(String field, int setNum) {
+    final store = widget.logStore;
+    if (store == null) return "";
+    return store.raw(
+          sessionId: widget.sessionId,
+          clientId: widget.clientId,
+          exerciseId: widget.logExerciseId,
+          setIndex: setNum,
+          field: field,
+        ) ??
+        "";
+  }
+
+  void _remember(String field, int setNum, String raw) {
+    widget.logStore?.remember(
+      sessionId: widget.sessionId,
+      clientId: widget.clientId,
+      exerciseId: widget.logExerciseId,
+      setIndex: setNum,
+      field: field,
+      raw: raw,
+      at: DateTime.now().toUtc(),
+    );
+  }
+
+  /// Shows the saved text for this client and exercise. Never writes a
+  /// shorter number over what is already in the box, and never touches a
+  /// box the coach is typing in.
+  void _pullFromStore() {
+    final store = widget.logStore;
+    if (store == null) return;
     for (var i = 0; i < _repsControllers.length; i++) {
-      final draft = widget.sessionData["${widget.exercise.name}__${i + 1}"];
+      final setNum = i + 1;
       if (!_repsFocus[i].hasFocus) {
-        final want = draft?.reps?.toString() ?? "";
-        if (_repsControllers[i].text != want) _repsControllers[i].text = want;
+        final want = _stored("reps", setNum);
+        if (want.isNotEmpty && _repsControllers[i].text != want) {
+          _repsControllers[i].text = want;
+        }
       }
       if (!_weightFocus[i].hasFocus) {
-        final w = draft?.weight;
-        if (double.tryParse(_weightControllers[i].text) != w) {
-          _weightControllers[i].text = w == null ? "" : _fmtNum(w);
+        final want = _stored("weight", setNum);
+        if (want.isNotEmpty && _weightControllers[i].text != want) {
+          _weightControllers[i].text = want;
         }
       }
     }
@@ -88,19 +142,23 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
   void _buildControllers() {
     final numSets = widget.exercise.sets > 0 ? widget.exercise.sets : 3;
     _repsControllers = List.generate(numSets, (i) {
-      final draft = widget.sessionData["${widget.exercise.name}__${i + 1}"];
-      return TextEditingController(text: draft?.reps?.toString() ?? "");
+      final saved = _stored("reps", i + 1);
+      final draft = widget.sessionData["${widget.logExerciseId}__${i + 1}"] ??
+          widget.sessionData["${widget.exercise.name}__${i + 1}"];
+      return TextEditingController(text: saved.isNotEmpty ? saved : (draft?.reps?.toString() ?? ""));
     });
     _weightControllers = List.generate(numSets, (i) {
-      final draft = widget.sessionData["${widget.exercise.name}__${i + 1}"];
-      return TextEditingController(text: draft?.weight?.toString() ?? "");
+      final saved = _stored("weight", i + 1);
+      final draft = widget.sessionData["${widget.logExerciseId}__${i + 1}"] ??
+          widget.sessionData["${widget.exercise.name}__${i + 1}"];
+      final fallback = draft?.weight == null ? "" : _fmtNum(draft!.weight!);
+      return TextEditingController(text: saved.isNotEmpty ? saved : fallback);
     });
     _repsFocus = List.generate(numSets, (_) => FocusNode());
     _weightFocus = List.generate(numSets, (_) => FocusNode());
   }
 
-  @override
-  void dispose() {
+  void _disposeControllers() {
     for (final c in _repsControllers) {
       c.dispose();
     }
@@ -110,6 +168,11 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     for (final f in [..._repsFocus, ..._weightFocus]) {
       f.dispose();
     }
+  }
+
+  @override
+  void dispose() {
+    _disposeControllers();
     super.dispose();
   }
 
@@ -299,7 +362,8 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
           hintStyle: TextStyle(color: AppColors.mute),
         ),
         onChanged: (v) {
-          widget.onSetChange(exercise.name, setNum, "reps", int.tryParse(v));
+          _remember("reps", setNum, v);
+          widget.onSetChange(exercise.name, setNum, "reps", liveLogReps(v));
           setState(() {});
         },
       ),
@@ -376,7 +440,8 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
           hintStyle: TextStyle(color: AppColors.mute),
         ),
         onChanged: (v) {
-          widget.onSetChange(exercise.name, setNum, "weight", double.tryParse(v));
+          _remember("weight", setNum, v);
+          widget.onSetChange(exercise.name, setNum, "weight", liveLogWeight(v));
           setState(() {});
         },
       ),

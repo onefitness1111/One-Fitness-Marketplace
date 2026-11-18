@@ -116,8 +116,11 @@ stolen property.
   ONE Fitness in writing.
 
 17. Cancellations and no-shows. Cancel or reschedule by the deadline shown
-on your booking. Late cancellations and no-shows are counted as a used
-session and may incur the fee stated on your plan.
+on your booking. A booking does not use a session. A session is used only
+when you check in or are marked a no-show. Early and late cancellations do
+not use a session — it goes back to your balance right away. A late
+cancellation or a no-show may still include the fee stated on your plan.
+That fee is separate from the session count.
 
 18. Conduct. We may suspend or end services, without refund of the current
 period, for unsafe, abusive or disruptive behavior toward coaches, clients

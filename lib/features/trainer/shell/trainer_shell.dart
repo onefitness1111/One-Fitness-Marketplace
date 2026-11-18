@@ -2,6 +2,7 @@ import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/live_log/live_log_store.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -262,14 +263,12 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                   ),
                 ),
                 Expanded(
-                  child: AnimatedScreenSwitcher(
-                    screenKey: mode,
-                    child: switch (mode) {
-                      "dashboard" => const TrainerHomeScreen(),
-                      "clients" => const ClientsScreen(),
-                      "chat" => const CoachChatScreen(),
-                      "schedule" => const ScheduleScreen(),
-                      "requests" => const RequestsScreen(),
+                  child: _KeptTabs(
+                    mode: mode,
+                    isOwner: isOwner,
+                    other: AnimatedScreenSwitcher(
+                      screenKey: mode,
+                      child: switch (mode) {
                       "waitlist" => const WaitlistScreen(),
                       "exercises" => const ExercisesScreen(),
                       "equipment" => const EquipmentLibraryScreen(),
@@ -299,6 +298,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       "support" => const SupportScreen(),
                       _ => PlaceholderScreen(title: _titles[mode] ?? mode),
                     },
+                    ),
                   ),
                 ),
               ],
@@ -342,6 +342,56 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Bottom tabs stay mounted, so a live session is still there when the
+/// coach comes back from Chat or Schedule. Drawer screens sit on top.
+class _KeptTabs extends StatefulWidget {
+  const _KeptTabs({required this.mode, required this.isOwner, required this.other});
+  final String mode;
+  final bool isOwner;
+  final Widget other;
+
+  @override
+  State<_KeptTabs> createState() => _KeptTabsState();
+}
+
+class _KeptTabsState extends State<_KeptTabs> {
+  @override
+  void didUpdateWidget(covariant _KeptTabs old) {
+    super.didUpdateWidget(old);
+    if (old.mode != widget.mode) {
+      LiveLogStore.instance.flush();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = <String, Widget>{
+      "dashboard": const TrainerHomeScreen(),
+      "clients": const ClientsScreen(),
+      "chat": const CoachChatScreen(),
+      "schedule": const ScheduleScreen(),
+      if (!widget.isOwner) "requests": const RequestsScreen(),
+      if (widget.isOwner) "staff": const StaffScreen(),
+    };
+    final keys = tabs.keys.toList();
+    final index = keys.indexOf(widget.mode);
+    final onTab = index >= 0;
+    return Stack(
+      children: [
+        Offstage(
+          offstage: !onTab,
+          child: IndexedStack(
+            index: onTab ? index : 0,
+            sizing: StackFit.expand,
+            children: [for (final k in keys) tabs[k]!],
+          ),
+        ),
+        if (!onTab) Positioned.fill(child: widget.other),
+      ],
     );
   }
 }

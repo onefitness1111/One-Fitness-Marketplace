@@ -1080,7 +1080,7 @@ class _SaveProgramSheetState extends ConsumerState<_SaveProgramSheet> {
     final me = trainers.where((t) => t.id == trainerAuth);
     final coachName = isOwner
         ? "Owner"
-        : (me.isNotEmpty ? me.first.name : "Coach");
+        : (me.isNotEmpty ? me.first.displayTitle : "Coach");
     final clientId = widget.clientId;
     final clientName = clientId != null
         ? ref

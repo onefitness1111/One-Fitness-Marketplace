@@ -109,7 +109,7 @@ class LiveWorkoutPage extends ConsumerWidget {
     final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final trainerAuth = ref.watch(trainerAuthProvider);
     final me = ref.watch(trainersProvider).where((t) => t.id == trainerAuth);
-    final myName = isOwner ? "Owner" : (me.isNotEmpty ? me.first.name : "Coach");
+    final myName = isOwner ? "Owner" : (me.isNotEmpty ? me.first.displayTitle : "Coach");
 
     Future<void> save(WorkoutLogEntry entry) async {
       final rec = ref.read(trainerClientRecordsProvider)[clientId];
@@ -127,6 +127,8 @@ class LiveWorkoutPage extends ConsumerWidget {
               key: ValueKey(clientId),
               client: record,
               loggedBy: "coach",
+              loggedByName: myName,
+              sessionId: "live|$clientId",
               authorName: myName,
               authorRole: isOwner ? "owner" : "coach",
               initialDayId: dayId,

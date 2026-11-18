@@ -7,6 +7,7 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
@@ -320,12 +321,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     required Set<ChatChannel> channels,
     required String? trainerAuth,
   }) async {
-    final text = _msgController.text.trim();
-    if (text.isEmpty) return;
+    final typed = _msgController.text.trim();
+    if (typed.isEmpty) return;
     // Clients only ever see the coach name ("Coach Chris"), never the legal
     // name. An owner writing from the owner account goes out as the business.
     final sender = ref.read(trainersProvider).where((t) => t.id == trainerAuth);
-    final from = sender.isNotEmpty ? sender.first.displayTitle : settings.businessName;
+    final from = sender.isNotEmpty ? sender.first.displayTitle : "ONE Fitness Marketplace";
+    final text = prefixMessage(from, typed);
     // Optimistic bubble under a temporary id; the server returns the real
     // row, and is where the content filter and block rules are applied.
     final tempId = DateTime.now().microsecondsSinceEpoch.toString();
@@ -395,7 +397,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     }
     if (channels.contains(ChatChannel.sms)) {
       // The number stays on the server. A coach is not shown it.
-      SupabaseService.sendSms(profileId: client.id, text: "$from: $text").catchError((Object e) {
+      SupabaseService.sendSms(profileId: client.id, text: text).catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),

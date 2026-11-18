@@ -1246,8 +1246,7 @@ class _HeldPackages extends StatelessWidget {
             child: AppCard(
               child: Builder(builder: (context) {
                 final max = effectiveMaxSessions(info, p);
-                final used = sessionsUsedThisPeriod(info, p, bookings);
-                final left = (max - used).clamp(0, max);
+                final left = sessionsRemainingBalance(info, p, bookings);
                 final enrollment = info.plans.where((e) => e.planId == p.id && e.status == "active").firstOrNull;
                 final endsAt = enrollment?.cancelsAt;
                 final busy = busyPlanId == p.id;

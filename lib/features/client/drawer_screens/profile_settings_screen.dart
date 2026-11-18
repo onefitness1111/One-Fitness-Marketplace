@@ -289,9 +289,7 @@ String membershipStatusLabel(
   MembershipPlan plan,
   List<Booking> bookings,
 ) {
-  final used = sessionsUsedThisPeriod(info, plan, bookings);
-  final max = effectiveMaxSessions(info, plan);
-  return "${(max - used).clamp(0, max)}";
+  return "${sessionsRemainingBalance(info, plan, bookings)}";
 }
 
 class _SettingRow extends StatelessWidget {

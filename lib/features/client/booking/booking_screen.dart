@@ -802,7 +802,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // it can't spam.
       final plan = ref.read(membershipPlansProvider.notifier).byId(_pickPlanId);
       if (plan != null) {
-        final remaining = effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, ref.read(clientBookingsProvider));
+        final remaining = sessionsLeftToBook(info, plan, ref.read(clientBookingsProvider));
         if (remaining == 1 || remaining == 2) {
           SupabaseService.clientNotify("low-sessions", {"remaining": remaining});
         }
@@ -1211,8 +1211,7 @@ class _MembershipBanner extends StatelessWidget {
       for (final plan in plans)
         (
           plan: plan,
-          remaining: (effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, bookings))
-              .clamp(0, effectiveMaxSessions(info, plan)),
+          remaining: sessionsLeftToBook(info, plan, bookings),
         ),
     ];
     final lowest = lines.map((l) => l.remaining).reduce((a, b) => a < b ? a : b);
@@ -1236,7 +1235,7 @@ class _MembershipBanner extends StatelessWidget {
                 text: TextSpan(
                   children: [
                     TextSpan(
-                      text: "${l.remaining} session${l.remaining != 1 ? 's' : ''} remaining  ",
+                      text: "${l.remaining} session${l.remaining != 1 ? 's' : ''} left to book  ",
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: l.remaining > 0 ? AppColors.txt : AppColors.errorText),
                     ),
                     TextSpan(
@@ -1864,7 +1863,7 @@ class _StepThreeState extends State<_StepThree> {
                                 ),
                                 child: Row(
                                   children: [
-                                    Avatar(src: a.trainer.photo, name: a.trainer.name, size: 38, active: a.mine),
+                                    Avatar(src: a.trainer.photo, name: a.trainer.displayTitle, size: 38, active: a.mine),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Column(

@@ -58,7 +58,8 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
   final _lastName = TextEditingController();
   // Defaulted rather than left blank: nearly every coach is a
   // "Coach", and a blank title would show clients a bare first name.
-  final _title = TextEditingController(text: "Coach");
+  final _coachName = TextEditingController();
+  final _secondaryCoachName = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _password2 = TextEditingController();
@@ -118,7 +119,8 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
   void dispose() {
     _firstName.dispose();
     _lastName.dispose();
-    _title.dispose();
+    _coachName.dispose();
+    _secondaryCoachName.dispose();
     _email.dispose();
     _password.dispose();
     _password2.dispose();
@@ -278,7 +280,8 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
         name: name,
         firstName: firstName,
         lastName: lastName,
-        title: _title.text.trim(),
+        coachName: _coachName.text.trim(),
+        secondaryCoachName: _secondaryCoachName.text.trim(),
         phone: phone,
         approvalCode: _code.text.trim(),
         photo: _photoDataUrl,
@@ -547,18 +550,28 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
               ),
               const SizedBox(height: 10),
               FieldLabeled(
-                label: "Title",
+                label: "Coach name",
                 child: AppField(kind: FieldKind.name,
-                  controller: _title,
-                  placeholder: "Coach",
+                  controller: _coachName,
+                  placeholder: "Coach Chris",
                   onChanged: (_) => setState(() => _error = null),
                 ),
               ),
               Padding(
-                padding: EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  "How clients see you — e.g. \"Coach Sooraj\".",
+                  "This is the only name clients see. If you leave it blank, they see \"Coach\" plus your first name.",
                   style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Secondary coach name (optional)",
+                child: AppField(
+                  kind: FieldKind.name,
+                  controller: _secondaryCoachName,
+                  placeholder: "Only the owner can see this",
+                  onChanged: (_) => setState(() => _error = null),
                 ),
               ),
               const SizedBox(height: 10),
