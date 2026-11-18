@@ -38,11 +38,11 @@ export async function pushOwners(admin: Admin, title: string, body: string): Pro
   }
 }
 
-export async function emailOwners(admin: Admin, title: string, body: string): Promise<void> {
+export async function emailOwners(admin: Admin, title: string, body: string, html?: string): Promise<void> {
   const { data: owners } = await admin.from("profiles").select("id, email").eq("role", "owner");
   for (const owner of owners || []) {
     const email = String(owner.email ?? "").trim();
-    if (email) await sendEmail(email, title, `${body}\n\n— ONE Fitness`);
+    if (email) await sendEmail(email, title, `${body}\n\n— ONE Fitness`, html);
     await notifyProfile(admin, owner.id as string, title, body, false);
   }
 }

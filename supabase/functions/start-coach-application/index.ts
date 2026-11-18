@@ -13,7 +13,7 @@ const CORS_HEADERS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
 
-const MAX_FILES = 30;
+const MAX_FILES = 21;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
@@ -31,9 +31,8 @@ serve(async (req) => {
 
     const applicationId = crypto.randomUUID();
     const uploads = [];
-    let docs = 0;
+    let counted = 0;
     let photos = 0;
-    let befores = 0;
     let clip = 0;
     for (const file of files) {
       const key = String(file.key ?? "");
@@ -44,20 +43,20 @@ serve(async (req) => {
         if (clip > 1) throw new Error("Only one coaching clip.");
         path = `${applicationId}/clip.m4a`;
       } else if (key.startsWith("doc-")) {
-        docs += 1;
-        if (docs > 12) throw new Error("You can attach up to 12 documents.");
+        counted += 1;
         path = `${applicationId}/docs/${key}`;
       } else if (key.startsWith("before-") || key.startsWith("after-")) {
-        befores += 1;
-        if (befores > 12) throw new Error("You can attach up to 12 before-and-after photos.");
+        counted += 1;
         path = `${applicationId}/before-after/${key}.jpg`;
       } else if (key.startsWith("location-")) {
+        counted += 1;
         photos += 1;
         if (photos > 8) throw new Error("You can attach up to 8 location photos.");
         path = `${applicationId}/location/${key}.jpg`;
       } else {
         throw new Error("That file isn't part of the application.");
       }
+      if (counted > 20) throw new Error("An application can hold up to 20 files.");
       const { data, error } = await admin.storage.from("coach-applications").createSignedUploadUrl(path);
       if (error || !data) throw new Error(error?.message ?? "Couldn't prepare the upload.");
       uploads.push({ key, path, token: data.token, signedUrl: data.signedUrl, contentType });

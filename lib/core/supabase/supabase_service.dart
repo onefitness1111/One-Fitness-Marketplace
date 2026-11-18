@@ -1839,6 +1839,12 @@ class SupabaseService {
         "note": note,
       });
 
+  /// A short-lived link for a private application file. Only the owner can
+  /// open these, the same way progress photos stay private.
+  static Future<String> signedApplicationFile(String path) {
+    return client.storage.from("coach-applications").createSignedUrl(path, 60 * 10);
+  }
+
   /// Puts bytes on a signed upload link from start-coach-application.
   static Future<void> uploadToSignedUrl({
     required String signedUrl,

@@ -1,5 +1,6 @@
 import "dart:async";
 import "dart:io";
+import "dart:typed_data";
 
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
@@ -9,6 +10,7 @@ import "package:record/record.dart";
 
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/coach_application_files.dart";
 import "../../../core/widgets/widgets.dart";
 
 /// Apply now. Does not create a login. The owner gets an email and approves
@@ -40,13 +42,8 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
   bool _recording = false;
   String? _clipPath;
 
-  final List<({String name, List<int> bytes, String type})> _docs = [];
-  final List<({String label, List<int> bytes})> _beforeAfter = [];
-  final List<List<int>> _locationPhotos = [];
-
-  bool _permission = false;
-  bool _clientsAllowed = false;
-  bool _followRules = false;
+  String? _chosenType;
+  final List<_ApplicationFile> _uploads = [];
 
   bool _busy = false;
   String? _error;
@@ -109,6 +106,55 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
     });
   }
 
+  int get _fileCount => _uploads.fold(0, (sum, file) => sum + file.fileCount);
+
+  int get _locationPhotoCount => _uploads.where((file) => file.kind == "location-photo").length;
+
+  Future<void> _addChosenFile() async {
+    final kind = _chosenType;
+    if (kind == null) {
+      setState(() => _error = "Choose a file type first.");
+      return;
+    }
+    final blocked = applicationAddError(
+      kind: kind,
+      filesSoFar: _fileCount,
+      locationPhotos: _locationPhotoCount,
+    );
+    if (blocked != null) {
+      setState(() => _error = blocked);
+      return;
+    }
+    if (kind == "before-after") {
+      final pair = await showDialog<_PhotoPair>(
+        context: context,
+        builder: (_) => const _BeforeAfterDialog(),
+      );
+      if (pair == null || !mounted) return;
+      setState(() {
+        _uploads.add(_ApplicationFile.pair(before: pair.before, after: pair.after));
+        _error = null;
+      });
+      return;
+    }
+    if (kind == "location-photo") {
+      final bytes = await _pickPhoto();
+      if (bytes == null || !mounted) return;
+      setState(() {
+        _uploads.add(_ApplicationFile.photo(kind: kind, bytes: bytes));
+        _error = null;
+      });
+      return;
+    }
+    final picked = await FilePicker.platform.pickFiles(withData: true);
+    final file = picked?.files.single;
+    if (file?.bytes == null || !mounted) return;
+    setState(() {
+      _uploads.add(_ApplicationFile.document(kind: kind, name: file!.name, bytes: file.bytes!));
+      _error = null;
+    });
+  }
+
   Future<List<int>?> _pickPhoto() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
     if (picked == null) return null;
@@ -131,8 +177,11 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
       setState(() => _error = "Still needed: ${missing.join(", ")}.");
       return;
     }
-    if (!_permission || !_clientsAllowed || !_followRules) {
-      setState(() => _error = "Tick every box on the location approval notice.");
+    final uploadError = applicationUploadError(
+      _uploads.where((file) => file.kind != "before-after" && file.kind != "location-photo").map((file) => file.kind),
+    );
+    if (uploadError != null) {
+      setState(() => _error = uploadError);
       return;
     }
     setState(() {
@@ -140,12 +189,17 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
       _error = null;
     });
     try {
+      final docs = _uploads.where((file) => file.kind != "before-after" && file.kind != "location-photo").toList();
+      final pairs = _uploads.where((file) => file.isPair).toList();
+      final places = _uploads.where((file) => file.kind == "location-photo").toList();
       final files = <Map<String, String>>[
         if (_clipPath != null) {"key": "clip", "contentType": "audio/mp4"},
-        for (var i = 0; i < _docs.length; i++) {"key": "doc-$i", "contentType": _docs[i].type},
-        for (var i = 0; i < _beforeAfter.length; i++)
-          {"key": _beforeAfter[i].label, "contentType": "image/jpeg"},
-        for (var i = 0; i < _locationPhotos.length; i++) {"key": "location-$i", "contentType": "image/jpeg"},
+        for (var i = 0; i < docs.length; i++) {"key": "doc-$i", "contentType": "application/octet-stream"},
+        for (var i = 0; i < pairs.length; i++) ...[
+          {"key": "before-$i", "contentType": "image/jpeg"},
+          {"key": "after-$i", "contentType": "image/jpeg"},
+        ],
+        for (var i = 0; i < places.length; i++) {"key": "location-$i", "contentType": "image/jpeg"},
       ];
       final started = await SupabaseService.startCoachApplication(email: _email.text.trim(), files: files);
       final uploads = (started["uploads"] as List?) ?? const [];
@@ -166,14 +220,15 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
       if (_clipPath != null) {
         await put("clip", await File(_clipPath!).readAsBytes(), "audio/mp4");
       }
-      for (var i = 0; i < _docs.length; i++) {
-        await put("doc-$i", _docs[i].bytes, _docs[i].type);
+      for (var i = 0; i < docs.length; i++) {
+        await put("doc-$i", docs[i].bytes!, "application/octet-stream");
       }
-      for (final item in _beforeAfter) {
-        await put(item.label, item.bytes, "image/jpeg");
+      for (var i = 0; i < pairs.length; i++) {
+        await put("before-$i", pairs[i].before!, "image/jpeg");
+        await put("after-$i", pairs[i].after!, "image/jpeg");
       }
-      for (var i = 0; i < _locationPhotos.length; i++) {
-        await put("location-$i", _locationPhotos[i], "image/jpeg");
+      for (var i = 0; i < places.length; i++) {
+        await put("location-$i", places[i].bytes!, "image/jpeg");
       }
 
       String? pathOf(String key) => byKey[key]?["path"]?.toString();
@@ -188,22 +243,19 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
         "bio": _bio.text.trim(),
         "locationName": _locationName.text.trim(),
         "locationAddress": _locationAddress.text.trim(),
-        "locationChecks": {
-          "permission": _permission,
-          "clientsAllowed": _clientsAllowed,
-          "followRules": _followRules,
-        },
         "clipPath": pathOf("clip"),
         "documentPaths": [
-          for (var i = 0; i < _docs.length; i++)
-            if (pathOf("doc-$i") != null) {"name": _docs[i].name, "path": pathOf("doc-$i")},
+          for (var i = 0; i < docs.length; i++)
+            if (pathOf("doc-$i") != null)
+              {"name": docs[i].name, "path": pathOf("doc-$i"), "kind": docs[i].kind},
         ],
         "beforeAfterPaths": [
-          for (final item in _beforeAfter)
-            if (pathOf(item.label) != null) {"label": item.label, "path": pathOf(item.label)},
+          for (var i = 0; i < pairs.length; i++)
+            if (pathOf("before-$i") != null && pathOf("after-$i") != null)
+              {"beforePath": pathOf("before-$i"), "afterPath": pathOf("after-$i")},
         ],
         "locationPhotoPaths": [
-          for (var i = 0; i < _locationPhotos.length; i++)
+          for (var i = 0; i < places.length; i++)
             if (pathOf("location-$i") != null) pathOf("location-$i"),
         ],
       });
@@ -278,89 +330,81 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
             const SectionLabel("Bio"),
             AppField(controller: _bio, maxLines: 4),
             const SizedBox(height: 16),
-            const SectionLabel("Documents"),
-            const HintBox(text: "Certifications, CPR, degrees, and accolades. Add each file you have."),
-            const SizedBox(height: 8),
-            BtnGhost(
-              onPressed: _docs.length >= 12
-                  ? null
-                  : () async {
-                      final picked = await FilePicker.platform.pickFiles(withData: true);
-                      final file = picked?.files.single;
-                      if (file?.bytes == null) return;
-                      setState(() => _docs.add((name: file!.name, bytes: file.bytes!, type: "application/octet-stream")));
-                    },
-              child: Text("Add a document (${_docs.length})"),
-            ),
-            for (final doc in _docs)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(doc.name, style: TextStyle(fontSize: 12, color: AppColors.mute)),
-              ),
-            const SizedBox(height: 16),
-            const SectionLabel("Before and after"),
-            BtnGhost(
-              onPressed: _beforeAfter.length >= 12
-                  ? null
-                  : () async {
-                      final bytes = await _pickPhoto();
-                      if (bytes == null) return;
-                      final label = _beforeAfter.length.isEven ? "before-${_beforeAfter.length ~/ 2}" : "after-${_beforeAfter.length ~/ 2}";
-                      setState(() => _beforeAfter.add((label: label, bytes: bytes)));
-                    },
-              child: Text("Add a photo (${_beforeAfter.length})"),
-            ),
-            const SizedBox(height: 16),
             const SectionLabel("Where you'll coach"),
             const SizedBox(height: 8),
             FieldLabeled(label: "Location name", child: AppField(controller: _locationName)),
             const SizedBox(height: 10),
             FieldLabeled(label: "Address", child: AppField(controller: _locationAddress)),
-            const SizedBox(height: 10),
-            const Text("Location approval notice", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            Material(
-              type: MaterialType.transparency,
-              child: CheckboxListTile(
-                value: _permission,
-                onChanged: (v) => setState(() => _permission = v ?? false),
-                title: const Text("I have permission to coach at this location", style: TextStyle(fontSize: 13)),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
+            const SizedBox(height: 16),
+            const SectionLabel("What to include"),
+            const SizedBox(height: 8),
+            for (final line in applicationChecks(
+              kinds: _uploads.map((file) => file.kind),
+              beforeAfterPairs: _uploads.where((file) => file.isPair).length,
+              locationPhotos: _locationPhotoCount,
+            ))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      line.done ? Icons.check : Icons.circle_outlined,
+                      size: 16,
+                      color: line.done ? AppColors.txt : AppColors.mute,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(line.label, style: TextStyle(fontSize: 13, height: 1.35, color: AppColors.txt))),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              "To send this, include at least one certification, CPR card, or degree, a location approval notice or owner permission, and insurance. $_fileCount of $applicationFileCap files.",
+              style: TextStyle(fontSize: 12, height: 1.4, color: AppColors.mute),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                border: Border.all(color: AppColors.line),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _chosenType,
+                  hint: Text("Choose a file type", style: TextStyle(color: AppColors.mute, fontSize: 14)),
+                  dropdownColor: AppColors.card,
+                  style: TextStyle(color: AppColors.txt, fontSize: 14),
+                  iconEnabledColor: AppColors.txt,
+                  items: [
+                    for (final option in applicationTypeOptions)
+                      DropdownMenuItem(value: option.$1, child: Text(option.$2)),
+                  ],
+                  onChanged: _busy ? null : (value) => setState(() => _chosenType = value),
+                ),
               ),
             ),
-            Material(
-              type: MaterialType.transparency,
-              child: CheckboxListTile(
-                value: _clientsAllowed,
-                onChanged: (v) => setState(() => _clientsAllowed = v ?? false),
-                title: const Text("This location allows ONE Fitness clients", style: TextStyle(fontSize: 13)),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-            Material(
-              type: MaterialType.transparency,
-              child: CheckboxListTile(
-                value: _followRules,
-                onChanged: (v) => setState(() => _followRules = v ?? false),
-                title: const Text("I will follow the location's rules", style: TextStyle(fontSize: 13)),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
+            const SizedBox(height: 8),
             BtnGhost(
-              onPressed: _locationPhotos.length >= 8
-                  ? null
-                  : () async {
-                      final bytes = await _pickPhoto();
-                      if (bytes == null) return;
-                      setState(() => _locationPhotos.add(bytes));
-                    },
-              child: Text("Add a location photo (${_locationPhotos.length} of 8)"),
+              onPressed: _busy ? null : _addChosenFile,
+              child: const Text("Add file"),
             ),
+            for (var i = 0; i < _uploads.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _UploadedRow(
+                  file: _uploads[i],
+                  onRemove: _busy
+                      ? null
+                      : () => setState(() => _uploads.removeAt(i)),
+                ),
+              ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+              Text(_error!, style: TextStyle(color: AppColors.txt, fontSize: 12)),
             ],
             const SizedBox(height: 16),
             BtnGold(
@@ -371,6 +415,208 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ApplicationFile {
+  _ApplicationFile.document({required this.kind, required this.name, required List<int> bytes})
+      : bytes = bytes,
+        before = null,
+        after = null;
+
+  _ApplicationFile.photo({required this.kind, required List<int> bytes})
+      : name = "Photo",
+        bytes = bytes,
+        before = null,
+        after = null;
+
+  _ApplicationFile.pair({required List<int> before, required List<int> after})
+      : kind = "before-after",
+        name = "Before and after photo",
+        bytes = null,
+        before = before,
+        after = after;
+
+  final String kind;
+  final String name;
+  final List<int>? bytes;
+  final List<int>? before;
+  final List<int>? after;
+
+  bool get isPair => before != null && after != null;
+  int get fileCount => isPair ? 2 : 1;
+}
+
+class _PhotoPair {
+  const _PhotoPair(this.before, this.after);
+  final List<int> before;
+  final List<int> after;
+}
+
+class _UploadedRow extends StatelessWidget {
+  const _UploadedRow({required this.file, required this.onRemove});
+
+  final _ApplicationFile file;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                "${applicationTypeLabel(file.kind)}${file.isPair ? "" : " · ${file.name}"}",
+                style: TextStyle(fontSize: 13, color: AppColors.txt),
+              ),
+            ),
+            TextButton(
+              onPressed: onRemove,
+              style: TextButton.styleFrom(foregroundColor: AppColors.txt, padding: EdgeInsets.zero, minimumSize: Size.zero),
+              child: const Text("Remove", style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        if (file.isPair)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                Expanded(child: _PhotoHalf(label: "Before", bytes: file.before!)),
+                const SizedBox(width: 8),
+                Expanded(child: _PhotoHalf(label: "After", bytes: file.after!)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PhotoHalf extends StatelessWidget {
+  const _PhotoHalf({required this.label, required this.bytes});
+
+  final String label;
+  final List<int> bytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        AspectRatio(
+          aspectRatio: 3 / 4,
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(8)),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(Uint8List.fromList(bytes), fit: BoxFit.cover),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BeforeAfterDialog extends StatefulWidget {
+  const _BeforeAfterDialog();
+
+  @override
+  State<_BeforeAfterDialog> createState() => _BeforeAfterDialogState();
+}
+
+class _BeforeAfterDialogState extends State<_BeforeAfterDialog> {
+  List<int>? _before;
+  List<int>? _after;
+
+  Future<void> _pick(bool before) async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      if (before) {
+        _before = bytes;
+      } else {
+        _after = bytes;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = _before != null && _after != null;
+    return Dialog(
+      backgroundColor: AppColors.bg,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text("Before and after photo", style: TextStyle(color: AppColors.txt, fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            Text("Add the before photo on the left and the after photo on the right. They are saved together.", style: TextStyle(color: AppColors.mute, fontSize: 12, height: 1.4)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _PickHalf(label: "Before", bytes: _before, onPick: () => _pick(true))),
+                const SizedBox(width: 8),
+                Expanded(child: _PickHalf(label: "After", bytes: _after, onPick: () => _pick(false))),
+              ],
+            ),
+            const SizedBox(height: 14),
+            BtnGold(
+              full: true,
+              onPressed: ready ? () => Navigator.of(context).pop(_PhotoPair(_before!, _after!)) : null,
+              child: const Text("Save pair"),
+            ),
+            const SizedBox(height: 8),
+            BtnGhost(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel")),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PickHalf extends StatelessWidget {
+  const _PickHalf({required this.label, required this.bytes, required this.onPick});
+
+  final String label;
+  final List<int>? bytes;
+  final VoidCallback onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: AppColors.txt, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        AspectRatio(
+          aspectRatio: 3 / 4,
+          child: Material(
+            color: AppColors.card,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: AppColors.line)),
+            child: InkWell(
+              onTap: onPick,
+              child: bytes == null
+                  ? Center(child: Text("Add photo", style: TextStyle(color: AppColors.mute, fontSize: 12)))
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(Uint8List.fromList(bytes!), fit: BoxFit.cover),
+                    ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

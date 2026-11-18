@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/utils/coach_application_files.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/trainer_providers.dart";
@@ -222,7 +223,24 @@ class _RequestCard extends StatelessWidget {
   }
 }
 
-class _ApplicationCard extends StatelessWidget {
+List<String> _applicationLines(Map<String, dynamic> app) {
+  final docs = <({String? kind, String name})>[];
+  final rawDocs = app["document_paths"];
+  if (rawDocs is List) {
+    for (final item in rawDocs) {
+      if (item is! Map) continue;
+      docs.add((kind: item["kind"]?.toString(), name: item["name"]?.toString() ?? "File"));
+    }
+  }
+  int count(dynamic raw) => raw is List ? raw.length : 0;
+  return applicationReviewLines(
+    documents: docs,
+    beforeAfterPairs: count(app["before_after_paths"]),
+    locationPhotoCount: count(app["location_photo_paths"]),
+  );
+}
+
+class _ApplicationCard extends StatefulWidget {
   const _ApplicationCard({
     required this.app,
     required this.busy,
@@ -236,7 +254,42 @@ class _ApplicationCard extends StatelessWidget {
   final VoidCallback onDeny;
 
   @override
+  State<_ApplicationCard> createState() => _ApplicationCardState();
+}
+
+class _ApplicationCardState extends State<_ApplicationCard> {
+  List<({String? before, String? after})> _pairs = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPairs();
+  }
+
+  Future<void> _loadPairs() async {
+    final raw = widget.app["before_after_paths"];
+    if (raw is! List || raw.isEmpty) return;
+    final next = <({String? before, String? after})>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final beforePath = item["beforePath"]?.toString();
+      final afterPath = item["afterPath"]?.toString();
+      if (beforePath == null || afterPath == null || beforePath.isEmpty || afterPath.isEmpty) continue;
+      try {
+        next.add((
+          before: await SupabaseService.signedApplicationFile(beforePath),
+          after: await SupabaseService.signedApplicationFile(afterPath),
+        ));
+      } catch (_) {
+        next.add((before: null, after: null));
+      }
+    }
+    if (mounted) setState(() => _pairs = next);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final app = widget.app;
     final status = app["status"]?.toString() ?? "pending";
     final pending = status == "pending";
     final name = "${app["first_name"] ?? ""} ${app["last_name"] ?? ""}".trim();
@@ -256,19 +309,71 @@ class _ApplicationCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(app["pitch"].toString(), style: const TextStyle(fontSize: 13, height: 1.4)),
             ],
+            const SizedBox(height: 8),
+            for (final line in _applicationLines(app))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(line, style: TextStyle(fontSize: 12, height: 1.35, color: AppColors.txt)),
+              ),
+            for (var i = 0; i < _pairs.length; i++) ...[
+              const SizedBox(height: 8),
+              Text("Before and after pair ${i + 1}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.txt)),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(child: _ReviewHalf(label: "Before", url: _pairs[i].before)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _ReviewHalf(label: "After", url: _pairs[i].after)),
+                ],
+              ),
+            ],
             if (pending) ...[
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Expanded(child: BtnGold(onPressed: busy ? null : onApprove, child: Text(busy ? "Working…" : "Approve"))),
+                  Expanded(child: BtnGold(onPressed: widget.busy ? null : widget.onApprove, child: Text(widget.busy ? "Working…" : "Approve"))),
                   const SizedBox(width: 8),
-                  Expanded(child: BtnGhost(onPressed: busy ? null : onDeny, child: const Text("Deny"))),
+                  Expanded(child: BtnGhost(onPressed: widget.busy ? null : widget.onDeny, child: const Text("Deny"))),
                 ],
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ReviewHalf extends StatelessWidget {
+  const _ReviewHalf({required this.label, required this.url});
+
+  final String label;
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        AspectRatio(
+          aspectRatio: 3 / 4,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.bg,
+              border: Border.all(color: AppColors.line),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: url == null
+                ? Center(child: Text(label, style: TextStyle(color: AppColors.mute, fontSize: 12)))
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(url!, fit: BoxFit.cover),
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }

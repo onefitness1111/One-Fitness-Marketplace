@@ -2,6 +2,7 @@
 // deployed until you deploy this function.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { applicationEmailHtml, applicationReviewLines, applicationUploadError } from "../_shared/coachApplicationFiles.mjs";
 import { emailOwners } from "../_shared/requestNotify.ts";
 
 const CORS_HEADERS = {
@@ -37,19 +38,34 @@ serve(async (req) => {
     const bio = text(body.bio, 4000, "Bio");
     const locationName = text(body.locationName, 200, "Location name");
     const locationAddress = text(body.locationAddress, 300, "Location address");
-    const checks = body.locationChecks ?? {};
-    if (checks.permission !== true || checks.clientsAllowed !== true || checks.followRules !== true) {
-      throw new Error("Tick every box on the location approval notice.");
-    }
 
     const clipPath = body.clipPath ? String(body.clipPath) : null;
-    const documentPaths = Array.isArray(body.documentPaths) ? body.documentPaths.slice(0, 12) : [];
-    const beforeAfterPaths = Array.isArray(body.beforeAfterPaths) ? body.beforeAfterPaths.slice(0, 12) : [];
-    const locationPhotoPaths = Array.isArray(body.locationPhotoPaths) ? body.locationPhotoPaths.slice(0, 8) : [];
+    const documentPaths = (Array.isArray(body.documentPaths) ? body.documentPaths.slice(0, 20) : [])
+      .map((doc: { name?: string; path?: string; kind?: string }) => ({
+        name: String(doc?.name ?? "").slice(0, 200),
+        path: String(doc?.path ?? ""),
+        kind: String(doc?.kind ?? ""),
+      }))
+      .filter((doc: { path: string }) => doc.path.length > 0);
+    const uploadError = applicationUploadError(documentPaths.map((doc: { kind: string }) => doc.kind));
+    if (uploadError) throw new Error(uploadError);
+    const beforeAfterPaths = (Array.isArray(body.beforeAfterPaths) ? body.beforeAfterPaths : [])
+      .map((pair: { beforePath?: string; afterPath?: string }) => ({
+        beforePath: String(pair?.beforePath ?? ""),
+        afterPath: String(pair?.afterPath ?? ""),
+      }))
+      .filter((pair: { beforePath: string; afterPath: string }) => pair.beforePath && pair.afterPath);
+    const locationPhotoPaths = (Array.isArray(body.locationPhotoPaths) ? body.locationPhotoPaths : [])
+      .map(String)
+      .filter(Boolean)
+      .slice(0, 8);
+    const fileCount = documentPaths.length + beforeAfterPaths.length * 2 + locationPhotoPaths.length;
+    if (fileCount > 20) throw new Error("An application can hold up to 20 files.");
+    if (locationPhotoPaths.length > 8) throw new Error("You can attach up to 8 location photos.");
     const paths = [
       ...(clipPath ? [clipPath] : []),
       ...documentPaths.map((d: { path?: string }) => d.path),
-      ...beforeAfterPaths.map((d: { path?: string }) => d.path),
+      ...beforeAfterPaths.flatMap((pair: { beforePath: string; afterPath: string }) => [pair.beforePath, pair.afterPath]),
       ...locationPhotoPaths,
     ].filter(Boolean).map(String);
     if (paths.some((p) => !p.startsWith(`${id}/`))) throw new Error("A file is in the wrong place. Start again.");
@@ -69,7 +85,7 @@ serve(async (req) => {
       bio,
       location_name: locationName,
       location_address: locationAddress,
-      location_checks: checks,
+      location_checks: {},
       clip_path: clipPath,
       document_paths: documentPaths,
       before_after_paths: beforeAfterPaths,
@@ -77,11 +93,21 @@ serve(async (req) => {
     });
     if (error) throw error;
 
-    await emailOwners(
-      admin,
-      "New coach application",
-      `${first} ${last} applied to coach at ONE Fitness.\n\nEmail: ${email}\nPhone: ${phone}\nLocation: ${locationName}\n\nOpen the app, then Requests, to approve or deny it.`,
-    );
+    const lines = applicationReviewLines({
+      documents: documentPaths,
+      beforeAfterPairs: beforeAfterPaths.length,
+      locationPhotoCount: locationPhotoPaths.length,
+    });
+    const message = `${first} ${last} applied to coach at ONE Fitness.\n\nEmail: ${email}\nPhone: ${phone}\nLocation: ${locationName}\n\nUploads:\n${lines.join("\n")}\n\nOpen the app, then Requests, to approve or deny it.`;
+    const pairs = [];
+    for (const pair of beforeAfterPaths) {
+      const before = await admin.storage.from("coach-applications").createSignedUrl(pair.beforePath, 60 * 60 * 24 * 7);
+      const after = await admin.storage.from("coach-applications").createSignedUrl(pair.afterPath, 60 * 60 * 24 * 7);
+      if (before.data?.signedUrl && after.data?.signedUrl) {
+        pairs.push({ beforeUrl: before.data.signedUrl, afterUrl: after.data.signedUrl });
+      }
+    }
+    await emailOwners(admin, "New coach application", message, applicationEmailHtml(message, pairs));
 
     return json({ ok: true });
   } catch (e) {
