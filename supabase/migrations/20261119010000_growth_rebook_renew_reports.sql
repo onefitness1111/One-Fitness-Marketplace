@@ -2,6 +2,9 @@
 -- Not applied to the live database by this change. Apply it when this
 -- update goes live, after the two functions it calls are deployed.
 --
+-- One-tap rebook ("book the same time next week") is not in this file.
+-- It lived only in the app and has been removed. Nothing below is for it.
+--
 -- The morning jobs use the same Vault secret the freeze job already reads
 -- (apply_requests_cron), through public.cron_vault_secret(). Nothing in
 -- this file is that password.

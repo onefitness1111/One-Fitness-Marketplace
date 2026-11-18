@@ -16,7 +16,6 @@ import "../../../data/models/client_record.dart";
 import "../../../data/models/earned_badge.dart";
 import "../../../data/models/membership_plan.dart";
 import "package_renewal_card.dart";
-import "rebook_card.dart";
 import "sessions_remaining_badge.dart";
 import "workout_calendar.dart";
 
@@ -205,7 +204,6 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             )),
 
           stag(SessionsRemainingBadge(info: info, bookings: bookings)),
-          stag(const RebookOfferCard()),
           stag(const PackageRenewalCard()),
 
           if (showHabitTile)
@@ -268,8 +266,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                   ],
                   // Turning up early is normal: the gym is open, the client
                   // is here, and their slot is later tonight. This starts
-                  // that same booking now rather than making them wait or
-                  // rebook.
+                  // that same booking now rather than making them wait.
                   if (_canStartEarly) ...[
                     const SizedBox(height: 10),
                     BtnGold(

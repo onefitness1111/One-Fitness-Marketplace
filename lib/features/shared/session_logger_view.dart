@@ -18,7 +18,6 @@ import "../../data/models/exercise_prescription.dart";
 import "../../data/models/program_day.dart";
 import "../../data/models/saved_program.dart";
 import "../../data/models/workout_log.dart";
-import "../client/dashboard/rebook_card.dart";
 import "../client/plans/exercise_set_grid.dart";
 import "live_log_widgets.dart";
 
@@ -561,8 +560,6 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
               if (widget.loggedBy == "client") ...[
                 const SizedBox(height: 16),
                 const ResultsShareButton(),
-                const SizedBox(height: 12),
-                const RebookOfferCard(),
               ],
             ],
           ),
