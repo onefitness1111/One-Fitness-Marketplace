@@ -71,7 +71,10 @@ dependencies:
   # notification tone, which the OS silences while the app is in front.
   audioplayers: ^6.1.0
   # Apply now: a coach can record up to 20 seconds answering the coaching prompt.
-  record: ^5.2.1
+  # 5.2.1 allowed record_platform_interface 1.6 while keeping record_linux 0.7,
+  # and that Linux plugin does not implement the 1.6 interface. 6.2.1 takes
+  # the interface and every platform plugin together.
+  record: ^6.2.1
   # Exercise demo clips. Streamed from a public storage bucket rather than
   # bundled, so the catalogue stays small; video_player is the first-party
   # plugin and wraps ExoPlayer/AVPlayer, which handle progressive download
