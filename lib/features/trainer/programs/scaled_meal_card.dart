@@ -52,7 +52,7 @@ class _ScaledMealCardState extends State<ScaledMealCard> {
                   ],
                 ),
               ),
-              IconButton(onPressed: widget.onRemove, icon: const Icon(LucideIcons.trash2, size: 15, color: Color(0xFF6B3B3B))),
+              IconButton(onPressed: widget.onRemove, icon: Icon(LucideIcons.trash2, size: 15, color: AppColors.danger)),
             ],
           ),
           if (macros.calories > 0 || macros.protein > 0)

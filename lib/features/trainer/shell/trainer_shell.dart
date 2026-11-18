@@ -8,6 +8,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../challenges/coach_challenges_screen.dart";
@@ -47,12 +48,12 @@ const _bottomItemsBase = [
   _NavItem("schedule", "Schedule", LucideIcons.calendar),
 ];
 const _requestsBottomItem = _NavItem("requests", "Requests", LucideIcons.clipboardList);
-const _staffBottomItem = _NavItem("staff", "Staff settings", LucideIcons.user);
+const _staffBottomItem = _NavItem("staff", "Staff", LucideIcons.user);
 
 const _titles = {
   "dashboard": "Dashboard",
   "clients": "Clients",
-  "schedule": "Scheduling",
+  "schedule": "Schedule",
   "requests": "Requests",
   "chat": "Chat",
   "teamchat": "Team Chat",
@@ -91,6 +92,10 @@ class TrainerShell extends ConsumerStatefulWidget {
 }
 
 class _TrainerShellState extends ConsumerState<TrainerShell> {
+  OverlayEntry? _homeTourEntry;
+  bool _homeTourArmed = true;
+  bool _homeTourChecking = false;
+
   // Closes the drawer directly (bypassing Navigator.pop) so it doesn't get
   // swallowed by the PopScope below, which intercepts pop attempts whenever
   // canPop is false to run its own back-history logic instead.
@@ -153,6 +158,50 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
   }
 
   @override
+  void dispose() {
+    _homeTourEntry?.remove();
+    super.dispose();
+  }
+
+  void _syncHomeTour(String mode, bool isOwner, String? staffId) {
+    if (staffId == null || !_homeTourArmed || _homeTourChecking || mode != "dashboard" || _homeTourEntry != null) {
+      if (mode != "dashboard" && _homeTourEntry != null) {
+        _homeTourArmed = false;
+        _homeTourEntry!.remove();
+        _homeTourEntry = null;
+      }
+      return;
+    }
+    _homeTourChecking = true;
+    final which = isOwner ? "owner-home" : "coach-home";
+    StaffTour.seen(staffId, which).then((already) {
+      _homeTourChecking = false;
+      if (!mounted || !_homeTourArmed || _homeTourEntry != null) return;
+      if (already) {
+        _homeTourArmed = false;
+        return;
+      }
+      if (ref.read(trainerModeProvider) != "dashboard") return;
+      final entry = OverlayEntry(
+        builder: (ctx) => CoachmarkOverlay(
+          steps: isOwner ? kOwnerHomeTourSteps : kCoachHomeTourSteps,
+          keys: kStaffTourKeys,
+          onDone: () => _finishHomeTour(staffId, which),
+        ),
+      );
+      _homeTourEntry = entry;
+      Overlay.of(context, rootOverlay: true).insert(entry);
+    });
+  }
+
+  void _finishHomeTour(String staffId, String which) {
+    _homeTourArmed = false;
+    _homeTourEntry?.remove();
+    _homeTourEntry = null;
+    StaffTour.markSeen(staffId, which);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final mode = ref.watch(trainerModeProvider);
     final trainerAuth = ref.watch(trainerAuthProvider);
@@ -177,6 +226,11 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     // A page other than Dashboard always has somewhere to go back to — home
     // at worst — so back only exits the app from Dashboard itself.
     final showBack = mode != "dashboard" || canGoBack || hasLocalBack;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncHomeTour(mode, isOwner, trainerAuth);
+    });
 
     return PopScope(
       canPop: mode == "dashboard" && !canGoBack && !hasLocalBack,
@@ -204,10 +258,11 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 18,
-                      vertical: 11,
+                      vertical: 8,
                     ),
-                    child: Row(
-                      children: [
+                    child: CenteredTitleBar(
+                      title: _titles[mode] ?? "",
+                      leading: [
                         // Both of these used to be 22x22 hit areas sitting
                         // 6px apart — roughly 3.5mm on a real phone, with a
                         // 1mm gap between two different actions. Taps landed
@@ -215,6 +270,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         // meant, which read as "back is broken". Same fix as
                         // ClientShell's top bar.
                         Builder(
+                          key: kStaffTourKeys["staff-hamburger"],
                           builder: (context) => IconButton(
                             onPressed: () => Scaffold.of(context).openDrawer(),
                             icon: Icon(
@@ -248,16 +304,6 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                             ),
                           ),
                         ],
-                        const Spacer(),
-                        Text(
-                          _titles[mode] ?? "",
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.3,
-                            color: AppColors.txt,
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -316,11 +362,14 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 58,
-                  child: Row(
+                  height: 68,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
                     children: bottomItems.map((item) {
                       final on = mode == item.key;
                       return Expanded(
+                        key: kStaffTourKeys["staff-nav-${item.key}"],
                         child: InkWell(
                           onTap: () => go(item.key),
                           child: Padding(
@@ -335,6 +384,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         ),
                       );
                     }).toList(),
+                  ),
                   ),
                 ),
               ],
@@ -397,11 +447,7 @@ class _KeptTabsState extends State<_KeptTabs> {
 }
 
 class _DrawerEntry {
-  const _DrawerEntry(this.icon, this.label, this.key, this.visible, {this.children = const []});
-
-  /// Shown as a dropdown under this entry — Reports groups the owner's
-  /// admin pages beneath it.
-  final List<_DrawerEntry> children;
+  const _DrawerEntry(this.icon, this.label, this.key, this.visible);
   final IconData icon;
   final String label;
   final String key;
@@ -460,38 +506,21 @@ class _TrainerDrawer extends ConsumerWidget {
             ),
             _DrawerEntry(LucideIcons.package, "Products", "products", true),
             _DrawerEntry(
-              LucideIcons.clipboardCheck,
-              "Reports",
-              "reports",
+              LucideIcons.users,
+              newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches",
+              "coaches",
               true,
-              children: [
-                _DrawerEntry(
-                  LucideIcons.users,
-                  newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches",
-                  "coaches",
-                  true,
-                ),
-                const _DrawerEntry(
-                  LucideIcons.slidersHorizontal,
-                  "Customize Platform",
-                  "platformSettings",
-                  true,
-                ),
-                const _DrawerEntry(
-                  LucideIcons.fileSignature,
-                  "Waivers & Contracts",
-                  "waivers",
-                  true,
-                ),
-              ],
             ),
+            _DrawerEntry(LucideIcons.clipboardCheck, "Reports", "reports", true),
+            const _DrawerEntry(LucideIcons.slidersHorizontal, "Customize Platform", "platformSettings", true),
+            const _DrawerEntry(LucideIcons.fileSignature, "Waivers & Contracts", "waivers", true),
             _DrawerEntry(LucideIcons.phone, "Support", "support", true),
           ]
         : [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
             _DrawerEntry(LucideIcons.users, "Clients", "clients", true),
             _DrawerEntry(LucideIcons.clipboardList, "Requests", "requests", true),
-            _DrawerEntry(LucideIcons.calendar, "Scheduling", "schedule", true),
+            _DrawerEntry(LucideIcons.calendar, "Schedule", "schedule", true),
             _DrawerEntry(LucideIcons.clock, "Waitlist", "waitlist", true),
             _DrawerEntry(LucideIcons.dumbbell, "Exercises", "exercises", true),
             _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
@@ -560,14 +589,17 @@ class _TrainerDrawer extends ConsumerWidget {
                 ),
               ),
             ),
+            _MenuTourHost(isOwner: isOwner),
             Expanded(
-              child: ListView(
+              // Every row is built up front so the tour can walk the whole
+              // menu, then scroll the one it's explaining into view.
+              child: SingleChildScrollView(
                 padding: EdgeInsets.zero,
-                children: entries
-                    .map(
-                      (e) => e.children.isNotEmpty
-                          ? _DrawerGroup(entry: e, current: mode, onGo: onGo)
-                          : InkWell(
+                child: Column(
+                  children: [
+                    for (final e in entries)
+                      InkWell(
+                        key: kStaffTourKeys["staff-drawer-${e.key}"],
                         onTap: () => onGo(e.key),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -575,13 +607,14 @@ class _TrainerDrawer extends ConsumerWidget {
                             vertical: 15,
                           ),
                           decoration: BoxDecoration(
+                            color: mode == e.key ? AppColors.gold : Colors.transparent,
                             border: Border(
                               bottom: BorderSide(color: AppColors.line),
                             ),
                           ),
                           child: Row(
                             children: [
-                              Icon(e.icon, size: 17, color: AppColors.gold),
+                              Icon(e.icon, size: 17, color: mode == e.key ? AppColors.onGold : AppColors.gold),
                               const SizedBox(width: 14),
                               Expanded(
                                 child: Text(
@@ -589,7 +622,7 @@ class _TrainerDrawer extends ConsumerWidget {
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: AppColors.txt,
+                                    color: mode == e.key ? AppColors.onGold : AppColors.txt,
                                   ),
                                 ),
                               ),
@@ -597,8 +630,8 @@ class _TrainerDrawer extends ConsumerWidget {
                           ),
                         ),
                       ),
-                    )
-                    .toList(),
+                  ],
+                ),
               ),
             ),
             InkWell(
@@ -635,81 +668,55 @@ class _TrainerDrawer extends ConsumerWidget {
   }
 }
 
-/// A drawer entry with a dropdown. Tapping the label opens its own page;
-/// the chevron shows or hides the pages beneath it. Starts open when the
-/// current screen is one of them, so the owner can see where they are.
-class _DrawerGroup extends StatefulWidget {
-  const _DrawerGroup({required this.entry, required this.current, required this.onGo});
-  final _DrawerEntry entry;
-  final String current;
-  final void Function(String) onGo;
+/// Starts the coach or owner menu tour the first time the menu opens, and
+/// remembers the step if the menu is closed before Skip or Got it.
+class _MenuTourHost extends ConsumerStatefulWidget {
+  const _MenuTourHost({required this.isOwner});
+  final bool isOwner;
 
   @override
-  State<_DrawerGroup> createState() => _DrawerGroupState();
+  ConsumerState<_MenuTourHost> createState() => _MenuTourHostState();
 }
 
-class _DrawerGroupState extends State<_DrawerGroup> {
-  late bool _open = widget.entry.children.any((c) => c.key == widget.current);
+class _MenuTourHostState extends ConsumerState<_MenuTourHost> {
+  OverlayEntry? _entry;
 
   @override
-  Widget build(BuildContext context) {
-    final e = widget.entry;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
-          child: Row(
-            children: [
-              Expanded(
-                child: InkWell(
-                  onTap: () => widget.onGo(e.key),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 15, 8, 15),
-                    child: Row(
-                      children: [
-                        Icon(e.icon, size: 17, color: AppColors.gold),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Text(e.label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.txt)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              InkWell(
-                onTap: () => setState(() => _open = !_open),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-                  child: Icon(_open ? LucideIcons.chevronUp : LucideIcons.chevronDown, size: 17, color: AppColors.mute),
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (_open)
-          for (final c in e.children)
-            InkWell(
-              onTap: () => widget.onGo(c.key),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(44, 13, 20, 13),
-                decoration: BoxDecoration(
-                  color: Color(0x08FFFFFF),
-                  border: Border(bottom: BorderSide(color: AppColors.line)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(c.icon, size: 15, color: AppColors.gold),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(c.label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.txt)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-      ],
-    );
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShow());
   }
+
+  Future<void> _maybeShow() async {
+    final id = ref.read(trainerAuthProvider);
+    if (!mounted || id == null) return;
+    final which = widget.isOwner ? "owner-menu" : "coach-menu";
+    if (await StaffTour.seen(id, which)) return;
+    if (!mounted) return;
+    final entry = OverlayEntry(
+      builder: (ctx) => CoachmarkOverlay(
+        steps: widget.isOwner ? kOwnerMenuTourSteps : kCoachMenuTourSteps,
+        keys: kStaffTourKeys,
+        initialKey: TourMemory.staffDrawerKey,
+        onPause: (key) => TourMemory.staffDrawerKey = key,
+        onDone: () {
+          TourMemory.staffDrawerKey = null;
+          _entry?.remove();
+          _entry = null;
+          StaffTour.markSeen(id, which);
+        },
+      ),
+    );
+    _entry = entry;
+    Overlay.of(context, rootOverlay: true).insert(entry);
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

@@ -324,6 +324,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const ChatSavedNotice(),
                 Wrap(
                   spacing: 8,
                   children: [

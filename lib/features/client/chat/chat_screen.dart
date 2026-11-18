@@ -230,9 +230,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // to reword it.
         _msgController.text = text;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceFirst("Exception: ", "")),
-            duration: const Duration(seconds: 5),
+          const SnackBar(
+            content: Text("That message didn't send. Check your connection and try again."),
+            duration: Duration(seconds: 5),
           ),
         );
       }
@@ -288,7 +288,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_prefsLoaded) return const SizedBox.shrink();
+    if (!_prefsLoaded) {
+      return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
+    }
 
     final info = ref.watch(clientInfoProvider);
     final client = ref.watch(clientRecordProvider);
@@ -1048,7 +1050,11 @@ class _ComposerState extends State<_Composer> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ChatSavedNotice(),
+            Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
@@ -1099,6 +1105,8 @@ class _ComposerState extends State<_Composer> {
                 child: Icon(LucideIcons.send, size: 17, color: hasText ? AppColors.onGold : AppColors.mute),
               ),
             ),
+          ],
+        ),
           ],
         ),
       ),

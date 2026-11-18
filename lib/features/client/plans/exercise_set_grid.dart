@@ -281,8 +281,8 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
           child: Table(
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             columnWidths: {
-              0: const FixedColumnWidth(74),
-              for (final n in sets) n: const FixedColumnWidth(68),
+              0: const FixedColumnWidth(96),
+              for (final n in sets) n: const FixedColumnWidth(76),
             },
             children: [
               TableRow(children: [
@@ -293,7 +293,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
                     child: Text(
                       "SET $n",
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: AppColors.mute, letterSpacing: 1),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.mute, letterSpacing: 0.4),
                     ),
                   ),
               ]),
@@ -392,9 +392,9 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     Color bg = AppColors.card, border = AppColors.line, color = AppColors.txt;
     if (entered && hasPrev) {
       if (weight > last.weight) {
-        bg = const Color(0x2400E676);
-        border = const Color(0xFF00E676);
-        color = const Color(0xFF00E676);
+        bg = AppColors.statusGreen.withValues(alpha: 0.14);
+        border = AppColors.statusGreen;
+        color = AppColors.statusGreen;
       } else if (weight == last.weight) {
         bg = AppColors.mute.withValues(alpha: 0.12);
         border = AppColors.mute;
@@ -406,9 +406,9 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
       }
     } else if (entered && suggested != null) {
       if (weight > suggested) {
-        bg = const Color(0x2400E676);
-        border = const Color(0xFF00E676);
-        color = const Color(0xFF00E676);
+        bg = AppColors.statusGreen.withValues(alpha: 0.14);
+        border = AppColors.statusGreen;
+        color = AppColors.statusGreen;
       } else if (weight == suggested) {
         bg = AppColors.mute.withValues(alpha: 0.12);
         border = AppColors.mute;
@@ -419,9 +419,9 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
         color = AppColors.danger;
       }
     } else if (entered) {
-      bg = const Color(0x2400E676);
-      border = const Color(0xFF00E676);
-      color = const Color(0xFF00E676);
+      bg = AppColors.statusGreen.withValues(alpha: 0.14);
+      border = AppColors.statusGreen;
+      color = AppColors.statusGreen;
     }
 
     return _cellWrap(Container(
@@ -457,7 +457,7 @@ class _RowLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.5),
-      child: Text(text, style: TextStyle(fontSize: 10, color: AppColors.mute)),
+      child: Text(text, style: TextStyle(fontSize: 12, color: AppColors.mute)),
     );
   }
 }

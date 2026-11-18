@@ -102,7 +102,14 @@ class _HistoryCardState extends State<_HistoryCard> {
                         style: TextStyle(fontSize: 12, color: AppColors.mute),
                       ),
                       for (final mark in marks)
-                        Text(mark, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.txt)),
+                        Text(
+                          mark,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: mark == "Up" || mark == "PR" ? AppColors.statusGreen : AppColors.txt,
+                          ),
+                        ),
                     ],
                   ),
                 ],

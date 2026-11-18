@@ -42,7 +42,12 @@ class _HabitsTabState extends ConsumerState<HabitsTab> {
     final name = matches.first.name;
     final records = ref.watch(trainerClientRecordsProvider);
     final record = records[widget.clientId];
-    if (record == null) return const SizedBox.shrink();
+    if (record == null) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(text: "This client's record hasn't loaded yet."),
+      );
+    }
 
     final habits = getClientHabits(record);
     final log = getHabitLog(record, _dateTab);
@@ -187,7 +192,7 @@ class _HabitsTabState extends ConsumerState<HabitsTab> {
                           Expanded(child: Text(h.label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
                           IconButton(
                             onPressed: () => _writeHabitSettings(record.habits, record.customHabits.where((x) => x.id != h.id).toList()),
-                            icon: const Icon(LucideIcons.trash2, size: 15, color: Color(0xFF6B3B3B)),
+                            icon: Icon(LucideIcons.trash2, size: 15, color: AppColors.danger),
                           ),
                         ],
                       ),

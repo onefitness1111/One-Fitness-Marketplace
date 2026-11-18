@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_plan.dart";
 import "../../../data/models/membership_plan.dart";
@@ -57,25 +58,36 @@ class _PlanPriceRowState extends State<PlanPriceRow> {
   Future<void> _edit() async {
     final current = _enrolment?.priceCents ?? widget.plan.priceCents;
     final ctrl = TextEditingController(text: (current / 100).toStringAsFixed(2));
-    final cents = await showDialog<int>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Price for this client"),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(prefixText: "\$ "),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(
-            onPressed: () {
-              final v = double.tryParse(ctrl.text.replaceAll(RegExp(r"[^0-9.]"), ""));
-              if (v == null || v < 0) return;
-              Navigator.pop(ctx, (v * 100).round());
-            },
-            child: const Text("Save"),
+    final cents = await showKeyboardSheet<int>(
+      context,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text("Price for this client", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(prefixText: "\$ "),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: BtnGhost(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel"))),
+              const SizedBox(width: 8),
+              Expanded(
+                child: BtnGold(
+                  onPressed: () {
+                    final v = double.tryParse(ctrl.text.replaceAll(RegExp(r"[^0-9.]"), ""));
+                    if (v == null || v < 0) return;
+                    Navigator.pop(ctx, (v * 100).round());
+                  },
+                  child: const Text("Save"),
+                ),
+              ),
+            ],
           ),
         ],
       ),

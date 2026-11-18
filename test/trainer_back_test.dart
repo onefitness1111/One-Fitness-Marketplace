@@ -123,7 +123,7 @@ void main() {
   // Coach (non-owner) hamburger, minus Dashboard (already there).
   runMenuPages("coach", null, const {
     "Clients": "clients",
-    "Scheduling": "schedule",
+    "Schedule": "schedule",
     "Waitlist": "waitlist",
     "Exercises": "exercises",
     "Equipment Library": "equipment",
@@ -147,57 +147,11 @@ void main() {
     "Waitlist": "waitlist",
     "Access Hub": "memberships",
     "Products": "products",
+    "Coaches": "coaches",
     "Reports": "reports",
+    "Customize Platform": "platformSettings",
+    "Waivers & Contracts": "waivers",
     "Support": "support",
-  });
-
-  group("admin Reports sub-pages", () {
-    for (final entry in const {
-      "Coaches": "coaches",
-      "Customize Platform": "platformSettings",
-      "Waivers & Contracts": "waivers",
-    }.entries) {
-      testWidgets("admin — ${entry.key}: back returns to Dashboard",
-          (tester) async {
-        await boot(tester, as: "owner");
-        await tester.tap(find.byIcon(LucideIcons.menu));
-        await tester.pumpAndSettle();
-        final reports = find.descendant(
-            of: find.byType(Drawer), matching: find.text("Reports"));
-        await tester.scrollUntilVisible(
-          reports,
-          60,
-          scrollable: find
-              .descendant(
-                  of: find.byType(Drawer), matching: find.byType(Scrollable))
-              .first,
-        );
-        await tester.pumpAndSettle();
-        // Expand the group via the chevron in Reports' own row — index 1 is
-        // the outer Row holding the label and the chevron together.
-        await tester.tap(find.descendant(
-          of: find.ancestor(of: reports, matching: find.byType(Row)).at(1),
-          matching: find.byIcon(LucideIcons.chevronDown),
-        ));
-        await tester.pumpAndSettle();
-
-        final item = find.descendant(
-            of: find.byType(Drawer), matching: find.text(entry.key));
-        await tester.scrollUntilVisible(item, 60,
-            scrollable: find
-                .descendant(
-                    of: find.byType(Drawer), matching: find.byType(Scrollable))
-                .first);
-        await tester.pumpAndSettle();
-        await tester.tap(item.first);
-        await tester.pumpAndSettle();
-        expect(mode(), entry.value);
-
-        await tapBack(tester);
-        expect(mode(), "dashboard",
-            reason: "back from ${entry.key} must reach Dashboard");
-      });
-    }
   });
 
   group("bottom tabs", () {
@@ -216,10 +170,10 @@ void main() {
       });
     }
 
-    testWidgets("admin — Staff settings tab: back returns to Dashboard",
+    testWidgets("admin — Staff tab: back returns to Dashboard",
         (tester) async {
       await boot(tester, as: "owner");
-      await tapBottomTab(tester, "Staff settings");
+      await tapBottomTab(tester, "Staff");
       expect(mode(), "staff");
       await tapBack(tester);
       expect(mode(), "dashboard");

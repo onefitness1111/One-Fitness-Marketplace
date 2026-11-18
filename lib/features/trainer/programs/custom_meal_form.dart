@@ -130,7 +130,7 @@ class _CustomMealFormState extends State<CustomMealForm> {
                             row.dispose();
                             _rows = _rows.where((r) => r.id != row.id).toList();
                           }),
-                      icon: const Icon(LucideIcons.x, size: 16, color: Color(0xFF6B3B3B)),
+                      icon: Icon(LucideIcons.x, size: 16, color: AppColors.danger),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(minWidth: 32),
                     ),

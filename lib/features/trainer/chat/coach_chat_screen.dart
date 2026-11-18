@@ -373,9 +373,9 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         // Keep the text so it only needs rewording, and say why it bounced.
         _msgController.text = text;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceFirst("Exception: ", "")),
-            duration: const Duration(seconds: 5),
+          const SnackBar(
+            content: Text("That message didn't send. Check your connection and try again."),
+            duration: Duration(seconds: 5),
           ),
         );
       }
@@ -390,7 +390,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       ).catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't send the email: ${e.toString().replaceFirst("Exception: ", "")}")),
+            const SnackBar(content: Text("The email didn't send. The message in the app is still there.")),
           );
         }
       });
@@ -400,7 +400,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       SupabaseService.sendSms(profileId: client.id, text: text).catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
+            const SnackBar(content: Text("The text didn't send. The message in the app is still there.")),
           );
         }
       });
@@ -441,7 +441,9 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_prefsLoaded) return const SizedBox.shrink();
+    if (!_prefsLoaded) {
+      return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
+    }
 
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
@@ -1071,7 +1073,11 @@ class _ComposerState extends State<_Composer> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ChatSavedNotice(),
+            Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
@@ -1122,6 +1128,8 @@ class _ComposerState extends State<_Composer> {
                 child: Icon(LucideIcons.send, size: 17, color: hasText ? AppColors.onGold : AppColors.mute),
               ),
             ),
+          ],
+        ),
           ],
         ),
       ),

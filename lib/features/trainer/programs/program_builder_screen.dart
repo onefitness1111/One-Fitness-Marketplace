@@ -323,10 +323,10 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                                 onPressed: () => setState(
                                   () => _confirmDeleteDayId = day.id,
                                 ),
-                                icon: const Icon(
+                                icon: Icon(
                                   LucideIcons.trash2,
                                   size: 15,
-                                  color: Color(0xFF6B3B3B),
+                                  color: AppColors.danger,
                                 ),
                               ),
                             ],
@@ -513,7 +513,7 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              icon: const Icon(LucideIcons.chevronLeft, size: 15),
+              icon: Icon(LucideIcons.chevronLeft, size: 15),
               label: const Text("All days", style: TextStyle(fontSize: 13)),
             ),
             const SizedBox(height: 14),
@@ -564,10 +564,10 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                   ),
                   IconButton(
                     onPressed: () => setState(() => _confirmDeleteDay = true),
-                    icon: const Icon(
+                    icon: Icon(
                       LucideIcons.trash2,
                       size: 15,
-                      color: Color(0xFF6B3B3B),
+                      color: AppColors.danger,
                     ),
                   ),
                 ],
@@ -736,10 +736,10 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                         ),
                         IconButton(
                           onPressed: () => _removeExercise(ex.id),
-                          icon: const Icon(
+                          icon: Icon(
                             LucideIcons.trash2,
                             size: 15,
-                            color: Color(0xFF6B3B3B),
+                            color: AppColors.danger,
                           ),
                         ),
                       ],
@@ -1002,7 +1002,7 @@ class _InlineDeleteConfirm extends StatelessWidget {
         OutlinedButton(
           onPressed: onConfirm,
           style: OutlinedButton.styleFrom(
-            backgroundColor: const Color(0xFF6B3B3B),
+            backgroundColor: AppColors.danger,
             foregroundColor: const Color(0xFFF5A0A0),
             side: BorderSide.none,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),

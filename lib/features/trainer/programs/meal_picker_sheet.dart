@@ -16,7 +16,10 @@ Future<MealDef?> showMealPickerSheet(BuildContext context, String mealType) {
     isScrollControlled: true,
     backgroundColor: AppColors.card,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (ctx) => SizedBox(height: 560, child: _MealPickerBody(mealType: mealType)),
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+      child: SizedBox(height: keyboardSheetHeight(ctx), child: _MealPickerBody(mealType: mealType)),
+    ),
   );
 }
 

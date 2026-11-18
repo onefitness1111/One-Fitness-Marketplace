@@ -224,7 +224,7 @@ class _LocationsEditorState extends ConsumerState<LocationsEditor> {
                     ),
                     if (!isGymLocation(loc))
                       IconButton(onPressed: () => _startEdit(loc), icon: Icon(LucideIcons.pencil, size: 14, color: AppColors.mute), padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 30, minHeight: 30)),
-                    IconButton(onPressed: () => _remove(loc.id), icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B)), padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 30, minHeight: 30)),
+                    IconButton(onPressed: () => _remove(loc.id), icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger), padding: EdgeInsets.zero, constraints: BoxConstraints(minWidth: 30, minHeight: 30)),
                   ],
                 ),
               ),

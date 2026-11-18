@@ -78,8 +78,8 @@ class _PasswordActionsState extends ConsumerState<PasswordActions> {
       _say("Save this profile first, then you can set a password.", error: true);
       return;
     }
-    final chosen = await showDialog<String>(
-      context: context,
+    final chosen = await showKeyboardSheet<String>(
+      context,
       builder: (ctx) => _SetPasswordDialog(name: widget.name),
     );
     if (chosen == null || !mounted) return;
@@ -204,11 +204,14 @@ class _SetPasswordDialogState extends State<_SetPasswordDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.card,
-      title: Text("Set a password for ${widget.name}",
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-      content: Column(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text("Set a password for ${widget.name}",
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 10),
+        Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -245,17 +248,14 @@ class _SetPasswordDialogState extends State<_SetPasswordDialog> {
                   style: TextStyle(fontSize: 12, color: AppColors.errorText)),
             ),
         ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          style: TextButton.styleFrom(foregroundColor: AppColors.mute),
-          child: const Text("Cancel"),
         ),
-        TextButton(
-          onPressed: _submit,
-          style: TextButton.styleFrom(foregroundColor: AppColors.gold),
-          child: const Text("Set password", style: TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: BtnGhost(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel"))),
+            const SizedBox(width: 8),
+            Expanded(child: BtnGold(onPressed: _submit, child: const Text("Set password"))),
+          ],
         ),
       ],
     );

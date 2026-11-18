@@ -520,7 +520,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _saving ? null : () => _discardNutritionDraft(p.id),
-                          style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                           child: const Text("Discard"),
                         ),
                       ),
@@ -644,7 +644,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                         ],
                       ),
                     ),
-                    IconButton(onPressed: () => _removeAttachment(doc.id), icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B))),
+                    IconButton(onPressed: () => _removeAttachment(doc.id), icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger)),
                   ],
                 ),
               )),
@@ -698,15 +698,23 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
 
 Future<String?> _promptName(BuildContext context, {String? initial}) {
   final controller = TextEditingController(text: initial ?? "");
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: AppColors.card,
-      title: const Text("Nutrition program name"),
-      content: AppField(kind: FieldKind.name, controller: controller, placeholder: "e.g. Cutting Phase — 1800 kcal"),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel")),
-        TextButton(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("Save")),
+  return showKeyboardSheet<String>(
+    context,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text("Nutrition program name", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        AppField(kind: FieldKind.name, controller: controller, placeholder: "e.g. Cutting Phase — 1800 kcal"),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: BtnGhost(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel"))),
+            const SizedBox(width: 8),
+            Expanded(child: BtnGold(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("Save"))),
+          ],
+        ),
       ],
     ),
   );

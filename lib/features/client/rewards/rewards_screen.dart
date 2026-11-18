@@ -251,7 +251,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(w.label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.txt)),
-                            Text(w.desc, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                            Text(w.desc, style: TextStyle(fontSize: 12, color: AppColors.txt)),
                           ],
                         ),
                       ),
@@ -296,7 +296,7 @@ class _ToggleRow extends StatelessWidget {
                   if (hint != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text(hint!, style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+                      child: Text(hint!, style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.4)),
                     ),
                 ],
               ),

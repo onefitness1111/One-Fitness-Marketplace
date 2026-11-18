@@ -7,6 +7,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/widgets/app_buttons.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
 import "../../../data/providers/beep_providers.dart";
@@ -181,27 +182,23 @@ class _BeepBarState extends ConsumerState<BeepBar> {
               Expanded(
                 child: Text(
                   "Your coach has started the session.",
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  style: TextStyle(fontSize: 12, color: AppColors.txt),
                 ),
               ),
             ],
           ),
         ),
-        SizedBox(
-          height: 46,
-          child: ElevatedButton.icon(
-            onPressed: _sending ? null : () => _openOptions(run),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold,
-              foregroundColor: AppColors.onGold,
-              disabledBackgroundColor: AppColors.goldDim,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            icon: const Icon(LucideIcons.bell, size: 17),
-            label: const Text(
-              "Beep Your Coach",
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-            ),
+        BtnGold(
+          full: true,
+          onPressed: _sending ? null : () => _openOptions(run),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.bell, size: 17),
+              SizedBox(width: 8),
+              Text("Beep Your Coach"),
+            ],
           ),
         ),
         for (final beep in standing)

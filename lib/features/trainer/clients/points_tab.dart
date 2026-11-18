@@ -125,7 +125,7 @@ class _PointsTabState extends ConsumerState<PointsTab> {
           if (isOwner) ...[
             OutlinedButton(
               onPressed: deduct,
-              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: const BorderSide(color: Color(0xFF6B3B3B)), minimumSize: const Size.fromHeight(44)),
+              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: BorderSide(color: AppColors.danger), minimumSize: Size.fromHeight(44)),
               child: const Text("Deduct points"),
             ),
             const SizedBox(height: 12),
@@ -165,15 +165,23 @@ Future<String?> _askReason(BuildContext context, String verb) async {
 /// things: a number of points, and a free-text reason.
 Future<String?> _promptText(BuildContext context, String label, {FieldKind kind = FieldKind.text}) {
   final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: AppColors.card,
-      title: Text(label, style: const TextStyle(fontSize: 14)),
-      content: AppField(kind: kind, controller: controller),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel")),
-        TextButton(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("OK")),
+  return showKeyboardSheet<String>(
+    context,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        AppField(kind: kind, controller: controller),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: BtnGhost(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel"))),
+            const SizedBox(width: 8),
+            Expanded(child: BtnGold(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("OK"))),
+          ],
+        ),
       ],
     ),
   );

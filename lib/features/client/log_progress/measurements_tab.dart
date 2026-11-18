@@ -291,14 +291,14 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
                         children: [
                           Text(dayLabel(m.date), style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.gold, fontSize: 13)),
                           _removingId == m.id
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF6B3B3B)),
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.danger),
                                 )
                               : IconButton(
                                   onPressed: _removingId == null ? () => _remove(m.id) : null,
-                                  icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B)),
+                                  icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger),
                                   padding: EdgeInsets.zero,
                                   constraints: const BoxConstraints(),
                                 ),

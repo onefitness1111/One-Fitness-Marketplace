@@ -289,7 +289,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                                     if (mounted) setState(() => _busy = false);
                                   }
                                 },
-                          icon: const Icon(LucideIcons.userMinus, size: 15, color: Color(0xFF6B3B3B)),
+                          icon: Icon(LucideIcons.userMinus, size: 15, color: AppColors.danger),
                         ),
                     ],
                   ),
@@ -351,7 +351,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                         if (mounted) setState(() => _busy = false);
                       }
                     },
-              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: const BorderSide(color: Color(0xFF8B3B3B)), minimumSize: const Size.fromHeight(44)),
+              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: BorderSide(color: AppColors.danger), minimumSize: Size.fromHeight(44)),
               child: Text(_busy ? "Cancelling…" : "Cancel session"),
             ),
           ],

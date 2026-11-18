@@ -33,12 +33,19 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: p.gold,
           foregroundColor: p.onGold,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: p.gold,
           foregroundColor: p.onGold,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       ),
       checkboxTheme: CheckboxThemeData(

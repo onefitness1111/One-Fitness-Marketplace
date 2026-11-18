@@ -1792,11 +1792,11 @@ class _StepThreeState extends State<_StepThree> {
             if (onChangeType != null)
               GestureDetector(
                 onTap: onChangeType,
-                child: Text("Change type", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+                child: Text("Change type", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
               ),
             GestureDetector(
               onTap: onChangeDisc,
-              child: Text("Change discipline", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+              child: Text("Change discipline", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
             ),
           ],
         ),
@@ -1812,7 +1812,7 @@ class _StepThreeState extends State<_StepThree> {
               children: [
                 Padding(
                   padding: EdgeInsets.only(right: 8),
-                  child: Text("Jump to:", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  child: Text("Jump to:", style: TextStyle(fontSize: 12, color: AppColors.txt)),
                 ),
                 Expanded(
                   child: SingleChildScrollView(
@@ -1979,7 +1979,7 @@ class _StepThreeState extends State<_StepThree> {
                                         ],
                                       )
                                     else
-                                      const Text("Full", style: TextStyle(fontSize: 12, color: Color(0xFF8A5A5A), fontWeight: FontWeight.w600)),
+                                      Text("Full", style: TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600)),
                                   ],
                                 ),
                               ),
@@ -1995,7 +1995,7 @@ class _StepThreeState extends State<_StepThree> {
                                         onPressed: waitlistBusy ? null : () => widget.onLeaveWaitlist(onWaitlist),
                                         style: OutlinedButton.styleFrom(
                                           foregroundColor: AppColors.errorText,
-                                          side: const BorderSide(color: Color(0xFF6B3B3B)),
+                                          side: BorderSide(color: AppColors.danger),
                                           padding: const EdgeInsets.symmetric(vertical: 7),
                                         ),
                                         child: Text(

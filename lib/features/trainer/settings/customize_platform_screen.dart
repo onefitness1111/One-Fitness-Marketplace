@@ -1027,15 +1027,23 @@ class _CatalogEditor extends StatelessWidget {
 
   Future<void> _add(BuildContext context) async {
     final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: Text("Add a $noun"),
-        content: AppField(kind: FieldKind.name, controller: controller, placeholder: noun == "discipline" ? "e.g. Pilates" : "e.g. Small Group"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Add")),
+    final name = await showKeyboardSheet<String>(
+      context,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text("Add a $noun", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          AppField(kind: FieldKind.name, controller: controller, placeholder: noun == "discipline" ? "e.g. Pilates" : "e.g. Small Group"),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: BtnGhost(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel"))),
+              const SizedBox(width: 8),
+              Expanded(child: BtnGold(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Add"))),
+            ],
+          ),
         ],
       ),
     );

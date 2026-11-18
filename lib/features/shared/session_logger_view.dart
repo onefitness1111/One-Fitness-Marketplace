@@ -829,7 +829,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                         color: AppColors.grn,
                         label: "Hit target reps",
                       ),
-                      _LegendDot(color: Color(0xFF00E676), label: "Weight PR"),
+                      _LegendDot(color: AppColors.statusGreen, label: "Weight PR"),
                       _LegendDot(color: AppColors.mute, label: "Same weight"),
                       _LegendDot(
                         color: AppColors.danger,

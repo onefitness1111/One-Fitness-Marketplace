@@ -195,6 +195,11 @@ class _ClientShellState extends ConsumerState<ClientShell> {
   /// session, on top of the stored tourSeen flag.
   bool _dashboardTourArmed = true;
 
+  /// Set when "Sign now" leaves the dashboard for the waiver. Signing used
+  /// to drop the client on Booking, and the button tour waited until they
+  /// found their own way back. Finishing the signature comes home first.
+  bool _openTourAfterWaiver = false;
+
   /// "Sign your waiver" — asked once per app session, on Dashboard, while a
   /// required waiver is unsigned (a brand-new client always has one). They
   /// can skip it; booking still asks again before the first session.
@@ -269,9 +274,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
       // Straight into the document itself. Sending them to the Signatures
       // list meant finding the waiver they had just said yes to, which is
       // a step nobody asked for. The first outstanding one is the one the
-      // prompt named first.
+      // prompt named first. When they finish, [go] brings them home so the
+      // button tour can start — it does not leave them on Booking.
+      _openTourAfterWaiver = true;
       _waiverToOpen = outstanding.first.id;
-      // Leaving Dashboard also stands the tour down until it's next shown.
       go("signatures");
     } else {
       // Rebuild so the Dashboard tour, held back while this was open, runs.
@@ -423,10 +429,11 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
-                          vertical: 14,
+                          vertical: 10,
                         ),
-                        child: Row(
-                          children: [
+                        child: CenteredTitleBar(
+                          title: _titles[screen] ?? "",
+                          leading: [
                             // Both of these used to be 22x22 hit areas sitting
                             // 6px apart — roughly 3.5mm on a real phone, with
                             // a 1mm gap between two different actions. Taps
@@ -471,17 +478,8 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                                 ),
                               ),
                             ],
-                            Expanded(
-                              child: Text(
-                                _titles[screen] ?? "",
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                            ),
+                          ],
+                          trailing: [
                             if (screen == "chat") ...[
                               IconButton(
                                 onPressed: () => showChatInfoSheet(context),
@@ -491,9 +489,12 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                                   color: AppColors.mute,
                                 ),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
+                                constraints: const BoxConstraints(
+                                  minWidth: 44,
+                                  minHeight: 44,
+                                ),
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 4),
                             ],
                             InkWell(
                               onTap: () => go("settings"),
@@ -573,7 +574,14 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                         "habits" => const HabitTrackerScreen(),
                         "history" => const HistoryScreen(),
                         "signatures" => SignaturesScreen(
-                          onGoBooking: goBooking,
+                          onGoBooking: () {
+                            if (_openTourAfterWaiver) {
+                              _openTourAfterWaiver = false;
+                              go("dashboard");
+                              return;
+                            }
+                            goBooking();
+                          },
                           openDocId: _waiverToOpen,
                           onOpened: () => _waiverToOpen = null,
                         ),
@@ -671,8 +679,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 58,
-              child: Row(
+              height: 68,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
                 children: _bottomItems.map((item) {
                   final on = screen == item.key;
                   return Expanded(
@@ -692,6 +702,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                     ),
                   );
                 }).toList(),
+              ),
               ),
             ),
           ),
@@ -738,6 +749,10 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
       builder: (ctx) => CoachmarkOverlay(
         steps: kDrawerTourSteps,
         keys: kDrawerTourKeys,
+        // Closing the menu early used to start the tour over at step 1 the
+        // next time it opened. Pick up the step they were on instead.
+        initialKey: TourMemory.clientDrawerKey,
+        onPause: (key) => TourMemory.clientDrawerKey = key,
         onDone: _finishTour,
       ),
     );
@@ -746,6 +761,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
   }
 
   void _finishTour() {
+    TourMemory.clientDrawerKey = null;
     _tourEntry?.remove();
     _tourEntry = null;
     ref
@@ -835,8 +851,12 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                 child: Divider(color: AppColors.line, height: 1),
               ),
               Expanded(
-                child: ListView(
+                // A plain scroll view, not a lazy list, so every row exists
+                // when the tour opens — including the ones below the fold on
+                // a short phone. The tour then scrolls each row into view.
+                child: SingleChildScrollView(
                   padding: EdgeInsets.zero,
+                  child: Column(
                   children: _drawerItems.map((item) {
                     final on = screen == item.key;
                     return InkWell(
@@ -875,6 +895,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                       ),
                     );
                   }).toList(),
+                  ),
                 ),
               ),
               Divider(color: AppColors.line, height: 1),

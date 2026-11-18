@@ -514,7 +514,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
                                 revoke(b, meta?.name ?? b.badgeKey),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.errorText,
-                              side: const BorderSide(color: Color(0xFF6B3B3B)),
+                              side: BorderSide(color: AppColors.danger),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
                                 vertical: 3,

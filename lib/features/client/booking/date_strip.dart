@@ -79,15 +79,15 @@ class _DateStripState extends State<DateStrip> {
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Opacity(
-                              opacity: past ? 0.6 : 1,
+                              opacity: 1,
                               child: Column(
                                 children: [
                                   Text(
                                     _weekdayShort[dt.weekday % 7],
                                     style: TextStyle(
-                                      fontSize: 9.5,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w700,
-                                      color: sel ? AppColors.onGold : (past ? const Color(0xFF454545) : (isToday ? AppColors.gold : AppColors.txt)),
+                                      color: sel ? AppColors.onGold : (past ? AppColors.mute : (isToday ? AppColors.gold : AppColors.txt)),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
@@ -96,7 +96,7 @@ class _DateStripState extends State<DateStrip> {
                                     style: TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w800,
-                                      color: sel ? AppColors.onGold : (past ? const Color(0xFF454545) : (isToday ? AppColors.gold : AppColors.txt)),
+                                      color: sel ? AppColors.onGold : (past ? AppColors.mute : (isToday ? AppColors.gold : AppColors.txt)),
                                     ),
                                   ),
                                 ],
@@ -138,7 +138,7 @@ class _NavButton extends StatelessWidget {
           border: Border.all(color: AppColors.line),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, size: 16, color: disabled ? const Color(0xFF333333) : AppColors.txt),
+        child: Icon(icon, size: 16, color: disabled ? AppColors.mute : AppColors.txt),
       ),
     );
   }

@@ -1127,7 +1127,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                   ),
                   IconButton(
                     onPressed: () => _remove(e.id),
-                    icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B)),
+                    icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
@@ -1353,10 +1353,10 @@ class _BlockRow extends StatelessWidget {
               ),
               IconButton(
                 onPressed: onRemove,
-                icon: const Icon(
+                icon: Icon(
                   LucideIcons.trash2,
                   size: 14,
-                  color: Color(0xFF6B3B3B),
+                  color: AppColors.danger,
                 ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 28, minHeight: 28),

@@ -320,16 +320,29 @@ class _CalorieBudgetPanel extends StatelessWidget {
         children: [
           Text(
             "CALORIE BUDGET · REFERENCE ONLY",
-            style: TextStyle(fontSize: 10, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+            style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              _BudgetBox(label: "Breakfast", value: mealBudgets["breakfast"]),
-              _BudgetBox(label: "Lunch", value: mealBudgets["lunch"]),
-              _BudgetBox(label: "Dinner", value: mealBudgets["dinner"]),
-              _BudgetBox(label: "Snacks & Smoothies", value: mealBudgets["snacks"]),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked = constraints.maxWidth < 520;
+              final boxes = [
+                _BudgetBox(label: "Breakfast", value: mealBudgets["breakfast"], stacked: stacked),
+                _BudgetBox(label: "Lunch", value: mealBudgets["lunch"], stacked: stacked),
+                _BudgetBox(label: "Dinner", value: mealBudgets["dinner"], stacked: stacked),
+                _BudgetBox(label: "Snacks & Smoothies", value: mealBudgets["snacks"], stacked: stacked),
+              ];
+              // Four meal names at a readable size do not fit on one row of
+              // a phone. Stack them. A wide screen can keep the row.
+              if (stacked) {
+                return Column(
+                  children: [
+                    for (final box in boxes) Padding(padding: const EdgeInsets.only(bottom: 6), child: box),
+                  ],
+                );
+              }
+              return Row(children: boxes);
+            },
           ),
           const SizedBox(height: 8),
           Row(
@@ -337,7 +350,7 @@ class _CalorieBudgetPanel extends StatelessWidget {
             children: [
               RichText(
                 text: TextSpan(
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  style: TextStyle(fontSize: 12, color: AppColors.mute),
                   children: [
                     const TextSpan(text: "Total: "),
                     TextSpan(text: "$allocated kcal", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
@@ -348,9 +361,9 @@ class _CalorieBudgetPanel extends StatelessWidget {
                 Text(
                   allGood ? "✓ On target" : (over ? "${remaining.abs()} kcal over" : "$remaining kcal left"),
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: allGood ? AppColors.grn : (over ? AppColors.errorText : AppColors.gold),
+                    color: allGood ? AppColors.statusGreen : (over ? AppColors.errorText : AppColors.gold),
                   ),
                 ),
             ],
@@ -370,7 +383,7 @@ class _CalorieBudgetPanel extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             "Daily target: ${dailyCalTarget > 0 ? '$dailyCalTarget kcal' : 'not set'}",
-            style: TextStyle(fontSize: 9, color: AppColors.mute),
+            style: TextStyle(fontSize: 12, color: AppColors.mute),
           ),
         ],
       ),
@@ -379,38 +392,45 @@ class _CalorieBudgetPanel extends StatelessWidget {
 }
 
 class _BudgetBox extends StatelessWidget {
-  const _BudgetBox({required this.label, this.value});
+  const _BudgetBox({required this.label, this.value, required this.stacked});
   final String label;
   final String? value;
+  final bool stacked;
 
   @override
   Widget build(BuildContext context) {
+    final narrow = stacked;
+    final labelStyle = TextStyle(fontSize: 13, color: AppColors.mute, fontWeight: FontWeight.w600);
+    final chip = Container(
+      width: narrow ? 88 : double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        value ?? "—",
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: value != null ? AppColors.gold : AppColors.mute),
+      ),
+    );
+    if (narrow) {
+      return Row(
+        children: [
+          Expanded(child: Text(label, style: labelStyle)),
+          chip,
+        ],
+      );
+    }
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Column(
           children: [
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 8.5, color: AppColors.mute, fontWeight: FontWeight.w600),
-            ),
+            Text(label, textAlign: TextAlign.center, style: labelStyle),
             const SizedBox(height: 3),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              decoration: BoxDecoration(
-                color: AppColors.bg,
-                border: Border.all(color: AppColors.line),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                value ?? "—",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: value != null ? AppColors.gold : AppColors.mute),
-              ),
-            ),
+            chip,
           ],
         ),
       ),

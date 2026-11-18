@@ -184,7 +184,19 @@ class _RootGateState extends ConsumerState<_RootGate> {
     final bootstrap = ref.watch(supabaseBootstrapProvider);
 
     return bootstrap.when(
-      loading: () => Scaffold(backgroundColor: AppColors.bg, body: Center(child: CircularProgressIndicator(color: AppColors.gold))),
+      loading: () => Scaffold(
+        backgroundColor: AppColors.bg,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: AppColors.gold),
+              const SizedBox(height: 14),
+              Text("Loading…", style: TextStyle(fontSize: 14, color: AppColors.txt)),
+            ],
+          ),
+        ),
+      ),
       error: (err, st) => const _RootContent(), // fall back to mock/signed-out state rather than block the app
       data: (_) {
         _checkStripeReturn();

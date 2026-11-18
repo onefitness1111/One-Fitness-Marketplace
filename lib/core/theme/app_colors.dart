@@ -58,7 +58,9 @@ class AppPalette {
   static const dark = AppPalette(
     isDark: true,
     gold: Color(0xFFD9D9D9),
-    goldDim: Color(0xFF5A5A5C),
+    // Light enough to read as an edge on a near-black card. The old
+    // #5A5A5C disappeared into #161617.
+    goldDim: Color(0xFF8E8E93),
     onGold: Colors.black,
     danger: Color(0xFFE05555),
     warning: Color(0xFFD68A4F),
@@ -96,7 +98,9 @@ class AppPalette {
   static const light = AppPalette(
     isDark: false,
     gold: Color(0xFF1C1C1E),
-    goldDim: Color(0xFFB9B9BD),
+    // Dark enough to read as an edge on white. The old #B9B9BD was about
+    // 2 to 1 on white, under the 3 to 1 a border needs.
+    goldDim: Color(0xFF6E6E76),
     onGold: Colors.white,
     danger: Color(0xFFC0392B),
     warning: Color(0xFFB4701F),

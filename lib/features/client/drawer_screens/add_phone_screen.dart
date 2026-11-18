@@ -34,9 +34,9 @@ Future<bool> promptForPhoneDialog(
   WidgetRef ref, {
   required String reason,
 }) async {
-  final saved = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
+  final saved = await showKeyboardSheet<bool>(
+    context,
+    dismissible: false,
     builder: (ctx) => _PhoneDialog(ref: ref, reason: reason),
   );
   return saved ?? false;
@@ -94,13 +94,16 @@ class _PhoneDialogState extends State<_PhoneDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.card,
-      title: const Text(
-        "Add your phone number",
-        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-      ),
-      content: Column(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          "Add your phone number",
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -135,21 +138,27 @@ class _PhoneDialogState extends State<_PhoneDialog> {
           const SizedBox(height: 8),
           Text(
             "Saved to your profile. Only your coach and ONE Fitness staff can see it, and you can change it any time in Profile Settings.",
-            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+            style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.4),
           ),
         ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          style: TextButton.styleFrom(foregroundColor: AppColors.mute),
-          child: const Text("Not now"),
         ),
-        TextButton(
-          onPressed: _busy ? null : _save,
-          style: TextButton.styleFrom(foregroundColor: AppColors.gold),
-          child: Text(_busy ? "Saving…" : "Save",
-              style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: BtnGhost(
+                onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+                child: const Text("Not now"),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: BtnGold(
+                onPressed: _busy ? null : _save,
+                child: Text(_busy ? "Saving…" : "Save"),
+              ),
+            ),
+          ],
         ),
       ],
     );

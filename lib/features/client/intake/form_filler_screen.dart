@@ -191,7 +191,12 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
           Text(widget.schema.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
           Padding(
             padding: EdgeInsets.only(top: 4, bottom: 16),
-            child: Text("Fill what you can — it saves to the client's profile.", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+            child: Text(
+              widget.who == "client"
+                  ? "Fill what you can — it saves to your profile."
+                  : "Fill what you can — it saves to the client's profile.",
+              style: TextStyle(fontSize: 13, color: AppColors.txt),
+            ),
           ),
           ...widget.schema.sections.map((sec) => Padding(
                 padding: const EdgeInsets.only(bottom: 22),

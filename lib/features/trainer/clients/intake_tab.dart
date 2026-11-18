@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/intake/intake_area_screen.dart";
 
@@ -19,7 +20,12 @@ class IntakeTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final record = ref.watch(trainerClientRecordsProvider)[clientId];
-    if (record == null) return const SizedBox.shrink();
+    if (record == null) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(text: "This client's record hasn't loaded yet."),
+      );
+    }
     return IntakeAreaScreen(
       profileId: clientId,
       client: record,

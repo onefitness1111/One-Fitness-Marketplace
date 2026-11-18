@@ -11,7 +11,7 @@ import "../../../data/providers/supabase_bootstrap_provider.dart";
 // Rebuilt on each read rather than held in a `final`: a lazily-initialised
 // field would capture whichever palette happened to be active the first
 // time it was touched and keep those colours after a theme switch.
-List<Color> get _chartColors => [Color(0xFF00E676), AppColors.gold, Color(0xFF64B5F6), Color(0xFFFF7043), Color(0xFFCE93D8), Color(0xFF80DEEA)];
+List<Color> get _chartColors => [AppColors.statusGreen, AppColors.gold, Color(0xFF64B5F6), Color(0xFFFF7043), Color(0xFFCE93D8), Color(0xFF80DEEA)];
 
 /// Mirrors LogProgressPage.jsx's "Lifts" tab — pick up to 6 exercises from
 /// workout history, chart their heaviest completed set over time.

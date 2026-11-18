@@ -33,7 +33,12 @@ class _NotesTabState extends ConsumerState<NotesTab> {
   Widget build(BuildContext context) {
     final records = ref.watch(trainerClientRecordsProvider);
     final record = records[widget.clientId];
-    if (record == null) return const SizedBox.shrink();
+    if (record == null) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(text: "This client's record hasn't loaded yet."),
+      );
+    }
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
     final trainers = ref.watch(trainersProvider);
@@ -296,10 +301,10 @@ class _NotesTabState extends ConsumerState<NotesTab> {
                                   (notes) =>
                                       notes.where((x) => x.id != n.id).toList(),
                                 ),
-                                icon: const Icon(
+                                icon: Icon(
                                   LucideIcons.trash2,
                                   size: 14,
-                                  color: Color(0xFF6B3B3B),
+                                  color: AppColors.danger,
                                 ),
                               ),
                             ],
@@ -464,7 +469,7 @@ class _NoteCard extends StatelessWidget {
                   onPressed: onDelete,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.errorText,
-                    side: const BorderSide(color: Color(0xFF8B3B3B)),
+                    side: BorderSide(color: AppColors.danger),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 6,

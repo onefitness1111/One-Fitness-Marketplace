@@ -40,7 +40,7 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't update: ${e.toString().replaceFirst("Exception: ", "")}")),
+          const SnackBar(content: Text("Couldn't update that order. Check your connection and try again.")),
         );
       }
     } finally {
@@ -54,7 +54,19 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
       future: _future,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
-          return const Center(child: Padding(padding: EdgeInsets.all(28), child: CircularProgressIndicator()));
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text("Loading orders…", style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
+          );
         }
         if (snap.hasError) {
           return Padding(
@@ -62,7 +74,7 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                HintBox(text: "Couldn't load orders: ${snap.error}"),
+                const HintBox(text: "Couldn't load orders. Check your connection and try again."),
                 const SizedBox(height: 10),
                 BtnGhost(onPressed: _reload, child: const Text("Try again")),
               ],

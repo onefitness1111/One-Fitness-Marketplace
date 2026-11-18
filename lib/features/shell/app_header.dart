@@ -24,7 +24,7 @@ class AppHeader extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
           child: Container(
             padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(color: const Color(0xFF1A1A1B), borderRadius: BorderRadius.circular(50), border: Border.all(color: AppColors.line)),
+            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(50), border: Border.all(color: AppColors.line)),
             child: Row(
               children: [
                 _PillButton(label: "Coach", selected: role == "trainer", onTap: () => ref.read(roleProvider.notifier).set("trainer")),

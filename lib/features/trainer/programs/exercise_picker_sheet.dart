@@ -13,7 +13,10 @@ Future<ExerciseDef?> showExercisePickerSheet(BuildContext context) {
     isScrollControlled: true,
     backgroundColor: AppColors.card,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (ctx) => const SizedBox(height: 560, child: _ExercisePickerBody()),
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+      child: SizedBox(height: keyboardSheetHeight(ctx), child: const _ExercisePickerBody()),
+    ),
   );
 }
 
@@ -50,7 +53,7 @@ class _ExercisePickerBodyState extends ConsumerState<_ExercisePickerBody> {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) setState(() => _custom = false);
         },
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

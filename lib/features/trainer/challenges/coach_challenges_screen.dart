@@ -508,7 +508,7 @@ class _CoachChallengeDetailState extends ConsumerState<_CoachChallengeDetail> {
               onPressed: _confirmAndDelete,
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.errorText,
-                side: const BorderSide(color: Color(0xFF6B3B3B)),
+                side: BorderSide(color: AppColors.danger),
               ),
               child: const Text("Delete challenge"),
             ),

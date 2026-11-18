@@ -663,7 +663,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: _busy ? null : () => _discardWorkoutDraft(p),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                         child: const Text("Discard"),
                       ),
                     ),
@@ -748,7 +748,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: _busy ? null : () => _discardNutritionDraft(p.id),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                         child: const Text("Discard"),
                       ),
                     ),

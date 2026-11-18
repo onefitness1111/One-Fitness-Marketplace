@@ -267,7 +267,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: AppColors.danger.withValues(alpha: 0.08),
-                border: Border.all(color: const Color(0xFF8B3B3B)),
+                border: Border.all(color: AppColors.danger),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(

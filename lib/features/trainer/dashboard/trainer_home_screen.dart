@@ -450,7 +450,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 10.5,
+                                  fontSize: 12,
                                   fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                                   color: active ? AppColors.onGold : AppColors.mute,
                                 ),
@@ -632,7 +632,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                     Text(
                       "${entry.key.toUpperCase()} (${entry.value.length})",
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w800,
                         color: AppColors.warning,
                         letterSpacing: 0.5,
@@ -685,7 +685,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                     Text(
                                       "${dayLabel(n.date!)}${n.date == isoToday() ? ' · Today' : ''} · ${fmtSlot(n.slot!)}",
                                       style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize: 12,
                                         color: AppColors.mute,
                                       ),
                                     ),
@@ -836,7 +836,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                           child: Text(
                             alreadyLive ? "● Live — rejoin" : "▶ Start Session",
                             style: const TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -850,7 +850,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
                           "Check in at least one client to start this session",
-                          style: TextStyle(fontSize: 10.5, color: AppColors.mute),
+                          style: TextStyle(fontSize: 12, color: AppColors.mute),
                         ),
                       ),
                     const SizedBox(height: 8),
@@ -936,7 +936,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                               t.first.displayTitle,
                                           ].join(" · "),
                                           style: TextStyle(
-                                            fontSize: 11,
+                                            fontSize: 12,
                                             color: AppColors.mute,
                                           ),
                                         ),
@@ -1025,7 +1025,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                       child: Text(
                                         opt.label,
                                         style: TextStyle(
-                                          fontSize: 10.5,
+                                          fontSize: 12,
                                           fontWeight: FontWeight.w700,
                                           color: active
                                               ? opt.color
@@ -1128,7 +1128,7 @@ class _StatBox extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: AppColors.mute,
                   letterSpacing: 0.5,
                 ),
@@ -1164,7 +1164,7 @@ class _AttendanceBadge extends StatelessWidget {
       child: Text(
         _attendanceLabels[status] ?? status,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.w800,
           color: opt.color,
         ),

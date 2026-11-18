@@ -238,7 +238,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: AppColors.danger.withValues(alpha: 0.06),
-              border: Border.all(color: const Color(0xFF6B3B3B)),
+              border: Border.all(color: AppColors.danger),
               borderRadius: BorderRadius.circular(7),
             ),
             child: Text(
@@ -297,7 +297,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: AppColors.danger.withValues(alpha: 0.07),
-              border: Border.all(color: const Color(0xFF6B3B3B)),
+              border: Border.all(color: AppColors.danger),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
