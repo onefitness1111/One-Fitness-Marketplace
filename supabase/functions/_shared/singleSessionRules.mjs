@@ -12,17 +12,29 @@ export function money(cents) {
   return `$${(n / 100).toFixed(2)}`;
 }
 
-// A client who owes money cannot start a single-session payment or booking.
-export function clientMayBuySingle(balanceCents) {
-  return Number(balanceCents ?? 0) >= 0;
+// One card charge: the session price plus whatever they already owe.
+// A negative balance is included. A credit (positive balance) is not.
+export function singleSessionTotal(sessionCents, balanceCents) {
+  const session = Math.max(0, Math.round(Number(sessionCents) || 0));
+  const balance = Number(balanceCents) < 0 ? -Math.round(Number(balanceCents)) : 0;
+  return { sessionCents: session, balanceCents: balance, totalCents: session + balance };
 }
 
-export function clientBalanceMessage(balanceCents) {
-  return `You have an outstanding balance of ${money(balanceCents)}. Please pay your balance to book sessions.`;
+export function singleSessionBreakdown(bill) {
+  if (!bill || bill.balanceCents <= 0) return "";
+  return `Session ${money(bill.sessionCents)} + balance ${money(bill.balanceCents)} = total ${money(bill.totalCents)}`;
 }
 
-// Owner: any number of adds, and those adds do not use the coach's one grace.
-// Coach: one add while the balance is unpaid. Anyone else: blocked.
+// The balance is settled only after the seat is booked. A full session
+// refunds the entire charge and leaves the balance alone.
+export function afterSingleSessionPayment(booked) {
+  return booked
+    ? { settleBalance: true, refundWholeCharge: false }
+    : { settleBalance: false, refundWholeCharge: true };
+}
+
+// Free adds only. A paid single session is not a grace booking.
+// Owner: any number of free adds. Coach: one while the balance is unpaid.
 export function staffMayAddSingle({ role, balanceCents, graceUsed }) {
   const owes = Number(balanceCents ?? 0) < 0;
   if (!owes) return { ok: true, consumeGrace: false };

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  clientBalanceMessage,
-  clientMayBuySingle,
+  afterSingleSessionPayment,
   coachFreeAddBlocked,
   pacificWeekRange,
   priceFromSettings,
+  singleSessionBreakdown,
+  singleSessionTotal,
   staffMayAddSingle,
 } from "./singleSessionRules.mjs";
 
@@ -16,14 +17,14 @@ test("the price comes only from the settings entry", () => {
   assert.deepEqual(priceFromSettings(undefined), { allowed: false, priceCents: 0 });
 });
 
-test("a client who owes cannot buy or book a single session", () => {
-  assert.equal(clientMayBuySingle(0), true);
-  assert.equal(clientMayBuySingle(500), true);
-  assert.equal(clientMayBuySingle(-2500), false);
-  assert.equal(
-    clientBalanceMessage(-2500),
-    "You have an outstanding balance of $25.00. Please pay your balance to book sessions.",
-  );
+test("a single-session charge adds the outstanding balance", () => {
+  const bill = singleSessionTotal(4000, -2500);
+  assert.deepEqual(bill, { sessionCents: 4000, balanceCents: 2500, totalCents: 6500 });
+  assert.equal(singleSessionBreakdown(bill), "Session $40.00 + balance $25.00 = total $65.00");
+  assert.deepEqual(singleSessionTotal(4000, 0), { sessionCents: 4000, balanceCents: 0, totalCents: 4000 });
+  assert.equal(singleSessionBreakdown(singleSessionTotal(4000, 500)), "");
+  assert.deepEqual(afterSingleSessionPayment(true), { settleBalance: true, refundWholeCharge: false });
+  assert.deepEqual(afterSingleSessionPayment(false), { settleBalance: false, refundWholeCharge: true });
 });
 
 test("a coach gets one grace add and the owner is not limited", () => {

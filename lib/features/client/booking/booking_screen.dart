@@ -23,6 +23,7 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
 import "../../../data/models/membership_plan.dart";
 import "../../../data/models/single_session_credit.dart";
+import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/models/waitlist_entry.dart";
@@ -133,6 +134,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
 
   /// "Pay for this session" or "View Memberships & Packages".
   Future<void> _askSingle(Trainer t, String sessionType, String discipline, int slot, int priceCents) async {
+    var account = 0;
+    try {
+      account = await SupabaseService.loadBalanceCents(ref.read(clientInfoProvider).id);
+    } catch (_) {}
+    if (!mounted) return;
+    final bill = singleSessionBill(sessionCents: priceCents, accountBalanceCents: account);
     final choice = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppColors.card,
@@ -148,11 +155,15 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               const SizedBox(height: 6),
               Text(
                 "You don't have a membership or package that covers this ${sessionTypeLabel(sessionType)} session. "
-                "Pay for just this one, or pick a plan.",
+                "${bill.includesBalance ? bill.breakdown : "Pay for just this one, or pick a plan."}",
                 style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.45),
               ),
               const SizedBox(height: 14),
-              BtnGold(full: true, onPressed: () => Navigator.pop(ctx, "pay"), child: Text("Pay for this session (${_price(priceCents)})")),
+              BtnGold(
+                full: true,
+                onPressed: () => Navigator.pop(ctx, "pay"),
+                child: Text(bill.includesBalance ? "Pay ${formatSignedMoney(bill.totalCents)}" : "Pay for this session (${_price(priceCents)})"),
+              ),
               const SizedBox(height: 8),
               BtnGhost(full: true, onPressed: () => Navigator.pop(ctx, "plans"), child: const Text("View Memberships & Packages")),
             ],
@@ -181,8 +192,6 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   /// payment has succeeded.
   Future<void> _payForSingle(Trainer t, String sessionType, String discipline, int slot) async {
     if (_singleBusy) return;
-    final info = ref.read(clientInfoProvider);
-    if (await stopForOutstandingBalance(context, info.id)) return;
     final settings = ref.read(platformSettingsProvider);
     final offering = trainerOfferingsOn(t, _date)
         .where((o) => o.slot == slot && o.sessionType == sessionType && o.discipline == discipline)

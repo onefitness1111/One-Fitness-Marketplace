@@ -125,6 +125,28 @@ BalanceAccount applyFeeCharge({
 
 bool bookingBlocked(int balanceCents) => balanceCents < 0;
 
+/// One card charge for a pay-per session. A negative balance is added on.
+/// A credit is not subtracted.
+class SingleSessionBill {
+  const SingleSessionBill({required this.sessionCents, required this.balanceCents, required this.totalCents});
+
+  final int sessionCents;
+  final int balanceCents;
+  final int totalCents;
+
+  bool get includesBalance => balanceCents > 0;
+
+  /// Empty when there is nothing owed. Otherwise the line the sheet shows.
+  String get breakdown => includesBalance
+      ? "Session ${formatSignedMoney(sessionCents)} + balance ${formatSignedMoney(balanceCents)} = total ${formatSignedMoney(totalCents)}"
+      : "";
+}
+
+SingleSessionBill singleSessionBill({required int sessionCents, required int accountBalanceCents}) {
+  final owed = accountBalanceCents < 0 ? -accountBalanceCents : 0;
+  return SingleSessionBill(sessionCents: sessionCents, balanceCents: owed, totalCents: sessionCents + owed);
+}
+
 /// What staff see before they add someone who owes money.
 String staffBalanceWarning(int balanceCents) {
   final owed = balanceCents < 0 ? -balanceCents : balanceCents;

@@ -13,11 +13,12 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { bookCredit, recordPurchase, sessionTypeLabel, singleSessionConfig } from "../_shared/singleSession.ts";
+import { bookCredit, recordPurchase, sessionTypeLabel, settleIncludedBalance, singleSessionConfig } from "../_shared/singleSession.ts";
 import {
   FREE_ADD_LIMIT_MESSAGE,
   coachFreeAddBlocked,
   pacificWeekRange,
+  singleSessionTotal,
   staffMayAddSingle,
 } from "../_shared/singleSessionRules.mjs";
 
@@ -51,11 +52,13 @@ serve(async (req) => {
 
     // Amount and the grace flag only. Phone and billing address are not read.
     const { data: clientRow } = await admin.from("clients").select("stripe_customer_id, balance_cents, grace_booking_used").eq("profile_id", clientId).maybeSingle();
-    const gate = staffMayAddSingle({
-      role: caller.role,
-      balanceCents: clientRow?.balance_cents ?? 0,
-      graceUsed: clientRow?.grace_booking_used === true,
-    });
+    const gate = mode === "free"
+      ? staffMayAddSingle({
+        role: caller.role,
+        balanceCents: clientRow?.balance_cents ?? 0,
+        graceUsed: clientRow?.grace_booking_used === true,
+      })
+      : { ok: true, consumeGrace: false, code: "", message: "" };
     if (!gate.ok) return json({ status: "error", code: gate.code, message: gate.message });
 
     if (mode === "free" && coachFreeAddBlocked({ role: caller.role, usedThisWeek: await freeAddsThisWeek(admin, user.id) })) {
@@ -83,11 +86,18 @@ serve(async (req) => {
     };
 
     let creditId: string;
+    let chargedCents = 0;
+    let balanceCents = 0;
+    let paymentIntentId: string | null = null;
+    let paymentMethodId: string | null = null;
     if (mode === "charge") {
       const cfg = await singleSessionConfig(admin, String(sessionType));
       if (!cfg.allowed) throw new Error("Single sessions are turned off for this session type.");
+      const bill = singleSessionTotal(cfg.priceCents, clientRow?.balance_cents ?? 0);
+      balanceCents = bill.balanceCents;
+      chargedCents = bill.totalCents;
       const intent = await stripe.paymentIntents.create({
-        amount: cfg.priceCents,
+        amount: bill.totalCents,
         currency: "usd",
         customer: customerId!,
         payment_method: cardId,
@@ -95,13 +105,21 @@ serve(async (req) => {
         confirm: true,
         description: `Single Session — ${sessionTypeLabel(String(sessionType))}`,
         // "_staff": settled right here, so the webhook must not fulfil it again.
-        metadata: { kind: "single_session_staff", profile_id: String(clientId), session_type: String(sessionType) },
+        metadata: {
+          kind: "single_session_staff",
+          profile_id: String(clientId),
+          session_type: String(sessionType),
+          unit_price_cents: String(bill.sessionCents),
+          balance_cents: String(bill.balanceCents),
+        },
       });
       if (intent.status !== "succeeded") throw new Error(`The card payment didn't go through (${intent.status}).`);
+      paymentIntentId = intent.id;
+      paymentMethodId = cardId;
       const { data: credit, error } = await admin.from("single_session_credits").insert({
         client_id: clientId,
         session_type: sessionType,
-        price_cents: cfg.priceCents,
+        price_cents: bill.sessionCents,
         currency: "usd",
         source: "staff_charge",
         stripe_payment_intent_id: intent.id,
@@ -109,11 +127,6 @@ serve(async (req) => {
       }).select("id").single();
       if (error) throw error;
       creditId = credit.id as string;
-      await recordPurchase(admin, {
-        clientId: String(clientId), priceCents: cfg.priceCents, sessionType: String(sessionType),
-        paymentIntentId: intent.id, trainerId: slotReq.trainerId, slot: slotReq.slot,
-        description: `Single Session — ${sessionTypeLabel(String(sessionType))} (charged by staff)`,
-      });
     } else {
       const { data: credit, error } = await admin.from("single_session_credits").insert({
         client_id: clientId,
@@ -132,9 +145,28 @@ serve(async (req) => {
       });
     }
 
-    const res = await bookCredit({ admin, stripe, creditId, slot: slotReq });
-    if (res.status === "booked" && gate.consumeGrace) {
-      await admin.from("clients").update({ grace_booking_used: true }).eq("profile_id", clientId);
+    const res = await bookCredit({
+      admin, stripe, creditId, slot: slotReq, chargedCents: chargedCents || undefined,
+    });
+    if (res.status === "booked") {
+      if (mode === "charge" && paymentIntentId) {
+        await recordPurchase(admin, {
+          clientId: String(clientId), priceCents: chargedCents - balanceCents, sessionType: String(sessionType),
+          paymentIntentId, trainerId: slotReq.trainerId, slot: slotReq.slot,
+          description: `Single Session — ${sessionTypeLabel(String(sessionType))} (charged by staff)`,
+        });
+        if (balanceCents > 0) {
+          await settleIncludedBalance(admin, {
+            clientId: String(clientId),
+            balanceCents,
+            paymentIntentId,
+            paymentMethodId,
+          });
+        }
+      }
+      if (gate.consumeGrace) {
+        await admin.from("clients").update({ grace_booking_used: true }).eq("profile_id", clientId);
+      }
     }
     return json(res);
   } catch (e) {

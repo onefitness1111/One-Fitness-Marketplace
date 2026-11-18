@@ -138,6 +138,9 @@ export async function bookCredit(opts: {
   stripe: Stripe | null;
   creditId: string;
   slot: SlotRequest;
+  /// Whole amount taken on the card, when the charge also included a balance.
+  /// A failed booking refunds this entire amount. The balance is not touched.
+  chargedCents?: number;
 }): Promise<FulfilResult> {
   const { admin, stripe, creditId, slot } = opts;
   const { data: res, error } = await admin.rpc("book_single_session", {
@@ -174,15 +177,18 @@ export async function bookCredit(opts: {
     }
     if (refunded && credit) {
       const now = new Date();
+      const refundCents = opts.chargedCents && opts.chargedCents > 0
+        ? opts.chargedCents
+        : Number(credit.price_cents);
       await admin.from("charges").insert({
         client_id: credit.client_id,
         client_name: "",
         type: "refund",
         date: now.toISOString().slice(0, 10),
         at: now.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-        amount: -(Number(credit.price_cents) / 100),
+        amount: -(refundCents / 100),
         category: "Single Session",
-        description: "Single Session refunded — session filled before checkout finished",
+        description: "Refunded — the session filled, so the whole charge was returned and the balance was left unchanged",
         plan_name: `Single Session — ${sessionTypeLabel(credit.session_type)}`,
         stripe_payment_intent_id: credit.stripe_payment_intent_id,
       });
@@ -219,11 +225,13 @@ export async function fulfillSingleSessionPayment(opts: {
   if (existing) {
     creditId = existing.id as string;
   } else {
+    const sessionCents = Math.round(Number(meta.unit_price_cents || pi.amount_received || pi.amount));
     const { data: created, error } = await admin.from("single_session_credits").insert({
       client_id: meta.profile_id,
       session_type: meta.session_type,
-      // Snapshot of what was actually charged, not what the price is today.
-      price_cents: pi.amount_received || pi.amount,
+      // The session price only. Any outstanding balance on the same charge
+      // is settled separately, and only after the seat is booked.
+      price_cents: sessionCents,
       currency: pi.currency || "usd",
       source: "purchase",
       stripe_payment_intent_id: pi.id,
@@ -235,18 +243,74 @@ export async function fulfillSingleSessionPayment(opts: {
       creditId = again.id as string;
     } else {
       creditId = created.id as string;
-      await recordPurchase(admin, {
+    }
+  }
+  const sessionCents = Math.round(Number(meta.unit_price_cents || pi.amount_received || pi.amount));
+  const balanceCents = Math.round(Number(meta.balance_cents || 0));
+  const chargedCents = pi.amount_received || pi.amount;
+  const booked = await bookCredit({ admin, stripe, creditId: creditId!, slot, chargedCents });
+  if (booked.status === "booked") {
+    const { data: sessionCharge } = await admin.from("charges").select("id")
+      .eq("stripe_payment_intent_id", pi.id).eq("category", "Single Session").eq("type", "purchase").maybeSingle();
+    if (!sessionCharge) await recordPurchase(admin, {
+      clientId: meta.profile_id,
+      priceCents: sessionCents,
+      sessionType: meta.session_type,
+      paymentIntentId: pi.id,
+      trainerId: slot.trainerId,
+      slot: slot.slot,
+      description: `Single Session — ${sessionTypeLabel(meta.session_type)}`,
+    });
+    if (balanceCents > 0) {
+      await settleIncludedBalance(admin, {
         clientId: meta.profile_id,
-        priceCents: pi.amount_received || pi.amount,
-        sessionType: meta.session_type,
+        balanceCents,
         paymentIntentId: pi.id,
-        trainerId: slot.trainerId,
-        slot: slot.slot,
-        description: `Single Session — ${sessionTypeLabel(meta.session_type)}`,
+        paymentMethodId: typeof pi.payment_method === "string" ? pi.payment_method : pi.payment_method?.id ?? null,
       });
     }
   }
-  return await bookCredit({ admin, stripe, creditId: creditId!, slot });
+  return booked;
+}
+
+/// Marks the unpaid fees paid. Called only after the session is booked.
+/// A second confirm for the same payment does not credit the balance again.
+export async function settleIncludedBalance(admin: Admin, opts: {
+  clientId: string;
+  balanceCents: number;
+  paymentIntentId: string;
+  paymentMethodId: string | null;
+}) {
+  if (opts.balanceCents <= 0) return;
+  const { data: existing } = await admin.from("charges").select("id")
+    .eq("stripe_payment_intent_id", opts.paymentIntentId)
+    .eq("category", "Balance")
+    .maybeSingle();
+  if (existing) return;
+  const { data: client } = await admin.from("clients").select("balance_cents").eq("profile_id", opts.clientId).maybeSingle();
+  if (Number(client?.balance_cents ?? 0) >= 0) return;
+  const { error } = await admin.rpc("apply_balance_payment", {
+    p_client: opts.clientId,
+    p_amount_cents: opts.balanceCents,
+    p_payment_intent: opts.paymentIntentId,
+    p_payment_method: opts.paymentMethodId,
+  });
+  if (error) throw new Error(error.message);
+  const { data: profile } = await admin.from("profiles").select("name").eq("id", opts.clientId).maybeSingle();
+  const now = new Date();
+  await admin.from("charges").insert({
+    client_id: opts.clientId,
+    client_name: profile?.name ?? "",
+    type: "purchase",
+    date: now.toISOString().slice(0, 10),
+    at: now.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+    amount: opts.balanceCents / 100,
+    category: "Balance",
+    description: "Outstanding balance payment",
+    plan_name: "Outstanding balance",
+    stripe_payment_intent_id: opts.paymentIntentId,
+    payment_method_id: opts.paymentMethodId,
+  });
 }
 
 export { recordPurchase };

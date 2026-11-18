@@ -9,7 +9,6 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fulfillSingleSessionPayment } from "../_shared/singleSession.ts";
-import { clientBalanceMessage, clientMayBuySingle } from "../_shared/singleSessionRules.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -39,21 +38,6 @@ serve(async (req) => {
     if (pi.status !== "succeeded") return json({ status: "error", message: "The payment hasn't completed." });
 
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-    const { data: owing } = await admin.from("clients").select("balance_cents").eq("profile_id", user.id).maybeSingle();
-    if (!clientMayBuySingle(owing?.balance_cents ?? 0)) {
-      const { data: already } = await admin.from("single_session_credits").select("id").eq("stripe_payment_intent_id", pi.id).maybeSingle();
-      if (!already) {
-        try {
-          await stripe.refunds.create(
-            { payment_intent: pi.id, reason: "requested_by_customer" },
-            { idempotencyKey: `single-balance-${pi.id}` },
-          );
-        } catch (refundErr) {
-          console.error("single session balance refund failed:", refundErr instanceof Error ? refundErr.message : String(refundErr));
-        }
-      }
-      return json({ status: "error", code: "BALANCE_DUE", message: clientBalanceMessage(owing?.balance_cents ?? 0) });
-    }
     const res = await fulfillSingleSessionPayment({ admin, stripe, pi });
     return json(res);
   } catch (e) {

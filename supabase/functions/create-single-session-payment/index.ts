@@ -10,7 +10,7 @@ import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
 import { sessionTypeLabel, singleSessionConfig } from "../_shared/singleSession.ts";
-import { clientBalanceMessage, clientMayBuySingle } from "../_shared/singleSessionRules.mjs";
+import { singleSessionTotal } from "../_shared/singleSessionRules.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -39,9 +39,6 @@ serve(async (req) => {
 
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     const { data: owing } = await admin.from("clients").select("balance_cents").eq("profile_id", user.id).maybeSingle();
-    if (!clientMayBuySingle(owing?.balance_cents ?? 0)) {
-      throw new Error(clientBalanceMessage(owing?.balance_cents ?? 0));
-    }
 
     const cfg = await singleSessionConfig(admin, String(sessionType));
     if (!cfg.offered) throw new Error("That session type isn't offered.");
@@ -64,9 +61,10 @@ serve(async (req) => {
       await admin.from("clients").update({ stripe_customer_id: customerId }).eq("profile_id", user.id);
     }
 
+    const bill = singleSessionTotal(cfg.priceCents, owing?.balance_cents ?? 0);
     const ephemeralKey = await stripe.ephemeralKeys.create({ customer: customerId }, { apiVersion: STRIPE_API_VERSION });
     const intent = await stripe.paymentIntents.create({
-      amount: cfg.priceCents,
+      amount: bill.totalCents,
       currency: "usd",
       customer: customerId,
       // Card covers Apple Pay and Google Pay too. No bank transfer: a seat can't
@@ -83,7 +81,8 @@ serve(async (req) => {
         slot: String(slot),
         discipline: String(discipline ?? ""),
         location_name: String(locationName ?? ""),
-        unit_price_cents: String(cfg.priceCents),
+        unit_price_cents: String(bill.sessionCents),
+        balance_cents: String(bill.balanceCents),
       },
     });
 
@@ -93,7 +92,9 @@ serve(async (req) => {
       ephemeralKey: ephemeralKey.secret,
       customerId,
       publishableKey: Deno.env.get("STRIPE_PUBLISHABLE_KEY") ?? "",
-      amountCents: cfg.priceCents,
+      amountCents: bill.totalCents,
+      sessionCents: bill.sessionCents,
+      balanceCents: bill.balanceCents,
       allowedMethods: { card: true, ach: false, applePay: true },
       requiresPayment: true,
     });

@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -27,6 +28,11 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
   required int? priceCents, // null = single sessions are off for this type
   required bool isOwner,
 }) async {
+  var account = 0;
+  try {
+    account = await SupabaseService.loadBalanceCents(clientId);
+  } catch (_) {}
+  final bill = priceCents == null ? null : singleSessionBill(sessionCents: priceCents, accountBalanceCents: account);
   var used = 0;
   if (!isOwner) {
     try {
@@ -36,6 +42,11 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
     }
   }
   final needsApproval = !isOwner && used >= 1;
+  final chargeLine = bill != null && bill.includesBalance
+      ? "${bill.breakdown}. Charged to the card on file, or book it free."
+      : priceCents != null
+          ? "Charge them the single-session price to their card on file, or book it free."
+          : "Single sessions are turned off for this type, so you can book it free.";
   final choice = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -43,7 +54,7 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
       title: Text("$clientName has no plan"),
       content: Text(
         "Nothing they hold covers this ${sessionTypeLabel(sessionType)} session. "
-        "${priceCents != null ? "Charge them the single-session price to their card on file, or book it free." : "Single sessions are turned off for this type, so you can book it free."} "
+        "$chargeLine "
         "${needsApproval ? "The one free add for this week is already used, so another free add waits for the owner." : "A free add does not count toward coach pay."} "
         "They need a card on their profile either way.",
       ),
@@ -53,7 +64,10 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
         if (priceCents != null)
           TextButton(
             onPressed: () => Navigator.pop(ctx, "charge"),
-            child: Text("Charge ${_price(priceCents)}", style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w800)),
+            child: Text(
+              "Charge ${_price(bill?.totalCents ?? priceCents)}",
+              style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w800),
+            ),
           ),
       ],
     ),
