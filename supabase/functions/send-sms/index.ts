@@ -31,6 +31,21 @@ serve(async (req) => {
     assertStaffMayMessage(role, member);
     if (!member.phone) throw new Error("That member has no phone number on file.");
 
+    const { data: gate } = await admin
+      .from("profiles")
+      .select("sms_opted_out, sms_consent_at")
+      .eq("id", member.id)
+      .maybeSingle();
+    const { data: clientRow } = await admin
+      .from("clients")
+      .select("sms_opt_in")
+      .eq("profile_id", member.id)
+      .maybeSingle();
+    const optedOut = gate?.sms_opted_out === true;
+    const consented = gate?.sms_consent_at != null || clientRow?.sms_opt_in === true;
+    if (optedOut) throw new Error("That person has opted out of text messages. The app chat still works.");
+    if (!consented) throw new Error("That person hasn't agreed to text messages yet. The app chat still works.");
+
     const supplied = String(body.to ?? "").replace(/\D/g, "");
     const stored = member.phone.replace(/\D/g, "");
     if (supplied && !stored.endsWith(supplied.slice(-10)) && !supplied.endsWith(stored.slice(-10))) {

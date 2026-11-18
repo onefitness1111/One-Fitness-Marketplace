@@ -6,7 +6,10 @@ import "package:supabase_flutter/supabase_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/chat/chat_entry.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/widgets/chat_gate.dart";
+import "../../../core/widgets/message_reactions.dart";
 import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
@@ -321,6 +324,12 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     required Set<ChatChannel> channels,
     required String? trainerAuth,
   }) async {
+    var deliver = channelsSavedOnTheMessage(channels);
+    if (deliver.contains(ChatChannel.sms)) {
+      final agreed = await ensureSmsConsent(context);
+      if (!agreed) deliver = {...deliver}..remove(ChatChannel.sms);
+    }
+    if (deliver.isEmpty) deliver = {ChatChannel.inapp};
     final typed = _msgController.text.trim();
     if (typed.isEmpty) return;
     // Clients only ever see the coach name ("Coach Chris"), never the legal
@@ -338,7 +347,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       at: stamp(),
       trainerId: trainerAuth,
       readByCoach: true,
-      channel: encodeChannels(channels),
+      channel: encodeChannels(deliver),
       createdAt: DateTime.now(),
     );
     _msgController.clear();
@@ -351,7 +360,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         trainerId: trainerAuth,
         who: "trainer",
         text: text,
-        channel: encodeChannels(channels),
+        channel: encodeChannels(deliver),
       );
       ref.read(trainerClientRecordsProvider.notifier).update(
             client.id,
@@ -361,7 +370,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       // thread either way. `sms: false` because SMS is a channel of its
       // own here; letting the push text them too would double-send to a
       // coach who picked both.
-      if (channels.contains(ChatChannel.inapp)) {
+      if (deliver.contains(ChatChannel.inapp)) {
         notifyPush(profileId: client.id, title: "New message from $from", body: text);
       }
     } catch (e) {
@@ -391,16 +400,6 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("The email didn't send. The message in the app is still there.")),
-          );
-        }
-      });
-    }
-    if (channels.contains(ChatChannel.sms)) {
-      // The number stays on the server. A coach is not shown it.
-      SupabaseService.sendSms(profileId: client.id, text: text).catchError((Object e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("The text didn't send. The message in the app is still there.")),
           );
         }
       });
@@ -441,6 +440,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ChatEntryGate(child: _buildChat(context));
+  }
+
+  Widget _buildChat(BuildContext context) {
     if (!_prefsLoaded) {
       return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
     }
@@ -547,7 +550,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
               : ListView(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  children: _buildBubbleList(thread),
+                  children: _buildBubbleList(thread, client.id),
                 ),
         ),
         _Composer(
@@ -560,7 +563,39 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     );
   }
 
-  List<Widget> _buildBubbleList(List<CommMessage> thread) {
+  Future<void> _react({
+    required String clientId,
+    required CommMessage message,
+    required String reaction,
+  }) async {
+    final me = SupabaseService.currentUser?.id;
+    if (me == null) return;
+    final reactions = [
+      ...message.reactions.where((r) => r.userId != me),
+      MessageReaction(userId: me, reaction: reaction),
+    ];
+    ref.read(trainerClientRecordsProvider.notifier).update(
+          clientId,
+          (r) => r.copyWith(
+            comms: r.comms.map((c) => c.id == message.id ? c.copyWith(reactions: reactions) : c).toList(),
+          ),
+        );
+    try {
+      await SupabaseService.setMessageReaction(
+        messageId: message.id,
+        clientId: clientId,
+        reaction: reaction,
+        routedTo: message.trainerId == null ? "business" : "conversation",
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("That like didn't save. The message is still there.")),
+      );
+    }
+  }
+
+  List<Widget> _buildBubbleList(List<CommMessage> thread, String clientId) {
     final items = <Widget>[];
     DateTime? lastDay;
     for (final c in thread) {
@@ -569,7 +604,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         items.add(_DaySeparator(label: _dayLabel(day)));
         lastDay = day;
       }
-      items.add(_Bubble(message: c, isPending: _pendingIds.contains(c.id)));
+      items.add(_Bubble(
+        message: c,
+        isPending: _pendingIds.contains(c.id),
+        onReact: _pendingIds.contains(c.id)
+            ? null
+            : (reaction) => _react(clientId: clientId, message: c, reaction: reaction),
+      ));
     }
     return items;
   }
@@ -955,9 +996,10 @@ class _DaySeparator extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.isPending});
+  const _Bubble({required this.message, required this.isPending, this.onReact});
   final CommMessage message;
   final bool isPending;
+  final void Function(String reaction)? onReact;
 
   @override
   Widget build(BuildContext context) {
@@ -976,19 +1018,28 @@ class _Bubble extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-              decoration: BoxDecoration(
-                color: isMine ? AppColors.gold : AppColors.card,
-                border: isMine ? null : Border.all(color: AppColors.line),
-                borderRadius: radius,
-              ),
-              child: Text(
-                message.text,
-                style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
+            child: GestureDetector(
+              onTap: onReact == null ? null : () => onReact!("heart"),
+              onLongPress: () async {
+                final action = await showMessageActions(context, canReport: false);
+                if (!context.mounted) return;
+                if (action == "heart" || action == "thumb") onReact?.call(action);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+                decoration: BoxDecoration(
+                  color: isMine ? AppColors.gold : AppColors.card,
+                  border: isMine ? null : Border.all(color: AppColors.line),
+                  borderRadius: radius,
+                ),
+                child: Text(
+                  message.text,
+                  style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
+                ),
               ),
             ),
           ),
+          ReactionMarks(reactions: message.reactions),
           const SizedBox(height: 3),
           isPending
               ? Text("Sending…", style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic))

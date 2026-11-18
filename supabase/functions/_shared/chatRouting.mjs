@@ -1,0 +1,466 @@
+// The messaging rules, in one place, with no database and no Twilio.
+//
+// The inbound text handler and the app-send texter both use these functions.
+// test/chat_routing.test.mjs walks the scenarios Coach Chris asked for.
+// Keep the wording of the business name identical to the app:
+// "ONE Fitness Marketplace" (the prefix already stored on messages).
+
+export const WINDOW_MS = 6 * 60 * 60 * 1000;
+
+export const BUSINESS_NAME = "ONE Fitness Marketplace";
+
+// This gym's own App Store page is not a link we can verify. A public
+// "One Fitness" app belongs to a different company, so it is not used here.
+// Replace APP_STORE_LINK before the lead text goes live.
+export const APP_STORE_URL = "APP_STORE_LINK";
+export const PLAY_STORE_URL = "GOOGLE_PLAY_LINK";
+
+export const HELP_TEXT =
+  "ONE Fitness: for help call (818) 223-7001 or email info@onefitnessworkout.com. " +
+  "Reply STOP to unsubscribe. Msg & data rates may apply.";
+
+const OPT_OUT = new Set(["STOP", "STOPALL", "CANCEL", "END", "QUIT", "UNSUBSCRIBE", "REVOKE", "OPTOUT"]);
+const OPT_IN = new Set(["START", "UNSTOP", "JOIN"]);
+const HELP = new Set(["HELP", "INFO"]);
+
+export function coachNameKey(name) {
+  const key = String(name || "").toLowerCase().replace(/\s+/g, "");
+  return key || null;
+}
+
+export function prefixBody(displayName, text) {
+  const name = String(displayName || "").trim();
+  const body = String(text || "");
+  if (!name) return body;
+  const prefix = `${name}:`;
+  if (body.trimStart().startsWith(prefix)) return body;
+  const trimmed = body.trim();
+  if (!trimmed) return `${name}:`;
+  return `${name}: ${trimmed}`;
+}
+
+export function businessNotice(senderName) {
+  const name = String(senderName || "").trim() || "Someone";
+  return `New message from ${name} in ${BUSINESS_NAME}.`;
+}
+
+export function unknownSenderLabel(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const tail = digits.slice(-4);
+  return tail ? `a new number ending ${tail}` : "a new number";
+}
+
+export function leadReply() {
+  return (
+    "Hey, we see you're not a ONE Fitness client yet! Tap here to create your profile so we can help you further: " +
+    `${APP_STORE_URL}\nGoogle Play: ${PLAY_STORE_URL}`
+  );
+}
+
+export function windowOpen(lastActivityAt, now) {
+  if (lastActivityAt == null) return false;
+  const at = typeof lastActivityAt === "number" ? lastActivityAt : new Date(lastActivityAt).getTime();
+  if (Number.isNaN(at)) return false;
+  const age = now - at;
+  return age >= 0 && age < WINDOW_MS;
+}
+
+/** Whole message is a keyword, ignoring spaces and punctuation. "Yes" is a reply, not an opt-in. */
+export function keywordKind(body) {
+  const keyword = String(body || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  if (!keyword) return null;
+  if (HELP.has(keyword)) return "help";
+  if (OPT_OUT.has(keyword)) return "stop";
+  if (OPT_IN.has(keyword)) return "start";
+  return null;
+}
+
+/**
+ * @returns {{id: string, coachName: string} | null}
+ * Clients are never candidates. An @ that matches nobody is ignored.
+ * The longest coach name wins, so Coach Christina beats Coach Chris.
+ */
+export function matchCoachTag(body, coaches) {
+  const list = (coaches || [])
+    .filter((c) => c && c.role === "coach")
+    .map((c) => ({ id: c.id, coachName: c.coachName || c.displayName || "", key: coachNameKey(c.coachName || c.displayName) }))
+    .filter((c) => c.key)
+    .sort((a, b) => b.key.length - a.key.length || a.key.localeCompare(b.key));
+  const source = String(body || "");
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] !== "@") continue;
+    const after = coachNameKey(source.slice(i + 1));
+    for (const coach of list) {
+      if (after.startsWith(coach.key)) return { id: coach.id, coachName: coach.coachName };
+    }
+  }
+  return null;
+}
+
+/** iOS tapbacks we store as a like. Anything else returns null and is a normal text. */
+export function parseTapback(body) {
+  const text = String(body || "").trim();
+  const loved = text.match(/^(Liked|Loved)\s+["“](.+)["”]$/i);
+  if (loved) {
+    return {
+      reaction: loved[1].toLowerCase() === "loved" ? "heart" : "thumb",
+      quote: loved[2],
+    };
+  }
+  const reacted = text.match(/^Reacted\s+(.+?)\s+to\s+["“](.+)["”]$/i);
+  if (!reacted) return null;
+  const glyph = reacted[1].trim().toLowerCase();
+  if (glyph.includes("👍") || glyph === "thumb" || glyph === "+1") {
+    return { reaction: "thumb", quote: reacted[2] };
+  }
+  if (glyph.includes("❤") || glyph.includes("♥") || glyph === "heart") {
+    return { reaction: "heart", quote: reacted[2] };
+  }
+  return null;
+}
+
+export function quoteMatches(storedBody, quote) {
+  const q = String(quote || "").trim();
+  if (!q) return false;
+  const body = String(storedBody || "").trim();
+  if (body === q) return true;
+  const split = body.indexOf(": ");
+  if (split !== -1 && body.slice(split + 2).trim() === q) return true;
+  return body.endsWith(q);
+}
+
+/**
+ * Several profiles can share a last-10. One match is used.
+ * Several matches with exactly one client: that client (a coach must not
+ * share a number with a client; if they do, the client wins and we say so).
+ * Otherwise we do not guess.
+ */
+export function pickProfileForSms(matches) {
+  const rows = matches || [];
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+  const clients = rows.filter((row) => row.role === "client");
+  if (clients.length === 1) return clients[0];
+  return null;
+}
+
+function pairKey(a, b) {
+  return [a, b].sort().join("|");
+}
+
+let _seq = 1;
+function nextId(prefix) {
+  _seq += 1;
+  return `${prefix}-${_seq}`;
+}
+
+/**
+ * In-memory gym used by the tests and mirrored by the text handler.
+ * People: {id, role, displayName, coachName, phone, optedOut, hasConsent}
+ */
+export class ThreadBook {
+  constructor(people) {
+    this.people = new Map(people.map((p) => [p.id, { optedOut: false, hasConsent: false, phone: "", coachName: "", ...p }]));
+    this.conversations = new Map();
+    this.messages = [];
+    this.likes = [];
+    this.outbox = [];
+    this.leads = [];
+  }
+
+  person(id) {
+    const found = this.people.get(id);
+    if (!found) throw new Error(`unknown person ${id}`);
+    return found;
+  }
+
+  coaches() {
+    return [...this.people.values()].filter((p) => p.role === "coach");
+  }
+
+  owner() {
+    return [...this.people.values()].find((p) => p.role === "owner") || null;
+  }
+
+  canText(person) {
+    return Boolean(person && person.phone && !person.optedOut && person.hasConsent);
+  }
+
+  convoBetween(a, b) {
+    return this.conversations.get(pairKey(a, b)) || null;
+  }
+
+  /** Existing threads and saved messages, so a new text can see the window. */
+  seed({ conversations = [], messages = [] } = {}) {
+    for (const convo of conversations) {
+      this.conversations.set(convo.key, {
+        key: convo.key,
+        a: convo.a,
+        b: convo.b,
+        lastActivityAt: convo.lastActivityAt ?? null,
+        routedTo: convo.routedTo,
+      });
+    }
+    for (const message of messages) this.messages.push(message);
+  }
+
+  ensureConvo(a, b) {
+    const key = pairKey(a.id, b.id);
+    const existing = this.conversations.get(key);
+    if (existing) return existing;
+    const routedTo = a.role === "owner" || b.role === "owner" ? "business" : "conversation";
+    const created = { key, a: a.id, b: b.id, lastActivityAt: null, routedTo };
+    this.conversations.set(key, created);
+    return created;
+  }
+
+  bump(convo, now) {
+    convo.lastActivityAt = now;
+  }
+
+  activeConvos(personId, now) {
+    return [...this.conversations.values()]
+      .filter((c) => (c.a === personId || c.b === personId) && windowOpen(c.lastActivityAt, now))
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt || a.key.localeCompare(b.key));
+  }
+
+  addMessage({ convo, sender, raw, at, channel, direction, routedTo, alreadyPrefixed = false }) {
+    const body = alreadyPrefixed ? raw : prefixBody(sender.displayName, raw);
+    const message = {
+      id: nextId("msg"),
+      conversationKey: convo.key,
+      senderId: sender.id,
+      body,
+      raw,
+      at,
+      channel,
+      direction,
+      routedTo: routedTo || convo.routedTo,
+    };
+    this.messages.push(message);
+    this.bump(convo, at);
+    return message;
+  }
+
+  textPerson(person, body) {
+    if (!this.canText(person)) return false;
+    this.outbox.push({ toId: person.id, body, at: this.outbox.length });
+    return true;
+  }
+
+  /**
+   * App send. The message is in the shared thread. The other person is
+   * texted the prefixed message when they can receive texts.
+   * includeSms false is the in-app-only choice.
+   */
+  sendApp({ fromId, toId, text, now, includeSms = true }) {
+    const from = this.person(fromId);
+    const to = this.person(toId);
+    const before = this.outbox.length;
+    const convo = this.ensureConvo(from, to);
+    const message = this.addMessage({
+      convo,
+      sender: from,
+      raw: text,
+      at: now,
+      channel: "app",
+      direction: "outbound",
+    });
+    if (includeSms) this.textPerson(to, message.body);
+
+    if (from.role === "owner" && convo.routedTo === "business") {
+      const tagged = matchCoachTag(text, this.coaches()) || matchCoachTag(message.body, this.coaches());
+      if (tagged && tagged.id !== to.id && tagged.id !== from.id) {
+        const coach = this.person(tagged.id);
+        const coachThread = this.ensureConvo(to, coach);
+        const copy = this.addMessage({
+          convo: coachThread,
+          sender: from,
+          raw: message.body,
+          at: now,
+          channel: "app",
+          direction: "outbound",
+          routedTo: "conversation",
+          alreadyPrefixed: true,
+        });
+        if (includeSms) this.textPerson(coach, copy.body);
+      }
+    }
+
+    return { message, sms: this.outbox.slice(before) };
+  }
+
+  likeApp({ userId, messageId, reaction, now }) {
+    const message = this.messages.find((m) => m.id === messageId);
+    if (!message) throw new Error("message missing");
+    const convo = this.conversations.get(message.conversationKey);
+    const beforeActivity = convo.lastActivityAt;
+    const beforeOutbox = this.outbox.length;
+    this.likes.push({
+      messageId,
+      userId,
+      reaction,
+      source: "app",
+      at: now,
+      channel: "app",
+      direction: "outbound",
+      routedTo: message.routedTo,
+    });
+    if (convo.lastActivityAt !== beforeActivity) throw new Error("a like moved the window");
+    return { likes: this.likesFor(messageId), sms: this.outbox.slice(beforeOutbox), lastActivityAt: convo.lastActivityAt };
+  }
+
+  likesFor(messageId) {
+    return this.likes.filter((like) => like.messageId === messageId);
+  }
+
+  newestMatch(conversationKey, quote) {
+    const hits = this.messages.filter((m) => m.conversationKey === conversationKey && quoteMatches(m.body, quote));
+    hits.sort((a, b) => b.at - a.at);
+    return hits[0] || null;
+  }
+
+  /**
+   * A text to the business number.
+   * Returns { kind, message, like, sms, twiml, routedTo }.
+   */
+  receiveSms({ fromId, text, now, phone }) {
+    const before = this.outbox.length;
+    if (!fromId) {
+      this.leads.push({
+        phone: phone || "",
+        body: text,
+        at: now,
+        channel: "sms",
+        direction: "inbound",
+        routedTo: "business",
+      });
+      const owner = this.owner();
+      if (owner) this.textPerson(owner, businessNotice(unknownSenderLabel(phone)));
+      return { kind: "lead", twiml: leadReply(), sms: this.outbox.slice(before), routedTo: "business" };
+    }
+
+    const keyword = keywordKind(text);
+    if (keyword === "stop") {
+      const person = this.person(fromId);
+      person.optedOut = true;
+      person.hasConsent = false;
+      return { kind: "stop", twiml: null, sms: [], routedTo: null };
+    }
+    if (keyword === "help") {
+      return { kind: "help", twiml: HELP_TEXT, sms: [], routedTo: null };
+    }
+    if (keyword === "start") {
+      const person = this.person(fromId);
+      person.optedOut = false;
+      person.hasConsent = true;
+      return { kind: "start", twiml: null, sms: [], routedTo: null };
+    }
+
+    const from = this.person(fromId);
+    const tap = parseTapback(text);
+    if (tap) {
+      const active = this.activeConvos(from.id, now);
+      const convo = active[0];
+      const hit = convo ? this.newestMatch(convo.key, tap.quote) : null;
+      if (hit) {
+        const activity = convo.lastActivityAt;
+        this.likes.push({
+          messageId: hit.id,
+          userId: from.id,
+          reaction: tap.reaction,
+          source: "sms_tapback",
+          at: now,
+          channel: "sms",
+          direction: "inbound",
+          routedTo: hit.routedTo,
+        });
+        return {
+          kind: "like",
+          like: this.likes.at(-1),
+          message: hit,
+          sms: [],
+          windowReset: convo.lastActivityAt !== activity,
+          lastActivityAt: convo.lastActivityAt,
+          routedTo: hit.routedTo,
+        };
+      }
+    }
+
+    const tagged = matchCoachTag(text, this.coaches());
+    if (tagged && tagged.id !== from.id) {
+      const coach = this.person(tagged.id);
+      return this._deliverInbound(from, coach, text, now, "tag", before);
+    }
+
+    const active = this.activeConvos(from.id, now);
+    if (active.length > 0) {
+      const convo = active[0];
+      const otherId = convo.a === from.id ? convo.b : convo.a;
+      return this._deliverInbound(from, this.person(otherId), text, now, "active", before);
+    }
+
+    const owner = this.owner();
+    if (!owner || owner.id === from.id) {
+      this.leads.push({
+        phone: from.phone || phone || "",
+        body: text,
+        at: now,
+        channel: "sms",
+        direction: "inbound",
+        routedTo: "business",
+        senderId: from.id,
+      });
+      return { kind: "business", message: null, sms: [], twiml: null, routedTo: "business" };
+    }
+    return this._deliverInbound(from, owner, text, now, "fallthrough", before);
+  }
+
+  _deliverInbound(from, to, text, now, how, before) {
+    const convo = this.ensureConvo(from, to);
+    const message = this.addMessage({
+      convo,
+      sender: from,
+      raw: text,
+      at: now,
+      channel: "sms",
+      direction: "inbound",
+    });
+    if (how === "fallthrough") {
+      this.textPerson(to, businessNotice(from.displayName));
+    } else {
+      this.textPerson(to, message.body);
+    }
+    return {
+      kind: how,
+      message,
+      sms: this.outbox.slice(before),
+      twiml: null,
+      routedTo: message.routedTo,
+      conversationKey: convo.key,
+    };
+  }
+}
+
+/** What the app-send texter should send for a row that is already saved. */
+export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true }) {
+  const sms = [];
+  const passAlong = [];
+  if (includeSms && recipient) {
+    const can = recipient.phone && !recipient.optedOut && recipient.hasConsent;
+    if (can) {
+      const notice = originChannel === "sms" && routedTo === "business";
+      sms.push({
+        toId: recipient.id,
+        body: notice ? businessNotice(sender.displayName) : body,
+      });
+    }
+  }
+  if (sender.role === "owner" && routedTo === "business" && recipient) {
+    const tagged = matchCoachTag(body, coaches);
+    if (tagged && tagged.id !== recipient.id && tagged.id !== sender.id) {
+      passAlong.push({ coachId: tagged.id, clientId: recipient.id, body });
+    }
+  }
+  return { sms, passAlong };
+}

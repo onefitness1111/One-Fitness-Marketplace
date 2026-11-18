@@ -38,10 +38,9 @@ const chatChannelLabels = {
   ChatChannel.email: "Email",
 };
 
-/// What a new chat starts on: the app thread only. Deliberately the one
-/// combination that needs nothing from the sender — no phone number, no
-/// prompt, no dead end.
-const defaultChatChannels = {ChatChannel.inapp};
+/// What a new chat starts on: the app thread and a text, both on.
+/// Email is separate and is not saved on the message.
+const defaultChatChannels = {ChatChannel.inapp, ChatChannel.sms};
 
 /// Canonical wire form for `messages.channel` and the remembered
 /// preference: the selected names in [chatChannelOrder], comma-joined —
