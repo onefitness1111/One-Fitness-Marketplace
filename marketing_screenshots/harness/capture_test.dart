@@ -11,7 +11,9 @@ import "package:flutter_test/flutter_test.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
+import "package:onefitness/core/theme/app_colors.dart";
 import "package:onefitness/core/theme/palette_scope.dart";
+import "package:onefitness/core/utils/booking_pitch.dart";
 import "package:onefitness/core/utils/date_utils.dart";
 import "package:onefitness/core/utils/merge_token_utils.dart";
 import "package:onefitness/data/models/availability_block.dart";
@@ -29,6 +31,7 @@ import "package:onefitness/data/providers/client_providers.dart";
 import "package:onefitness/data/providers/platform_settings_provider.dart";
 import "package:onefitness/data/providers/theme_mode_provider.dart";
 import "package:onefitness/data/providers/trainer_providers.dart";
+import "package:onefitness/features/client/booking/booking_picking_screen.dart";
 import "package:onefitness/features/client/booking/date_strip.dart";
 import "package:onefitness/features/client/shell/client_shell.dart";
 import "package:onefitness/features/client/shell/client_shell_state.dart";
@@ -483,6 +486,63 @@ void main() {
     await tester.drag(find.byType(SingleChildScrollView).first, const Offset(0, 120));
     await _settle(tester);
     await _shoot(tester, "05_upcoming_schedule_dark");
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets("unpaid balance blocks confirm", (tester) async {
+    final day = _futureDay();
+    tester.view.physicalSize = const Size(1290, 2796);
+    tester.view.devicePixelRatio = 3;
+    tester.view.padding = FakeViewPadding.zero;
+    tester.view.viewPadding = FakeViewPadding.zero;
+    tester.view.viewInsets = FakeViewPadding.zero;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [initialThemeModeProvider.overrideWithValue(ThemeMode.light)],
+        child: PaletteScope(
+          builder: (context, theme) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: theme,
+            darkTheme: theme,
+            home: RepaintBoundary(
+              key: _shotKey,
+              child: Scaffold(
+                backgroundColor: AppColors.bg,
+                body: SafeArea(
+                  child: BookingPickingScreen(
+                    pick: PendingPick(
+                      trainer: _maya,
+                      sessionType: "semi-private",
+                      discipline: "personal-training",
+                      slot: 540,
+                      locationName: "ONE Fitness",
+                    ),
+                    location: const GymLocation(
+                      name: "ONE Fitness",
+                      address: "11300 Magnolia Blvd, North Hollywood, CA",
+                      hint: "Second floor, side entrance",
+                    ),
+                    date: _iso(day),
+                    pitch: bookingConfirmPitch(
+                      sessionLabel: "Semi-Private",
+                      cap: 4,
+                      coverage: "This comes off your membership, Semi-Private Membership (11 left to book).",
+                    ),
+                    error: "You have an unpaid balance of \$25.00. "
+                        "Please pay it from your Profile before booking another session.",
+                    onBack: () {},
+                    onConfirm: () {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await _settle(tester);
+    expect(find.textContaining("unpaid balance of \$25.00"), findsOneWidget);
+    await _shoot(tester, "10_unpaid_balance_blocks_booking");
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets("coach can change a self check-in", (tester) async {
