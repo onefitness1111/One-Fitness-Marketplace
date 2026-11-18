@@ -252,7 +252,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           title: const Text("Session full"),
           content: Text(
             out.refunded
-                ? "Someone took the last spot while you were paying, so your payment was refunded in full. Join the waitlist?"
+                ? "${out.message ?? "This session filled before your booking went through. Your charge has been refunded."} Join the waitlist?"
                 : "Someone took the last spot while you were paying. Join the waitlist?",
           ),
           actions: [

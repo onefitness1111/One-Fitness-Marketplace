@@ -13,10 +13,11 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { bookCredit, recordPurchase, sessionTypeLabel, settleIncludedBalance, singleSessionConfig } from "../_shared/singleSession.ts";
+import { bookCredit, notifyFilledRefund, recordPurchase, sessionTypeLabel, settleIncludedBalance, singleSessionConfig } from "../_shared/singleSession.ts";
 import {
   FREE_ADD_LIMIT_MESSAGE,
   coachFreeAddBlocked,
+  filledSessionRefundNotice,
   pacificWeekRange,
   singleSessionTotal,
   staffMayAddSingle,
@@ -148,6 +149,20 @@ serve(async (req) => {
     const res = await bookCredit({
       admin, stripe, creditId, slot: slotReq, chargedCents: chargedCents || undefined,
     });
+    if (res.status === "full" && res.refunded && mode === "charge") {
+      const { data: profile } = await admin.from("profiles").select("name").eq("id", clientId).maybeSingle();
+      const clientName = String(profile?.name ?? "").trim() || "This client";
+      const clientBody = filledSessionRefundNotice({ chargedCents, balanceCents });
+      const staffBody = filledSessionRefundNotice({ chargedCents, balanceCents, clientName });
+      await notifyFilledRefund(admin, {
+        clientId: String(clientId),
+        body: clientBody,
+        creditId,
+        staffId: user.id,
+        staffBody,
+      });
+      return json({ ...res, message: staffBody });
+    }
     if (res.status === "booked") {
       if (mode === "charge" && paymentIntentId) {
         await recordPurchase(admin, {

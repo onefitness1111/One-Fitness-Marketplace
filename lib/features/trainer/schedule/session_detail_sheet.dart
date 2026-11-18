@@ -157,7 +157,11 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                     return;
                   }
                   if (!out.booked) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
+                    if (out.full && out.refunded) {
+                      await showFilledRefundDialog(context, singleSessionFailureMessage(out));
+                    } else if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
+                    }
                     return;
                   }
                   final made = await SupabaseService.loadBookingById(out.bookingId!);

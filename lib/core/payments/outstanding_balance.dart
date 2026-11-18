@@ -142,6 +142,24 @@ class SingleSessionBill {
       : "";
 }
 
+/// What the payer sees when the seat filled after the card was charged.
+/// [clientName] is set only for the coach or owner who tapped Charge.
+/// The text never includes a phone number or an address.
+String filledSessionRefundNotice({
+  required int chargedCents,
+  int balanceCents = 0,
+  String? clientName,
+}) {
+  final charge = formatSignedMoney(chargedCents);
+  final name = (clientName ?? "").trim();
+  final lead = name.isEmpty
+      ? "This session filled before your booking went through. Your $charge charge has been refunded."
+      : "$name's session filled before the booking went through. The $charge charge on their card has been refunded.";
+  if (balanceCents <= 0) return lead;
+  final whose = name.isEmpty ? "Your" : "Their";
+  return "$lead $whose outstanding balance of ${formatSignedMoney(balanceCents)} is unchanged.";
+}
+
 SingleSessionBill singleSessionBill({required int sessionCents, required int accountBalanceCents}) {
   final owed = accountBalanceCents < 0 ? -accountBalanceCents : 0;
   return SingleSessionBill(sessionCents: sessionCents, balanceCents: owed, totalCents: sessionCents + owed);

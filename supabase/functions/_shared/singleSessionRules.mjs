@@ -27,6 +27,21 @@ export function singleSessionBreakdown(bill) {
 
 // The balance is settled only after the seat is booked. A full session
 // refunds the entire charge and leaves the balance alone.
+// Client wording when they paid. Staff wording names the client and never
+// includes a phone number or an address.
+export function filledSessionRefundNotice({ chargedCents, balanceCents = 0, clientName = "" }) {
+  const charge = money(chargedCents);
+  const name = String(clientName || "").trim();
+  const lead = name
+    ? `${name}'s session filled before the booking went through. The ${charge} charge on their card has been refunded.`
+    : `This session filled before your booking went through. Your ${charge} charge has been refunded.`;
+  if (Number(balanceCents) > 0) {
+    const whose = name ? "Their" : "Your";
+    return `${lead} ${whose} outstanding balance of ${money(balanceCents)} is unchanged.`;
+  }
+  return lead;
+}
+
 export function afterSingleSessionPayment(booked) {
   return booked
     ? { settleBalance: true, refundWholeCharge: false }

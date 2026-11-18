@@ -115,6 +115,23 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
 
 /// A one-line explanation for an outcome that did not end in a booking.
 String singleSessionFailureMessage(SingleSessionOutcome o) {
+  if (o.full && o.refunded && (o.message ?? "").trim().isNotEmpty) return o.message!.trim();
   if (o.full) return "That session filled up${o.refunded ? " — the charge was refunded" : ""}. Nothing was booked.";
   return o.message ?? "Couldn't book that session.";
+}
+
+/// The on-screen notice when a card was charged and then refunded because
+/// the session filled. Not a generic error.
+Future<void> showFilledRefundDialog(BuildContext context, String message) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.card,
+      title: const Text("Session filled"),
+      content: Text(message),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK")),
+      ],
+    ),
+  );
 }

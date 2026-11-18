@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   afterSingleSessionPayment,
   coachFreeAddBlocked,
+  filledSessionRefundNotice,
   pacificWeekRange,
   priceFromSettings,
   singleSessionBreakdown,
@@ -25,6 +26,21 @@ test("a single-session charge adds the outstanding balance", () => {
   assert.equal(singleSessionBreakdown(singleSessionTotal(4000, 500)), "");
   assert.deepEqual(afterSingleSessionPayment(true), { settleBalance: true, refundWholeCharge: false });
   assert.deepEqual(afterSingleSessionPayment(false), { settleBalance: false, refundWholeCharge: true });
+});
+
+test("a filled session tells the payer the whole charge was refunded", () => {
+  assert.equal(
+    filledSessionRefundNotice({ chargedCents: 6500, balanceCents: 2500 }),
+    "This session filled before your booking went through. Your $65.00 charge has been refunded. Your outstanding balance of $25.00 is unchanged.",
+  );
+  assert.equal(
+    filledSessionRefundNotice({ chargedCents: 4000, balanceCents: 0 }),
+    "This session filled before your booking went through. Your $40.00 charge has been refunded.",
+  );
+  const staff = filledSessionRefundNotice({ chargedCents: 6500, balanceCents: 2500, clientName: "Alex Client" });
+  assert.match(staff, /^Alex Client's session filled/);
+  assert.match(staff, /Their outstanding balance of \$25\.00 is unchanged\./);
+  assert.equal(staff.includes("555"), false);
 });
 
 test("a coach gets one grace add and the owner is not limited", () => {

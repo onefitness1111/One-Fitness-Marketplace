@@ -10,6 +10,8 @@ import type Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { coachDisplayName } from "./coachName.ts";
 import { sendEmailOrThrow } from "./sendEmail.ts";
 import { businessName, loadTemplate, renderEmail } from "./emailTemplates.ts";
+import { notifyProfile } from "./requestNotify.ts";
+import { filledSessionRefundNotice } from "./singleSessionRules.mjs";
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
@@ -52,7 +54,7 @@ export type SlotRequest = {
 
 export type FulfilResult =
   | { status: "booked"; bookingId: string; creditId: string }
-  | { status: "full"; creditId: string; refunded: boolean }
+  | { status: "full"; creditId: string; refunded: boolean; message?: string }
   | { status: "error"; message: string; creditId?: string };
 
 function timeLabel(slotMin: number): string {
@@ -249,6 +251,15 @@ export async function fulfillSingleSessionPayment(opts: {
   const balanceCents = Math.round(Number(meta.balance_cents || 0));
   const chargedCents = pi.amount_received || pi.amount;
   const booked = await bookCredit({ admin, stripe, creditId: creditId!, slot, chargedCents });
+  if (booked.status === "full" && booked.refunded) {
+    const message = filledSessionRefundNotice({ chargedCents, balanceCents });
+    await notifyFilledRefund(admin, {
+      clientId: meta.profile_id,
+      body: message,
+      creditId: creditId!,
+    });
+    return { ...booked, message };
+  }
   if (booked.status === "booked") {
     const { data: sessionCharge } = await admin.from("charges").select("id")
       .eq("stripe_payment_intent_id", pi.id).eq("category", "Single Session").eq("type", "purchase").maybeSingle();
@@ -271,6 +282,37 @@ export async function fulfillSingleSessionPayment(opts: {
     }
   }
   return booked;
+}
+
+/// Push plus an in-app notice. A missing device or a missing notices table
+/// must not undo the refund.
+export async function notifyFilledRefund(admin: Admin, opts: {
+  clientId: string;
+  body: string;
+  creditId: string;
+  staffId?: string | null;
+  staffBody?: string | null;
+}) {
+  await notifyProfile(admin, opts.clientId, "Session filled", opts.body, false);
+  await writeRefundNotice(admin, opts.clientId, opts.creditId, opts.body);
+  if (opts.staffId && opts.staffId !== opts.clientId && opts.staffBody) {
+    await notifyProfile(admin, opts.staffId, "Session filled", opts.staffBody, false);
+    await writeRefundNotice(admin, opts.staffId, opts.creditId, opts.staffBody);
+  }
+}
+
+async function writeRefundNotice(admin: Admin, profileId: string, creditId: string, body: string) {
+  try {
+    await admin.from("client_notices").insert({
+      client_id: profileId,
+      kind: "session_refund",
+      plan_id: creditId,
+      title: "Session filled",
+      body,
+    });
+  } catch (e) {
+    console.error("session refund notice failed:", e instanceof Error ? e.message : String(e));
+  }
 }
 
 /// Marks the unpaid fees paid. Called only after the session is booked.

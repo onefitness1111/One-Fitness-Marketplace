@@ -367,10 +367,12 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                           return;
                         }
                         if (!out.booked) {
-                          setState(() {
-                            _saving = false;
-                            _error = singleSessionFailureMessage(out);
-                          });
+                          setState(() => _saving = false);
+                          if (out.full && out.refunded && context.mounted) {
+                            await showFilledRefundDialog(context, singleSessionFailureMessage(out));
+                          } else if (mounted) {
+                            setState(() => _error = singleSessionFailureMessage(out));
+                          }
                           return;
                         }
                         final made = await SupabaseService.loadBookingById(out.bookingId!);
