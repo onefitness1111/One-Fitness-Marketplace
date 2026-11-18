@@ -82,7 +82,7 @@ class Ingredient {
 
   static Ingredient fromJson(Map<String, dynamic> j) => Ingredient(
         item: j["item"] as String? ?? "",
-        qty: j["qty"] as num?,
+        qty: j["qty"] is num ? j["qty"] as num : num.tryParse("${j["qty"] ?? ""}"),
         unit: j["unit"] as String?,
         category: j["category"] as String?,
         macros: IngredientMacros.fromJson(j["macros"]),

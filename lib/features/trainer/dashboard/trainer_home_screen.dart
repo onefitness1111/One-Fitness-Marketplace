@@ -30,6 +30,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/booking/date_strip.dart";
 import "../../shared/session_logger_view.dart";
+import "update_announcement_card.dart";
 import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
 import "../../../core/widgets/session_timer.dart";
@@ -623,6 +624,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           )),
           const SizedBox(height: 18),
           const LiveWorkoutsCard(),
+          if (isOwner) const UpdateAnnouncementCard(),
           if (isOwner)
             stag(Padding(
               padding: const EdgeInsets.only(bottom: 16),

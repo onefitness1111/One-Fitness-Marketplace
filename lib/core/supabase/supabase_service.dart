@@ -1047,9 +1047,53 @@ class SupabaseService {
     return out;
   }
 
+  /// Reads one stored client record, including programs saved before the
+  /// current screens existed.
+  static ClientRecord parseStoredRecord(String id, Map<String, dynamic> json) =>
+      _clientRecordFromJson(id, json);
+
+  static ({List<SavedProgram> programs, List<ProgramDay> days}) _storedPrograms(Map<String, dynamic> j) {
+    var days = _safeMap(
+      ((j["programDays"] as List?) ?? const []).whereType<Map>(),
+      (m) => _programDayFromJson(m.cast<String, dynamic>()),
+    );
+    var programs = _safeMap(
+      ((j["savedPrograms"] as List?) ?? const []).whereType<Map>(),
+      (m) => _savedProgramFromJson(m.cast<String, dynamic>()),
+    );
+    // The web app's older field. Live rows currently hold an empty list
+    // here; a record that still has days only in this list still opens.
+    if (days.isEmpty && programs.every((p) => p.programDays.isEmpty) && j["program"] is List) {
+      days = _safeMap(
+        (j["program"] as List).whereType<Map>(),
+        (m) => _programDayFromJson(m.cast<String, dynamic>()),
+      );
+    }
+    if (programs.isEmpty && days.isNotEmpty) {
+      programs = [
+        SavedProgram(id: "stored-program", name: "Your program", status: "active", programDays: days),
+      ];
+    }
+    return (programs: programs, days: days);
+  }
+
+  static List<WorkoutLogEntry> _storedLogs(Map<String, dynamic> j) {
+    var logs = _safeMap(
+      ((j["workoutLogs"] as List?) ?? const []).whereType<Map>(),
+      (m) => _workoutLogFromJson(m.cast<String, dynamic>()),
+    );
+    if (logs.isEmpty && j["logs"] is List) {
+      logs = _safeMap(
+        (j["logs"] as List).whereType<Map>(),
+        (m) => _workoutLogFromJson(m.cast<String, dynamic>()),
+      );
+    }
+    return logs;
+  }
+
   static SavedProgram _savedProgramFromJson(Map<String, dynamic> j) =>
       SavedProgram(
-        id: j["id"] as String,
+        id: j["id"]?.toString() ?? "",
         name: j["name"] as String? ?? "",
         status: j["status"] as String? ?? "active",
         source: j["source"] as String?,
@@ -1070,7 +1114,7 @@ class SupabaseService {
       );
 
   static ProgramDay _programDayFromJson(Map<String, dynamic> j) => ProgramDay(
-    id: j["id"] as String,
+    id: j["id"]?.toString() ?? "",
     title: j["title"] as String? ?? "",
     exercises: _safeMap(
       ((j["exercises"] as List?) ?? const []).whereType<Map>(),
@@ -1085,9 +1129,9 @@ class SupabaseService {
   static ExercisePrescription _exercisePrescriptionFromJson(
     Map<String, dynamic> j,
   ) => ExercisePrescription(
-    id: j["id"] as String,
+    id: j["id"]?.toString() ?? "",
     name: j["name"] as String? ?? "",
-    exerciseId: j["exerciseId"] as String?,
+    exerciseId: j["exerciseId"]?.toString(),
     group: j["group"] as String?,
     sets: _asInt(j["sets"]) ?? 3,
     reps: _asInt(j["reps"]) ?? 0,
@@ -3854,6 +3898,21 @@ class SupabaseService {
         "text": text,
       });
 
+  /// The update-sheet settings. Null when the table isn't there yet.
+  static Future<Map<String, dynamic>?> loadAppConfig() async {
+    try {
+      final row = await client.from("app_config").select().eq("id", "mobile").maybeSingle();
+      if (row == null) return null;
+      return Map<String, dynamic>.from(row);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Owner only. Sends the draft they typed. Nothing calls this on its own.
+  static Future<Map<String, dynamic>> announceAppUpdate({required String text}) =>
+      _invokeFunction("announce-app-update", {"title": "ONE Fitness", "text": text});
+
   /// One note to many clients. Each app-chat copy lands in that client's
   /// own thread with the sender. The server drops anyone the sender is not
   /// allowed to reach, and returns how many were sent, skipped, or failed.
@@ -5259,7 +5318,16 @@ class SupabaseService {
   /// treated as absent otherwise, falling through to the caller's `??`.
   static int? _asInt(dynamic v) {
     if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v.trim());
+    if (v is String) {
+      final text = v.trim();
+      final whole = int.tryParse(text);
+      if (whole != null) return whole;
+      // Older programs stored a range such as "8-12". The grid needs one
+      // number, so the first one is the prescription and the rest stays
+      // in the written cue if the coach typed it there.
+      final lead = RegExp(r"^\d+").firstMatch(text);
+      if (lead != null) return int.tryParse(lead.group(0)!);
+    }
     return null;
   }
 
@@ -5670,6 +5738,8 @@ class SupabaseService {
         ? habitSettingsField.cast<String, dynamic>()
         : const <String, dynamic>{};
     final habitLogsRaw = (j["habitLogs"] as List?) ?? const [];
+    final storedPrograms = _storedPrograms(j);
+    final storedLogs = _storedLogs(j);
     return ClientRecord(
       id: id,
       habits: ((habitSettingsRaw["enabled"] as List?) ?? const [])
@@ -5760,18 +5830,9 @@ class SupabaseService {
             .where((m) => m["type"] == "nutrition"),
         (m) => _nutritionProgramEntryFromJson(m.cast<String, dynamic>()),
       ),
-      savedPrograms: _safeMap(
-        ((j["savedPrograms"] as List?) ?? const []).whereType<Map>(),
-        (m) => _savedProgramFromJson(m.cast<String, dynamic>()),
-      ),
-      programDays: _safeMap(
-        ((j["programDays"] as List?) ?? const []).whereType<Map>(),
-        (m) => _programDayFromJson(m.cast<String, dynamic>()),
-      ),
-      workoutLogs: _safeMap(
-        ((j["workoutLogs"] as List?) ?? const []).whereType<Map>(),
-        (m) => _workoutLogFromJson(m.cast<String, dynamic>()),
-      ),
+      savedPrograms: storedPrograms.programs,
+      programDays: storedPrograms.days,
+      workoutLogs: storedLogs,
       measurements: _safeMap(
         ((j["measurements"] as List?) ?? const []).whereType<Map>(),
         (m) => _measurementFromJson(m.cast<String, dynamic>()),
@@ -5784,10 +5845,7 @@ class SupabaseService {
       // Not a persisted field in its own right — derived from workoutLogs
       // (union of logged dates), same as the legacy web-only `client.logs`
       // free-text path this port doesn't model.
-      loggedDates: _safeMap(
-        ((j["workoutLogs"] as List?) ?? const []).whereType<Map>(),
-        (m) => m["date"] as String?,
-      ).whereType<String>().toSet().toList(),
+      loggedDates: storedLogs.map((log) => log.date).where((d) => d.isNotEmpty).toSet().toList(),
       tourSeenDashboard: j["tourSeen"] is Map
           ? (j["tourSeen"] as Map)["dashboard"] as bool? ?? false
           : false,
@@ -5958,9 +6016,14 @@ class SupabaseService {
     );
   }
 
-  static List<NutritionMeal> _nutritionMealListFromJson(dynamic j) => j is List
-      ? j.map(_nutritionMealFromJson).whereType<NutritionMeal>().toList()
-      : const [];
+  static List<NutritionMeal> _nutritionMealListFromJson(dynamic j) {
+    if (j is Map) {
+      final meal = _nutritionMealFromJson(j);
+      return meal == null ? const [] : [meal];
+    }
+    if (j is List) return j.map(_nutritionMealFromJson).whereType<NutritionMeal>().toList();
+    return const [];
+  }
 
   /// `client.nutrition` — real data is either absent entirely (client.nutrition
   /// == null, no plan assigned) or the shape NutritionBuilder.jsx writes.

@@ -7,6 +7,8 @@ import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
 import "core/supabase/supabase_service.dart";
 import "core/theme/app_colors.dart";
+import "core/updates/app_update.dart";
+import "core/updates/app_update_sheet.dart";
 import "core/theme/palette_scope.dart";
 import "data/providers/client_providers.dart";
 import "data/providers/role_provider.dart";
@@ -85,6 +87,9 @@ class _RootGate extends ConsumerStatefulWidget {
 
 class _RootGateState extends ConsumerState<_RootGate> {
   bool _checkedStripeReturn = false;
+  AppUpdateConfig? _updateConfig;
+  UpdatePrompt _updatePrompt = UpdatePrompt.none;
+  bool _updateDismissed = false;
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
 
@@ -98,10 +103,13 @@ class _RootGateState extends ConsumerState<_RootGate> {
     onInactive: () {
       LiveLogStore.instance.flush();
     },
-    onResume: () => refreshClientInfos(ref).catchError((Object e) {
-      // ignore: avoid_print
-      print("[resume] membership refresh failed: $e");
-    }),
+    onResume: () {
+      refreshClientInfos(ref).catchError((Object e) {
+        // ignore: avoid_print
+        print("[resume] membership refresh failed: $e");
+      });
+      _checkAppUpdate();
+    },
   );
 
   @override
@@ -115,6 +123,19 @@ class _RootGateState extends ConsumerState<_RootGate> {
     if (!kIsWeb) _initDeepLinks();
     LiveLogStore.instance.ensureLoaded();
     _lifecycle; // created now so it's listening from the first frame
+    _checkAppUpdate();
+  }
+
+  Future<void> _checkAppUpdate() async {
+    final row = await SupabaseService.loadAppConfig();
+    if (!mounted || row == null) return;
+    final config = AppUpdateConfig.fromJson(row);
+    final installed = await installedAppVersion();
+    if (!mounted) return;
+    setState(() {
+      _updateConfig = config;
+      _updatePrompt = updatePromptFor(installed: installed, config: config);
+    });
   }
 
   Future<void> _initDeepLinks() async {
@@ -155,6 +176,25 @@ class _RootGateState extends ConsumerState<_RootGate> {
     final stripeParam = Uri.base.queryParameters["stripe"];
     if (stripeParam == null) return;
     _showStripeSnack(stripeParam);
+  }
+
+  Widget _withUpdateNotice(Widget child) {
+    final config = _updateConfig;
+    if (config == null || _updatePrompt == UpdatePrompt.none) return child;
+    if (_updatePrompt == UpdatePrompt.optional && _updateDismissed) return child;
+    final blocking = _updatePrompt == UpdatePrompt.blocking;
+    return Stack(
+      children: [
+        child,
+        Positioned.fill(
+          child: AppUpdateNotice(
+            config: config,
+            blocking: blocking,
+            onDismiss: blocking ? null : () => setState(() => _updateDismissed = true),
+          ),
+        ),
+      ],
+    );
   }
 
   void _showStripeSnack(String stripeParam) {
@@ -200,7 +240,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
       error: (err, st) => const _RootContent(), // fall back to mock/signed-out state rather than block the app
       data: (_) {
         _checkStripeReturn();
-        return const _RootContent();
+        return _withUpdateNotice(const _RootContent());
       },
     );
   }
