@@ -3854,6 +3854,24 @@ class SupabaseService {
         "text": text,
       });
 
+  /// One note to many clients. Each app-chat copy lands in that client's
+  /// own thread with the sender. The server drops anyone the sender is not
+  /// allowed to reach, and returns how many were sent, skipped, or failed.
+  static Future<Map<String, dynamic>> sendBroadcast({
+    required String text,
+    required String channel,
+    required bool allClients,
+    List<String> clientIds = const [],
+    String? subject,
+  }) =>
+      _invokeFunction("broadcast-message", {
+        "text": text,
+        "channel": channel,
+        "all": allClients,
+        "clientIds": clientIds,
+        if (subject != null && subject.trim().isNotEmpty) "subject": subject.trim(),
+      });
+
   /// What would happen if staff cancelled this client's membership —
   /// whether the paid-for period can be run out, and when it ends. Asked
   /// before showing the choice so the dialog states real dates rather than

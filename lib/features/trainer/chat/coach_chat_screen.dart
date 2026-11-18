@@ -20,10 +20,11 @@ import "../../../data/models/comm_message.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "broadcast_screen.dart";
 import "team_chat_screen.dart";
 
 /// The three things the Chat tab can be showing.
-enum _ChatView { list, thread, picker }
+enum _ChatView { list, thread, picker, broadcast }
 
 const _prefRecipientKey = "coach_chat_client_id";
 const _prefChannelKey = "coach_chat_channel";
@@ -498,6 +499,14 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       );
     }
 
+    if (_view == _ChatView.broadcast) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _view = _ChatView.list),
+        child: const BroadcastScreen(),
+      );
+    }
+
     if (_view == _ChatView.list) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -531,6 +540,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
                 _markThreadRead(clientId);
               },
               onNewChat: () => setState(() => _view = _ChatView.picker),
+              onNewBroadcast: () => setState(() => _view = _ChatView.broadcast),
             ),
           ),
         ],
