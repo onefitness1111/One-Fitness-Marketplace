@@ -8,6 +8,7 @@ import {
   keywordKind,
   leadReply,
   matchCoachTag,
+  matchClientTag,
   parseTapback,
   pickProfileForSms,
   prefixBody,
@@ -291,6 +292,70 @@ test("a saved thread is what a later text and a tapback attach to", () => {
   assert.equal(like.kind, "like");
   assert.equal(like.like.messageId, "existing");
   assert.equal(book.convoBetween("chris", "sam").lastActivityAt, T0 + 10 * MIN);
+});
+
+test("a coach's @Client Name reaches that client, and the text is prefixed with the coach name", () => {
+  const book = gym();
+  book.people.set("alex", {
+    id: "alex",
+    role: "client",
+    displayName: "Alex Johnson",
+    phone: "+15551110009",
+    hasConsent: true,
+    optedOut: false,
+    coachName: "",
+  });
+  book.people.set("alex2", {
+    id: "alex2",
+    role: "client",
+    displayName: "Alex Smith",
+    phone: "+15551110008",
+    hasConsent: true,
+    optedOut: false,
+    coachName: "",
+  });
+  const tagged = book.receiveSms({ fromId: "chris", text: "@Alex Johnson on my way", now: T0 });
+  assert.equal(tagged.kind, "tag");
+  assert.equal(tagged.sms[0].toId, "alex");
+  assert.equal(tagged.message.body, "Coach Chris: @Alex Johnson on my way");
+  assert.equal(tagged.message.body.includes("Christopher"), false);
+  const lower = book.receiveSms({ fromId: "chris", text: "@alex johnson thanks", now: T0 + MIN });
+  assert.equal(lower.sms[0].toId, "alex");
+  const cold = new ThreadBook([...book.people.values()].map((p) => ({ ...p })));
+  const ambiguous = cold.receiveSms({ fromId: "chris", text: "@Alex which room?", now: T0 });
+  assert.equal(ambiguous.kind, "fallthrough");
+  assert.equal(ambiguous.routedTo, "business");
+  const onlySam = new ThreadBook([
+    { id: "chris", role: "coach", displayName: "Coach Chris", coachName: "Coach Chris", phone: "+15551110001", hasConsent: true },
+    { id: "sam", role: "client", displayName: "Sam Rivera", phone: "+15551110002", hasConsent: true },
+    { id: "owner", role: "owner", displayName: BUSINESS_NAME, phone: "+15551235455", hasConsent: true },
+  ]);
+  const first = onlySam.receiveSms({ fromId: "chris", text: "@Sam ready", now: T0 });
+  assert.equal(first.sms[0].toId, "sam");
+});
+
+test("a coach with no tag texts the client they last messaged inside 6 hours, otherwise the business", () => {
+  const book = gym();
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0 });
+  book.sendApp({ fromId: "chris", toId: "owner", text: "Question for the desk", now: T0 + 40 * MIN });
+  const follow = book.receiveSms({ fromId: "chris", text: "Still on for 6", now: T0 + 50 * MIN });
+  assert.equal(follow.kind, "active");
+  assert.equal(follow.sms[0].toId, "sam");
+  const later = book.receiveSms({
+    fromId: "chris",
+    text: "Hello?",
+    now: T0 + 50 * MIN + WINDOW_MS,
+  });
+  assert.equal(later.kind, "fallthrough");
+  assert.equal(later.routedTo, "business");
+});
+
+test("the owner can tag a client by name", () => {
+  const book = gym();
+  const sent = book.receiveSms({ fromId: "owner", text: "@Sam the desk got your note", now: T0 });
+  assert.equal(sent.kind, "tag");
+  assert.equal(sent.sms[0].toId, "sam");
+  assert.equal(sent.message.body.startsWith(`${BUSINESS_NAME}:`), true);
 });
 
 test("a lead reply does not ask for a password", () => {

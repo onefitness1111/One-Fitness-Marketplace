@@ -97,6 +97,47 @@ export function matchCoachTag(body, coaches) {
   return null;
 }
 
+function personName(person) {
+  return String(person?.displayName || person?.name || "").trim();
+}
+
+function firstToken(value) {
+  return String(value || "").trim().split(/\s+/)[0].replace(/[^a-zA-Z'-]/g, "").toLowerCase();
+}
+
+/**
+ * A coach or the owner naming a client. Full name is case-insensitive.
+ * A first name or a shorter piece matches only when one client fits.
+ * @returns {{id: string, name: string} | null}
+ */
+export function matchClientTag(body, clients) {
+  const list = (clients || [])
+    .filter((c) => c && c.role === "client")
+    .map((c) => ({ id: c.id, name: personName(c), key: coachNameKey(personName(c)) }))
+    .filter((c) => c.key);
+  const source = String(body || "");
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] !== "@") continue;
+    const afterRaw = source.slice(i + 1);
+    const afterKey = coachNameKey(afterRaw);
+    if (!afterKey) continue;
+    const full = list
+      .filter((c) => afterKey.startsWith(c.key))
+      .sort((a, b) => b.key.length - a.key.length || a.key.localeCompare(b.key));
+    if (full.length === 1) return { id: full[0].id, name: full[0].name };
+    if (full.length > 1 && full[0].key.length > full[1].key.length) {
+      return { id: full[0].id, name: full[0].name };
+    }
+    if (full.length > 1) return null;
+    const prefix = list.filter((c) => c.key.startsWith(afterKey));
+    if (prefix.length === 1) return { id: prefix[0].id, name: prefix[0].name };
+    if (prefix.length > 1) return null;
+    const firstName = list.filter((c) => firstToken(c.name) === firstToken(afterRaw));
+    if (firstName.length === 1) return { id: firstName[0].id, name: firstName[0].name };
+  }
+  return null;
+}
+
 /** iOS tapbacks we store as a like. Anything else returns null and is a normal text. */
 export function parseTapback(body) {
   const text = String(body || "").trim();
@@ -176,6 +217,20 @@ export class ThreadBook {
 
   coaches() {
     return [...this.people.values()].filter((p) => p.role === "coach");
+  }
+
+  clients() {
+    return [...this.people.values()].filter((p) => p.role === "client");
+  }
+
+  /** The client this person messaged most recently inside the 6-hour window. */
+  lastMessagedClient(personId, now) {
+    for (const convo of this.activeConvos(personId, now)) {
+      const otherId = convo.a === personId ? convo.b : convo.a;
+      const other = this.people.get(otherId);
+      if (other && other.role === "client") return other;
+    }
+    return null;
   }
 
   owner() {
@@ -387,10 +442,27 @@ export class ThreadBook {
       }
     }
 
-    const tagged = matchCoachTag(text, this.coaches());
-    if (tagged && tagged.id !== from.id) {
-      const coach = this.person(tagged.id);
-      return this._deliverInbound(from, coach, text, now, "tag", before);
+    if (from.role === "coach") {
+      const clientTag = matchClientTag(text, this.clients());
+      if (clientTag && clientTag.id !== from.id) {
+        return this._deliverInbound(from, this.person(clientTag.id), text, now, "tag", before);
+      }
+      const recentClient = this.lastMessagedClient(from.id, now);
+      if (recentClient) {
+        return this._deliverInbound(from, recentClient, text, now, "active", before);
+      }
+    } else {
+      const tagged = matchCoachTag(text, this.coaches());
+      if (tagged && tagged.id !== from.id) {
+        const coach = this.person(tagged.id);
+        return this._deliverInbound(from, coach, text, now, "tag", before);
+      }
+      if (from.role === "owner") {
+        const clientTag = matchClientTag(text, this.clients());
+        if (clientTag) {
+          return this._deliverInbound(from, this.person(clientTag.id), text, now, "tag", before);
+        }
+      }
     }
 
     const active = this.activeConvos(from.id, now);
