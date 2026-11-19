@@ -58,6 +58,7 @@ import "../../data/models/waiver_signature_record.dart";
 import "../../data/models/workout_log.dart";
 import "../legal/sms_consent.dart";
 import "../../data/providers/platform_settings_provider.dart";
+import "contact_reads.dart";
 import "supabase_config.dart";
 
 /// Thin wrapper around the real Supabase project (same backend the web app
@@ -2307,16 +2308,23 @@ class SupabaseService {
   static Future<String?> myPhone() async {
     final id = currentUser?.id;
     if (id == null) return null;
-    final row = await client.from("profiles").select("phone").eq("id", id).maybeSingle();
-    return (row?["phone"] as String?)?.trim();
+    try {
+      final rows = await client.rpc("profile_contact_for", params: {"p_ids": [id]});
+      return phoneFromContactRows(rows);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> _myMessagingPrefs() async {
+    final rows = await client.rpc("my_messaging_prefs");
+    return firstRpcRow(rows);
   }
 
   static Future<bool> chatIntroSeen() async {
-    final id = currentUser?.id;
-    if (id == null) return false;
+    if (currentUser?.id == null) return false;
     try {
-      final row = await client.from("profiles").select("chat_intro_seen_at").eq("id", id).maybeSingle();
-      return row?["chat_intro_seen_at"] != null;
+      return chatIntroSeenFromPrefs(await _myMessagingPrefs());
     } catch (_) {
       return false;
     }
@@ -2334,13 +2342,10 @@ class SupabaseService {
 
   static Future<bool> hasSmsConsent(String profileId) async {
     try {
-      final profile = await client
-          .from("profiles")
-          .select("sms_consent_at, sms_opted_out")
-          .eq("id", profileId)
-          .maybeSingle();
-      if (profile?["sms_opted_out"] == true) return false;
-      if (profile?["sms_consent_at"] != null) return true;
+      if (profileId == currentUser?.id) {
+        final answer = smsConsentFromPrefs(await _myMessagingPrefs());
+        if (answer != null) return answer;
+      }
     } catch (_) {}
     try {
       final row = await client.from("clients").select("sms_opt_in").eq("profile_id", profileId).maybeSingle();
