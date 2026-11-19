@@ -188,6 +188,26 @@ class BalanceGate {
 
 enum StaffAdd { clear, warned, blocked }
 
+/// Whether "Book session anyway" is offered, and the note when it is not.
+class StaffBalanceChoices {
+  const StaffBalanceChoices({required this.bookAnywayEnabled, this.note});
+
+  final bool bookAnywayEnabled;
+  final String? note;
+}
+
+/// The owner can always book past a balance. A coach can once. After that
+/// one grace booking, the coach's button stays off until the balance is paid.
+StaffBalanceChoices staffBalanceChoices({required bool isOwner, required BalanceGate gate}) {
+  if (!gate.owes || isOwner || !gate.graceUsed) {
+    return const StaffBalanceChoices(bookAnywayEnabled: true);
+  }
+  return const StaffBalanceChoices(
+    bookAnywayEnabled: false,
+    note: "You already added them to one session while this is unpaid.",
+  );
+}
+
 /// The owner can add the client any number of times. A coach can add them
 /// once. The client is never covered here — they stay fully blocked.
 StaffAdd staffAddDecision({required bool isOwner, required BalanceGate gate}) {

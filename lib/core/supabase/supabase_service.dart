@@ -3463,6 +3463,52 @@ class SupabaseService {
     return (balanceCents: await loadBalanceCents(clientId), graceUsed: false);
   }
 
+  /// Unpaid fee rows a staff charge can settle. Id and fee type only.
+  /// No card number and no billing address.
+  static Future<List<({String id, String kind})>> loadUnpaidFeeCharges(String clientId) async {
+    final rows = await _rpcList("client_ledger_for", {"p_client": clientId});
+    final charges = <({String id, String kind})>[];
+    for (final raw in rows) {
+      if (raw is! Map) continue;
+      if (raw["status"]?.toString() != "unpaid") continue;
+      final id = raw["id"]?.toString() ?? "";
+      final kind = switch (raw["fee_type"]?.toString()) {
+        "late" => "late",
+        "close" => "close",
+        "noshow" => "noshow",
+        _ => "",
+      };
+      if (id.isEmpty || kind.isEmpty) continue;
+      charges.add((id: id, kind: kind));
+    }
+    return charges;
+  }
+
+  /// Charges each unpaid fee on the card already saved for this client.
+  /// Uses the existing charge-client function. Returns null when every
+  /// charge succeeds. The message never includes a card number or address.
+  static Future<String?> chargeOutstandingOnFile(String clientId) async {
+    final fees = await loadUnpaidFeeCharges(clientId);
+    if (fees.isEmpty) {
+      return "No card on file. Nothing was booked.";
+    }
+    for (final fee in fees) {
+      final result = await chargeClient(
+        clientId: clientId,
+        action: "charge",
+        kind: fee.kind,
+        ledgerId: fee.id,
+      );
+      if (result["error"] != null) {
+        return "The card on file was declined. Nothing was booked.";
+      }
+      if (result["charged"] != true) {
+        return "No card on file. Nothing was booked.";
+      }
+    }
+    return null;
+  }
+
   /// Owner only. Clears the negative balance and marks the unpaid fees waived.
   static Future<int> waiveClientBalance(String clientId) async {
     final res = await client.rpc("waive_client_balance", params: {"p_client": clientId});
