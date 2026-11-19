@@ -551,7 +551,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
               ),
               const SizedBox(height: 10),
               FieldLabeled(
-                label: "Coach name",
+                label: "Title",
                 child: AppField(kind: FieldKind.name,
                   controller: _coachName,
                   placeholder: "Coach Chris",
