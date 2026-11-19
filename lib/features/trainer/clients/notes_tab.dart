@@ -16,11 +16,7 @@ const _noteFlags = ["red", "yellow", "blue"];
 /// active notes grouped by flag priority, resolve/edit/archive actions, and
 /// a collapsed history of resolved/archived notes.
 class NotesTab extends ConsumerStatefulWidget {
-  const NotesTab({
-    super.key,
-    required this.clientId,
-    this.startComposing = false,
-  });
+  const NotesTab({super.key, required this.clientId, this.startComposing = false});
 
   final String clientId;
 
@@ -170,7 +166,11 @@ class _NotesTabState extends ConsumerState<NotesTab> {
               const SectionLabel("Trainer Notes"),
               TextButton.icon(
                 onPressed: () => setState(() => _adding = true),
-                icon: Icon(LucideIcons.plus, size: 14, color: AppColors.gold),
+                icon: Icon(
+                  LucideIcons.plus,
+                  size: 14,
+                  color: AppColors.gold,
+                ),
                 label: Text(
                   "Add Note",
                   style: TextStyle(
@@ -392,7 +392,11 @@ class _NoteCard extends StatelessWidget {
           if (note.title?.isNotEmpty == true) const SizedBox(height: 4),
           Text(
             note.details,
-            style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.4),
+            style: TextStyle(
+              fontSize: 13,
+              color: AppColors.txt,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -646,7 +650,9 @@ class _NoteFormState extends State<_NoteForm> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: selected ? AppColors.gold : AppColors.card,
+                    color: selected
+                        ? AppColors.gold
+                        : AppColors.card,
                     border: Border.all(
                       color: selected ? AppColors.gold : AppColors.line,
                     ),

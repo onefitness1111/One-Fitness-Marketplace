@@ -124,54 +124,35 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     } catch (_) {}
   }
 
-  bool get _iAmOwner =>
-      _staff.any((p) => p["id"] == _me && p["role"] == "owner");
+  bool get _iAmOwner => _staff.any((p) => p["id"] == _me && p["role"] == "owner");
 
   /// Teammates other than me, plus the business contact.
   List<Map<String, dynamic>> get _teammates => [
-    {"id": "market", "name": kMarketplaceName, "role": "market"},
-    ...(_staff.where((p) => p["id"] != _me).toList()..sort(
-      (a, b) => ((a["name"] as String?) ?? "").compareTo(
-        (b["name"] as String?) ?? "",
-      ),
-    )),
-  ];
+        {"id": "market", "name": kMarketplaceName, "role": "market"},
+        ...(_staff.where((p) => p["id"] != _me).toList()
+          ..sort((a, b) => ((a["name"] as String?) ?? "").compareTo((b["name"] as String?) ?? ""))),
+      ];
 
   List<ChatConversation> _staffConversations(Set<String> unreadKeys) {
     final out = <ChatConversation>[];
     for (final t in _teammates) {
       final key = t["id"] as String;
       final thread = key == "market"
-          ? _staffMessages
-                .where(
-                  (m) =>
-                      m["recipient_id"] == null &&
-                      (_iAmOwner || m["sender_id"] == _me),
-                )
-                .toList()
+          ? _staffMessages.where((m) => m["recipient_id"] == null && (_iAmOwner || m["sender_id"] == _me)).toList()
           : _staffMessages
-                .where(
-                  (m) =>
-                      (m["sender_id"] == _me && m["recipient_id"] == key) ||
-                      (m["sender_id"] == key && m["recipient_id"] == _me),
-                )
-                .toList();
+              .where((m) =>
+                  (m["sender_id"] == _me && m["recipient_id"] == key) || (m["sender_id"] == key && m["recipient_id"] == _me))
+              .toList();
       if (thread.isEmpty) continue;
       final last = thread.last;
-      out.add(
-        ChatConversation(
-          id: "staff:$key",
-          name: staffLabel(t),
-          preview: last["body"] as String? ?? "",
-          at:
-              DateTime.tryParse(
-                last["created_at"]?.toString() ?? "",
-              )?.toLocal() ??
-              DateTime.fromMillisecondsSinceEpoch(0),
-          outgoing: last["sender_id"] == _me,
-          unread: unreadKeys.contains("staff:$key"),
-        ),
-      );
+      out.add(ChatConversation(
+        id: "staff:$key",
+        name: staffLabel(t),
+        preview: last["body"] as String? ?? "",
+        at: DateTime.tryParse(last["created_at"]?.toString() ?? "")?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0),
+        outgoing: last["sender_id"] == _me,
+        unread: unreadKeys.contains("staff:$key"),
+      ));
     }
     return out;
   }
@@ -201,11 +182,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           id: "pair:${e.key}",
           name: e.key.split(":").map(_staffName).join(" ↔ "),
           preview: e.value.last["body"] as String? ?? "",
-          at:
-              DateTime.tryParse(
-                e.value.last["created_at"]?.toString() ?? "",
-              )?.toLocal() ??
-              DateTime.fromMillisecondsSinceEpoch(0),
+          at: DateTime.tryParse(e.value.last["created_at"]?.toString() ?? "")?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0),
         ),
     ];
   }
@@ -213,82 +190,52 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   void _openPair(String pairKey) {
     final ids = pairKey.split(":");
     final msgs = _staffMessages
-        .where(
-          (m) =>
-              ids.contains(m["sender_id"]) &&
-              ids.contains(m["recipient_id"]) &&
-              m["sender_id"] != m["recipient_id"],
-        )
+        .where((m) => ids.contains(m["sender_id"]) && ids.contains(m["recipient_id"]) && m["sender_id"] != m["recipient_id"])
         .toList();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Scaffold(
+        backgroundColor: AppColors.bg,
+        appBar: AppBar(
           backgroundColor: AppColors.bg,
-          appBar: AppBar(
-            backgroundColor: AppColors.bg,
-            title: Text(
-              ids.map(_staffName).join(" ↔ "),
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-            ),
-          ),
-          body: msgs.isEmpty
-              ? const SizedBox.shrink()
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
+          title: Text(ids.map(_staffName).join(" ↔ "), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+        ),
+        body: msgs.isEmpty
+            ? const SizedBox.shrink()
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text("Read-only — you're viewing this as the owner.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  ),
+                  for (final m in msgs)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(
-                        "Read-only — you're viewing this as the owner.",
-                        style: TextStyle(fontSize: 11, color: AppColors.mute),
-                      ),
-                    ),
-                    for (final m in msgs)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: AppCard(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _staffName(m["sender_id"] as String?),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                  color: AppColors.gold,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                m["body"] as String? ?? "",
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                            ],
-                          ),
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: AppCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_staffName(m["sender_id"] as String?), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.gold)),
+                            const SizedBox(height: 3),
+                            Text(m["body"] as String? ?? "", style: const TextStyle(fontSize: 14)),
+                          ],
                         ),
                       ),
-                  ],
-                ),
-        ),
+                    ),
+                ],
+              ),
       ),
-    );
+    ));
   }
 
   void _openStaffChat(String key, Set<ChatChannel> channels) {
     Navigator.of(context)
-        .push(
-          MaterialPageRoute<void>(
-            builder: (_) => Scaffold(
-              backgroundColor: AppColors.bg,
-              body: SafeArea(
-                child: TeamChatScreen(
-                  initialKey: key,
-                  initialChannels: channels,
-                ),
-              ),
-            ),
+        .push(MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            backgroundColor: AppColors.bg,
+            body: SafeArea(child: TeamChatScreen(initialKey: key, initialChannels: channels)),
           ),
-        )
+        ))
         .then((_) {
           _loadStaff();
           ref.read(unreadChatKeysProvider.notifier).refresh();
@@ -328,16 +275,11 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     });
     if (_isSetUp) {
       _markThreadRead(_recipientId!);
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _scrollToBottom(animate: false),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animate: false));
     }
   }
 
-  Future<void> _confirmSetup(
-    String recipientId,
-    Set<ChatChannel> channels,
-  ) async {
+  Future<void> _confirmSetup(String recipientId, Set<ChatChannel> channels) async {
     // A teammate (coach / owner / business) rather than a client.
     if (recipientId.startsWith("staff:")) {
       setState(() => _view = _ChatView.list);
@@ -375,16 +317,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     // all of them read, not only the ones addressed to "owner".
     final isOwner = trainerAuth == "owner";
     bool isUnread(CommMessage m) =>
-        m.who == "client" &&
-        !m.readByCoach &&
-        (isOwner || m.trainerId == null || m.trainerId == trainerAuth);
+        m.who == "client" && !m.readByCoach && (isOwner || m.trainerId == null || m.trainerId == trainerAuth);
     if (!record.comms.any(isUnread)) return;
-    final updated = record.comms
-        .map((m) => isUnread(m) ? m.copyWith(readByCoach: true) : m)
-        .toList();
-    ref
-        .read(trainerClientRecordsProvider.notifier)
-        .update(clientId, (r) => r.copyWith(comms: updated));
+    final updated = record.comms.map((m) => isUnread(m) ? m.copyWith(readByCoach: true) : m).toList();
+    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
     SupabaseService.markMessagesRead(clientId).catchError((Object _) {});
   }
 
@@ -392,11 +328,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     if (!_scrollController.hasClients) return;
     final target = _scrollController.position.maxScrollExtent;
     if (animate) {
-      _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOut,
-      );
+      _scrollController.animateTo(target, duration: const Duration(milliseconds: 260), curve: Curves.easeOut);
     } else {
       _scrollController.jumpTo(target);
     }
@@ -407,9 +339,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: _RecipientSetup(
@@ -445,9 +375,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     // Clients only ever see the coach name ("Coach Chris"), never the legal
     // name. An owner writing from the owner account goes out as the business.
     final sender = ref.read(trainersProvider).where((t) => t.id == trainerAuth);
-    final from = sender.isNotEmpty
-        ? sender.first.displayTitle
-        : "ONE Fitness Marketplace";
+    final from = sender.isNotEmpty ? sender.first.displayTitle : "ONE Fitness Marketplace";
     final text = prefixMessage(from, typed);
     // Optimistic bubble under a temporary id; the server returns the real
     // row, and is where the content filter and block rules are applied.
@@ -464,9 +392,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     );
     _msgController.clear();
     setState(() => _pendingIds.add(tempId));
-    ref
-        .read(trainerClientRecordsProvider.notifier)
-        .update(client.id, (r) => r.copyWith(comms: [pending, ...r.comms]));
+    ref.read(trainerClientRecordsProvider.notifier).update(client.id, (r) => r.copyWith(comms: [pending, ...r.comms]));
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     try {
       final saved = await SupabaseService.sendMessage(
@@ -476,42 +402,28 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         text: text,
         channel: encodeChannels(deliver),
       );
-      ref
-          .read(trainerClientRecordsProvider.notifier)
-          .update(
+      ref.read(trainerClientRecordsProvider.notifier).update(
             client.id,
-            (r) => r.copyWith(
-              comms: r.comms.map((c) => c.id == tempId ? saved : c).toList(),
-            ),
+            (r) => r.copyWith(comms: r.comms.map((c) => c.id == tempId ? saved : c).toList()),
           );
       // The push is what In app means in practice — the message is in the
       // thread either way. `sms: false` because SMS is a channel of its
       // own here; letting the push text them too would double-send to a
       // coach who picked both.
       if (deliver.contains(ChatChannel.inapp)) {
-        notifyPush(
-          profileId: client.id,
-          title: "New message from $from",
-          body: text,
-        );
+        notifyPush(profileId: client.id, title: "New message from $from", body: text);
       }
     } catch (e) {
-      ref
-          .read(trainerClientRecordsProvider.notifier)
-          .update(
+      ref.read(trainerClientRecordsProvider.notifier).update(
             client.id,
-            (r) => r.copyWith(
-              comms: r.comms.where((c) => c.id != tempId).toList(),
-            ),
+            (r) => r.copyWith(comms: r.comms.where((c) => c.id != tempId).toList()),
           );
       if (mounted) {
         // Keep the text so it only needs rewording, and say why it bounced.
         _msgController.text = text;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              "That message didn't send. Check your connection and try again.",
-            ),
+            content: Text("That message didn't send. Check your connection and try again."),
             duration: Duration(seconds: 5),
           ),
         );
@@ -527,11 +439,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       ).catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                "The email didn't send. The message in the app is still there.",
-              ),
-            ),
+            const SnackBar(content: Text("The email didn't send. The message in the app is still there.")),
           );
         }
       });
@@ -551,29 +459,21 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final out = <ChatConversation>[];
     for (final c in roster) {
       final comms = records[c.id]?.comms ?? const <CommMessage>[];
-      final mine = comms
-          .where(
-            (m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth,
-          )
-          .toList();
+      final mine = comms.where((m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth).toList();
       if (mine.isEmpty) continue;
       mine.sort((a, b) => b.sentAt.compareTo(a.sentAt));
       final last = mine.first;
-      out.add(
-        ChatConversation(
-          id: c.id,
-          name: c.name,
-          photo: c.photo,
-          preview: last.text,
-          at: last.sentAt,
-          outgoing: last.who == "trainer",
-          // Unread means the client wrote something the coach hasn't opened
-          // yet — the same flag the thread clears on open.
-          unread:
-              unreadKeys.contains(c.id) ||
-              mine.any((m) => m.who == "client" && !m.readByCoach),
-        ),
-      );
+      out.add(ChatConversation(
+        id: c.id,
+        name: c.name,
+        photo: c.photo,
+        preview: last.text,
+        at: last.sentAt,
+        outgoing: last.who == "trainer",
+        // Unread means the client wrote something the coach hasn't opened
+        // yet — the same flag the thread clears on open.
+        unread: unreadKeys.contains(c.id) || mine.any((m) => m.who == "client" && !m.readByCoach),
+      ));
     }
     out.sort((a, b) => b.at.compareTo(a.at));
     return out;
@@ -596,12 +496,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   Widget _buildChat(BuildContext context) {
     if (!_prefsLoaded) {
-      return Center(
-        child: Text(
-          "Loading your chats…",
-          style: TextStyle(fontSize: 14, color: AppColors.txt),
-        ),
-      );
+      return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
     }
 
     final trainerAuth = ref.watch(trainerAuthProvider);
@@ -609,17 +504,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     // Platform → Coaches, Access & Security controls this — matches
     // RosterBar's own scoping so Chat and Clients never disagree about
     // which roster a coach can see.
-    final coachClientScope = ref
-        .watch(platformSettingsProvider)
-        .coachClientScope;
+    final coachClientScope = ref.watch(platformSettingsProvider).coachClientScope;
     final roster = ref
         .watch(trainerRosterProvider)
-        .where(
-          (c) =>
-              isOwner ||
-              coachClientScope != "own" ||
-              c.primaryTrainerId == trainerAuth,
-        )
+        .where((c) => isOwner || coachClientScope != "own" || c.primaryTrainerId == trainerAuth)
         .toList();
     final records = ref.watch(trainerClientRecordsProvider);
     final unreadKeys = ref.watch(unreadChatKeysProvider);
@@ -627,8 +515,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
     final selectedMatches = roster.where((c) => c.id == _recipientId);
 
-    if (_view == _ChatView.picker ||
-        (_view == _ChatView.thread && (!_isSetUp || selectedMatches.isEmpty))) {
+    if (_view == _ChatView.picker || (_view == _ChatView.thread && (!_isSetUp || selectedMatches.isEmpty))) {
       return LocalBackScope(
         isOpen: true,
         onBack: () => setState(() => _view = _ChatView.list),
@@ -661,26 +548,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           if (settings.supportPhone.trim().isNotEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: CallGymButton(),
-              ),
+              child: Align(alignment: Alignment.centerLeft, child: CallGymButton()),
             ),
           Expanded(
             child: ConversationList(
-              conversations: [
-                ..._recentConversations(
-                  roster,
-                  records,
-                  trainerAuth,
-                  isOwner,
-                  unreadKeys,
-                ),
-                ..._staffConversations(unreadKeys),
-                ..._pairConversations(),
-              ]..sort((a, b) => b.at.compareTo(a.at)),
-              emptyText:
-                  "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
+              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys), ..._staffConversations(unreadKeys), ..._pairConversations()]
+                ..sort((a, b) => b.at.compareTo(a.at)),
+              emptyText: "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
               onOpen: (clientId) {
                 if (clientId.startsWith("pair:")) {
                   _openPair(clientId.substring(5));
@@ -711,61 +585,43 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
     final client = selectedMatches.first;
     final comms = records[client.id]?.comms ?? const <CommMessage>[];
-    final thread =
-        comms
-            .where(
-              (m) =>
-                  isOwner || m.trainerId == null || m.trainerId == trainerAuth,
-            )
-            .toList()
-          ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    final thread = comms.where((m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth).toList()
+      ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
 
     return LocalBackScope(
       isOpen: true,
       onBack: () => setState(() => _view = _ChatView.list),
       child: Column(
-        children: [
-          _ContextBar(
-            client: client,
-            channelLabel: chatChannelsLabel(_channels),
-            onChange: () => _openChangeSheet(roster),
-          ),
-          Expanded(
-            child: thread.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        "No messages yet — everything you send here is timestamped and logged.",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.mute,
-                          height: 1.5,
-                        ),
-                      ),
+      children: [
+        _ContextBar(
+          client: client,
+          channelLabel: chatChannelsLabel(_channels),
+          onChange: () => _openChangeSheet(roster),
+        ),
+        Expanded(
+          child: thread.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      "No messages yet — everything you send here is timestamped and logged.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
                     ),
-                  )
-                : ListView(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    children: _buildBubbleList(thread, client.id),
                   ),
-          ),
-          _Composer(
-            controller: _msgController,
-            recipientName: client.name,
-            onSend: () => _send(
-              client: client,
-              settings: settings,
-              channels: _channels,
-              trainerAuth: trainerAuth,
-            ),
-          ),
-        ],
+                )
+              : ListView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  children: _buildBubbleList(thread, client.id),
+                ),
+        ),
+        _Composer(
+          controller: _msgController,
+          recipientName: client.name,
+          onSend: () => _send(client: client, settings: settings, channels: _channels, trainerAuth: trainerAuth),
+        ),
+      ],
       ),
     );
   }
@@ -781,17 +637,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       ...message.reactions.where((r) => r.userId != me),
       MessageReaction(userId: me, reaction: reaction),
     ];
-    ref
-        .read(trainerClientRecordsProvider.notifier)
-        .update(
+    ref.read(trainerClientRecordsProvider.notifier).update(
           clientId,
           (r) => r.copyWith(
-            comms: r.comms
-                .map(
-                  (c) =>
-                      c.id == message.id ? c.copyWith(reactions: reactions) : c,
-                )
-                .toList(),
+            comms: r.comms.map((c) => c.id == message.id ? c.copyWith(reactions: reactions) : c).toList(),
           ),
         );
     try {
@@ -804,9 +653,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("That like didn't save. The message is still there."),
-        ),
+        const SnackBar(content: Text("That like didn't save. The message is still there.")),
       );
     }
   }
@@ -820,16 +667,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         items.add(_DaySeparator(label: _dayLabel(day)));
         lastDay = day;
       }
-      items.add(
-        _Bubble(
-          message: c,
-          isPending: _pendingIds.contains(c.id),
-          onReact: _pendingIds.contains(c.id)
-              ? null
-              : (reaction) =>
-                    _react(clientId: clientId, message: c, reaction: reaction),
-        ),
-      );
+      items.add(_Bubble(
+        message: c,
+        isPending: _pendingIds.contains(c.id),
+        onReact: _pendingIds.contains(c.id)
+            ? null
+            : (reaction) => _react(clientId: clientId, message: c, reaction: reaction),
+      ));
     }
     return items;
   }
@@ -885,9 +729,8 @@ class _RecipientSetup extends StatefulWidget {
 
 class _RecipientSetupState extends State<_RecipientSetup> {
   late String? _recipientId = widget.initialRecipientId;
-  late Set<ChatChannel> _channels = widget.initialChannels.isEmpty
-      ? defaultChatChannels
-      : widget.initialChannels;
+  late Set<ChatChannel> _channels =
+      widget.initialChannels.isEmpty ? defaultChatChannels : widget.initialChannels;
   final _searchController = TextEditingController();
   String _query = "";
 
@@ -925,12 +768,8 @@ class _RecipientSetupState extends State<_RecipientSetup> {
     final browseable = widget.roster.length <= _browseAllMax;
     final matches = searching
         ? widget.roster
-              .where(
-                (c) =>
-                    c.name.toLowerCase().contains(q) ||
-                    (c.email ?? "").toLowerCase().contains(q),
-              )
-              .toList()
+            .where((c) => c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q))
+            .toList()
         : widget.roster;
     // Whoever's already picked stays on screen even with the search empty —
     // this same widget is the "Change" sheet, and hiding the current
@@ -941,11 +780,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
     final promptToSearch = !searching && !browseable;
     // Teammates are always listed (only a handful); search narrows them too.
     final teamMatches = widget.staff
-        .where(
-          (t) =>
-              !searching ||
-              ((t["name"] as String?) ?? "").toLowerCase().contains(q),
-        )
+        .where((t) => !searching || ((t["name"] as String?) ?? "").toLowerCase().contains(q))
         .toList();
 
     return SingleChildScrollView(
@@ -956,15 +791,10 @@ class _RecipientSetupState extends State<_RecipientSetup> {
         children: [
           Text(
             "Who are you messaging?",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: AppColors.txt,
-            ),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.txt),
           ),
           const SizedBox(height: 14),
-          AppField(
-            kind: FieldKind.search,
+          AppField(kind: FieldKind.search,
             controller: _searchController,
             placeholder: "Search clients and coaches…",
             onChanged: (v) => setState(() => _query = v),
@@ -973,10 +803,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
           if (results.isEmpty && searching)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 10),
-              child: HintBox(
-                text: "No clients match your search.",
-                bordered: false,
-              ),
+              child: HintBox(text: "No clients match your search.", bordered: false),
             )
           else
             ...results.map((c) {
@@ -989,12 +816,8 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: selected
-                          ? AppColors.gold.withValues(alpha: 0.1)
-                          : AppColors.card,
-                      border: Border.all(
-                        color: selected ? AppColors.gold : AppColors.line,
-                      ),
+                      color: selected ? AppColors.gold.withValues(alpha: 0.1) : AppColors.card,
+                      border: Border.all(color: selected ? AppColors.gold : AppColors.line),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
@@ -1005,31 +828,17 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                c.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
+                              Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                               Text(
                                 c.email ?? "No email on file",
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.mute,
-                                ),
+                                style: TextStyle(fontSize: 11, color: AppColors.mute),
                               ),
                             ],
                           ),
                         ),
-                        if (selected)
-                          Icon(
-                            LucideIcons.checkCircle2,
-                            size: 18,
-                            color: AppColors.gold,
-                          ),
+                        if (selected) Icon(LucideIcons.checkCircle2, size: 18, color: AppColors.gold),
                       ],
                     ),
                   ),
@@ -1040,51 +849,31 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: HintBox(
-                text:
-                    "Start typing a name or email to find one of your ${widget.roster.length} clients.",
+                text: "Start typing a name or email to find one of your ${widget.roster.length} clients.",
                 bordered: false,
               ),
             ),
           if (teamMatches.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text(
-              "Coaches & team",
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.mute,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-              ),
-            ),
+            Text("Coaches & team", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
             const SizedBox(height: 8),
             for (final t in teamMatches)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: TapHighlight(
-                  onTap: () =>
-                      setState(() => _recipientId = "staff:${t["id"]}"),
+                  onTap: () => setState(() => _recipientId = "staff:${t["id"]}"),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: _recipientId == "staff:${t["id"]}"
-                          ? AppColors.gold.withValues(alpha: 0.1)
-                          : AppColors.card,
-                      border: Border.all(
-                        color: _recipientId == "staff:${t["id"]}"
-                            ? AppColors.gold
-                            : AppColors.line,
-                      ),
+                      color: _recipientId == "staff:${t["id"]}" ? AppColors.gold.withValues(alpha: 0.1) : AppColors.card,
+                      border: Border.all(color: _recipientId == "staff:${t["id"]}" ? AppColors.gold : AppColors.line),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       children: [
                         Icon(
-                          t["role"] == "market"
-                              ? LucideIcons.building2
-                              : (t["role"] == "owner"
-                                    ? LucideIcons.crown
-                                    : LucideIcons.user),
+                          t["role"] == "market" ? LucideIcons.building2 : (t["role"] == "owner" ? LucideIcons.crown : LucideIcons.user),
                           size: 22,
                           color: AppColors.gold,
                         ),
@@ -1093,33 +882,15 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(staffLabel(t), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                               Text(
-                                staffLabel(t),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                t["role"] == "market"
-                                    ? "Business contact"
-                                    : (t["role"] == "owner"
-                                          ? "Owner"
-                                          : "Coach"),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.mute,
-                                ),
+                                t["role"] == "market" ? "Business contact" : (t["role"] == "owner" ? "Owner" : "Coach"),
+                                style: TextStyle(fontSize: 11, color: AppColors.mute),
                               ),
                             ],
                           ),
                         ),
-                        if (_recipientId == "staff:${t["id"]}")
-                          Icon(
-                            LucideIcons.checkCircle2,
-                            size: 18,
-                            color: AppColors.gold,
-                          ),
+                        if (_recipientId == "staff:${t["id"]}") Icon(LucideIcons.checkCircle2, size: 18, color: AppColors.gold),
                       ],
                     ),
                   ),
@@ -1127,15 +898,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
               ),
           ],
           const SizedBox(height: 12),
-          Text(
-            "Send via — pick any",
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.mute,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-            ),
-          ),
+          Text("Send via — pick any", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1145,8 +908,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                   label: chatChannelLabels[ch]!,
                   selected: _channels.contains(ch),
                   multi: true,
-                  onTap: () =>
-                      setState(() => _channels = toggleChannel(_channels, ch)),
+                  onTap: () => setState(() => _channels = toggleChannel(_channels, ch)),
                 ),
               ],
             ],
@@ -1158,11 +920,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             const SizedBox(height: 8),
             Text(
               "${_selectedName ?? "This client"} has no phone number on file — SMS will be skipped.",
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.mute,
-                height: 1.4,
-              ),
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
             ),
           ],
           const SizedBox(height: 20),
@@ -1170,18 +928,13 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             children: [
               Expanded(
                 child: BtnGold(
-                  onPressed: canConfirm
-                      ? () => widget.onConfirm(_recipientId!, _channels)
-                      : null,
+                  onPressed: canConfirm ? () => widget.onConfirm(_recipientId!, _channels) : null,
                   child: Text(widget.confirmLabel),
                 ),
               ),
               if (widget.onCancel != null) ...[
                 const SizedBox(width: 8),
-                BtnGhost(
-                  onPressed: widget.onCancel,
-                  child: const Text("Cancel"),
-                ),
+                BtnGhost(onPressed: widget.onCancel, child: const Text("Cancel")),
               ],
             ],
           ),
@@ -1192,12 +945,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
 }
 
 class _SegOption extends StatelessWidget {
-  const _SegOption({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.multi = false,
-  });
+  const _SegOption({required this.label, required this.selected, required this.onTap, this.multi = false});
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -1221,9 +969,7 @@ class _SegOption extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: selected ? AppColors.gold : AppColors.card,
-              border: Border.all(
-                color: selected ? AppColors.gold : AppColors.line,
-              ),
+              border: Border.all(color: selected ? AppColors.gold : AppColors.line),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
@@ -1231,11 +977,7 @@ class _SegOption extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (multi) ...[
-                  Icon(
-                    selected ? LucideIcons.check : LucideIcons.plus,
-                    size: 12,
-                    color: fg,
-                  ),
+                  Icon(selected ? LucideIcons.check : LucideIcons.plus, size: 12, color: fg),
                   const SizedBox(width: 4),
                 ],
                 Flexible(
@@ -1243,11 +985,7 @@ class _SegOption extends StatelessWidget {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: fg,
-                    ),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: fg),
                   ),
                 ),
               ],
@@ -1262,11 +1000,7 @@ class _SegOption extends StatelessWidget {
 /// State 2's slim sticky header — who this thread is with, how, and a way
 /// to change either without leaving the conversation.
 class _ContextBar extends StatelessWidget {
-  const _ContextBar({
-    required this.client,
-    required this.channelLabel,
-    required this.onChange,
-  });
+  const _ContextBar({required this.client, required this.channelLabel, required this.onChange});
   final ClientInfo client;
   final String channelLabel;
   final VoidCallback onChange;
@@ -1291,30 +1025,16 @@ class _ContextBar extends StatelessWidget {
                   client.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.txt,
-                  ),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.txt),
                 ),
-                Text(
-                  "via $channelLabel",
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
-                ),
+                Text("via $channelLabel", style: TextStyle(fontSize: 11, color: AppColors.mute)),
               ],
             ),
           ),
           TextButton(
             onPressed: onChange,
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.gold,
-              padding: EdgeInsets.zero,
-              minimumSize: Size.zero,
-            ),
-            child: const Text(
-              "Change",
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
+            style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero),
+            child: const Text("Change", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -1333,18 +1053,8 @@ class _DaySeparator extends StatelessWidget {
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.mute,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12)),
+          child: Text(label, style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600)),
         ),
       ),
     );
@@ -1370,30 +1080,19 @@ class _Bubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Column(
-        crossAxisAlignment: isMine
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
+        crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.76,
-            ),
+            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
             child: TapHighlight(
               onTap: onReact == null ? null : () => onReact!("heart"),
               onLongPress: () async {
-                final action = await showMessageActions(
-                  context,
-                  canReport: false,
-                );
+                final action = await showMessageActions(context, canReport: false);
                 if (!context.mounted || action == null) return;
-                if (action == "heart" || action == "thumb")
-                  onReact?.call(action);
+                if (action == "heart" || action == "thumb") onReact?.call(action);
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 13,
-                  vertical: 9,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
                 decoration: BoxDecoration(
                   color: isMine ? AppColors.gold : AppColors.card,
                   border: isMine ? null : Border.all(color: AppColors.line),
@@ -1401,11 +1100,7 @@ class _Bubble extends StatelessWidget {
                 ),
                 child: Text(
                   message.text,
-                  style: TextStyle(
-                    color: isMine ? AppColors.onGold : AppColors.txt,
-                    fontSize: 14,
-                    height: 1.35,
-                  ),
+                  style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
                 ),
               ),
             ),
@@ -1413,21 +1108,11 @@ class _Bubble extends StatelessWidget {
           ReactionMarks(reactions: message.reactions),
           const SizedBox(height: 3),
           isPending
-              ? Text(
-                  "Sending…",
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: AppColors.mute,
-                    fontStyle: FontStyle.italic,
-                  ),
-                )
+              ? Text("Sending…", style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic))
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      _timeOnly(message.sentAt),
-                      style: TextStyle(fontSize: 10.5, color: AppColors.mute),
-                    ),
+                    Text(_timeOnly(message.sentAt), style: TextStyle(fontSize: 10.5, color: AppColors.mute)),
                     if (message.channel != null) ...[
                       const SizedBox(width: 4),
                       _ChannelBadge(channel: message.channel!),
@@ -1461,10 +1146,7 @@ class _ChannelBadge extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         for (final i in icons)
-          Padding(
-            padding: const EdgeInsets.only(left: 2),
-            child: Icon(i, size: 9, color: AppColors.mute),
-          ),
+          Padding(padding: const EdgeInsets.only(left: 2), child: Icon(i, size: 9, color: AppColors.mute)),
       ],
     );
   }
@@ -1473,11 +1155,7 @@ class _ChannelBadge extends StatelessWidget {
 /// Bottom composer, pinned above the tab bar — a single rounded input that
 /// grows to 4 lines then scrolls, and a circular send button.
 class _Composer extends StatefulWidget {
-  const _Composer({
-    required this.controller,
-    required this.recipientName,
-    required this.onSend,
-  });
+  const _Composer({required this.controller, required this.recipientName, required this.onSend});
   final TextEditingController controller;
   final String recipientName;
   final VoidCallback onSend;
@@ -1517,70 +1195,58 @@ class _ComposerState extends State<_Composer> {
           children: [
             const ChatSavedNotice(),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 110),
-                    child: TextField(
-                      controller: widget.controller,
-                      keyboardType: TextInputType.multiline,
-                      textCapitalization: TextCapitalization.sentences,
-                      minLines: 1,
-                      maxLines: 4,
-                      style: TextStyle(color: AppColors.txt, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: "Message ${widget.recipientName}…",
-                        hintStyle: TextStyle(
-                          color: AppColors.mute,
-                          fontSize: 14,
-                        ),
-                        filled: true,
-                        fillColor: AppColors.card,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: AppColors.line),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: AppColors.line),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(color: AppColors.gold),
-                        ),
-                      ),
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 110),
+                child: TextField(
+                  controller: widget.controller,
+      keyboardType: TextInputType.multiline,
+      textCapitalization: TextCapitalization.sentences,
+                  minLines: 1,
+                  maxLines: 4,
+                  style: TextStyle(color: AppColors.txt, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: "Message ${widget.recipientName}…",
+                    hintStyle: TextStyle(color: AppColors.mute, fontSize: 14),
+                    filled: true,
+                    fillColor: AppColors.card,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide(color: AppColors.line),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide(color: AppColors.line),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide(color: AppColors.gold),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                TapHighlight(
-                  onTap: hasText ? widget.onSend : null,
-                  borderRadius: BorderRadius.circular(22),
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: hasText ? AppColors.gold : AppColors.card,
-                      border: hasText
-                          ? null
-                          : Border.all(color: AppColors.line),
-                    ),
-                    child: Icon(
-                      LucideIcons.send,
-                      size: 17,
-                      color: hasText ? AppColors.onGold : AppColors.mute,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
+            const SizedBox(width: 8),
+            TapHighlight(
+              onTap: hasText ? widget.onSend : null,
+              borderRadius: BorderRadius.circular(22),
+              child: Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: hasText ? AppColors.gold : AppColors.card,
+                  border: hasText ? null : Border.all(color: AppColors.line),
+                ),
+                child: Icon(LucideIcons.send, size: 17, color: hasText ? AppColors.onGold : AppColors.mute),
+              ),
+            ),
+          ],
+        ),
           ],
         ),
       ),

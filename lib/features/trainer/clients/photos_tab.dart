@@ -68,11 +68,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
         return;
       }
       final id = DateTime.now().microsecondsSinceEpoch.toString();
-      final path = await SupabaseService.uploadProgressPhoto(
-        clientId: widget.clientId,
-        bytes: bytes,
-        id: id,
-      );
+      final path = await SupabaseService.uploadProgressPhoto(clientId: widget.clientId, bytes: bytes, id: id);
       final photo = ProgressPhoto(
         id: id,
         date: isoToday(),
@@ -81,9 +77,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
       );
       final next = [photo, ...record.photos];
       await SupabaseService.updateClientPhotos(widget.clientId, next);
-      ref
-          .read(trainerClientRecordsProvider.notifier)
-          .update(widget.clientId, (r) => r.copyWith(photos: next));
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(photos: next));
       // A photo turning up in someone's own progress gallery without a word
       // is startling. Push only — a coach may add several in a session, and
       // a text each time is how people switch notifications off.
@@ -92,29 +86,20 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
         title: "New progress photo",
         body: "${photo.addedBy} added a progress photo to your gallery.",
       );
-      notifyOwnerInternal(
-        title: "Progress photo",
-        body: "A progress photo was added for a client.",
-      );
+      notifyOwnerInternal(title: "Progress photo", body: "A progress photo was added for a client.");
       if (mounted) setState(() => _adding = false);
     } catch (e) {
       if (mounted) {
         setState(() {
           _adding = false;
-          _addError = writeFailureMessage(
-            e,
-            whatFailed: "Couldn't add that photo",
-          );
+          _addError = writeFailureMessage(e, whatFailed: "Couldn't add that photo");
         });
       }
     }
   }
 
   TextEditingController _controllerFor(String id, String? current) =>
-      _controllers.putIfAbsent(
-        id,
-        () => TextEditingController(text: current ?? ""),
-      );
+      _controllers.putIfAbsent(id, () => TextEditingController(text: current ?? ""));
 
   @override
   void dispose() {
@@ -130,43 +115,18 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
     final text = _controllers[photoId]?.text.trim() ?? "";
     setState(() => _savingId = photoId);
     try {
-      final next = record.photos
-          .map(
-            (p) => p.id == photoId
-                ? p.copyWith(coachComment: text, coachCommentAt: stamp())
-                : p,
-          )
-          .toList();
+      final next = record.photos.map((p) => p.id == photoId ? p.copyWith(coachComment: text, coachCommentAt: stamp()) : p).toList();
       await SupabaseService.updateClientPhotos(widget.clientId, next);
-      ref
-          .read(trainerClientRecordsProvider.notifier)
-          .update(widget.clientId, (r) => r.copyWith(photos: next));
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(photos: next));
       if (text.isNotEmpty) {
-        final info = ref
-            .read(trainerRosterProvider)
-            .where((c) => c.id == widget.clientId);
+        final info = ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId);
         if (info.isNotEmpty) {
-          notifyCoachComment(
-            toEmail: info.first.email ?? "",
-            toName: info.first.name,
-            kind: "progress photo",
-            profileId: info.first.id,
-          );
+          notifyCoachComment(toEmail: info.first.email ?? "", toName: info.first.name, kind: "progress photo", profileId: info.first.id);
         }
       }
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Comment saved.")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Comment saved.")));
     } catch (_) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "Couldn't save — check your connection and try again.",
-            ),
-          ),
-        );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save — check your connection and try again.")));
     } finally {
       if (mounted) setState(() => _savingId = null);
     }
@@ -175,20 +135,14 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
   @override
   Widget build(BuildContext context) {
     final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
-    final photos = (record?.photos ?? const []).toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+    final photos = (record?.photos ?? const []).toList()..sort((a, b) => b.date.compareTo(a.date));
     if (!_movedOld && photos.any((p) => p.img.startsWith("data:"))) {
       _movedOld = true;
       final clientId = widget.clientId;
       Future.microtask(() async {
-        final moved = await SupabaseService.moveInlineProgressPhotos(
-          clientId,
-          photos,
-        );
+        final moved = await SupabaseService.moveInlineProgressPhotos(clientId, photos);
         if (moved != null && mounted) {
-          ref
-              .read(trainerClientRecordsProvider.notifier)
-              .update(clientId, (r) => r.copyWith(photos: moved));
+          ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(photos: moved));
         }
       });
     }
@@ -209,10 +163,7 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
                   SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(AppColors.mute),
-                    ),
+                    child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(AppColors.mute)),
                   )
                 else
                   const Icon(LucideIcons.camera, size: 15),
@@ -225,24 +176,13 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
             padding: EdgeInsets.only(top: 6),
             child: Text(
               "It appears in their gallery with your name on it, and they're notified.",
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.mute,
-                height: 1.4,
-              ),
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
             ),
           ),
           if (_addError != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _addError!,
-                style: TextStyle(
-                  color: AppColors.danger,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
+              child: Text(_addError!, style: TextStyle(color: AppColors.danger, fontSize: 12, height: 1.4)),
             ),
         ],
       ),
@@ -250,101 +190,70 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
 
     Widget frame(Widget column) {
       if (widget.embedded) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(4, 10, 4, 18),
-          child: column,
-        );
+        return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: column);
       }
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(18),
-        child: column,
-      );
+      return SingleChildScrollView(padding: const EdgeInsets.all(18), child: column);
     }
 
     if (photos.isEmpty) {
-      return frame(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionLabel("Progress Photos"),
-            const SizedBox(height: 8),
-            addButton,
-            const HintBox(text: "No progress photos yet."),
-          ],
-        ),
-      );
-    }
-
-    return frame(
-      Column(
+      return frame(Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionLabel("Progress Photos"),
           const SizedBox(height: 8),
           addButton,
-          ...photos.map(
-            (p) => Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 220,
-                        child: ProgressPhotoView(photo: p),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Text(
-                          p.date,
-                          style: TextStyle(fontSize: 12, color: AppColors.mute),
-                        ),
-                        if (p.addedBy != null) ...[
-                          const SizedBox(width: 8),
-                          Tag(text: "Added by ${p.addedBy}"),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      "COACH COMMENT",
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.mute,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    AppField(
-                      controller: _controllerFor(p.id, p.coachComment),
-                      placeholder: "Leave a note on this photo…",
-                      maxLines: 2,
-                    ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: BtnGhost(
-                        onPressed: _savingId == p.id
-                            ? null
-                            : () => _saveComment(p.id),
-                        child: Text(
-                          _savingId == p.id ? "Saving…" : "Save comment",
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          const HintBox(text: "No progress photos yet."),
         ],
-      ),
-    );
+      ));
+    }
+
+    return frame(Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel("Progress Photos"),
+          const SizedBox(height: 8),
+          addButton,
+          ...photos.map((p) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 220,
+                          child: ProgressPhotoView(photo: p),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Text(p.date, style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                          if (p.addedBy != null) ...[
+                            const SizedBox(width: 8),
+                            Tag(text: "Added by ${p.addedBy}"),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text("COACH COMMENT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.mute, letterSpacing: 0.5)),
+                      const SizedBox(height: 6),
+                      AppField(controller: _controllerFor(p.id, p.coachComment), placeholder: "Leave a note on this photo…", maxLines: 2),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: BtnGhost(
+                          onPressed: _savingId == p.id ? null : () => _saveComment(p.id),
+                          child: Text(_savingId == p.id ? "Saving…" : "Save comment"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )),
+        ],
+      ));
   }
 }

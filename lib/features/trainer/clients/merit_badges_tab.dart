@@ -24,11 +24,7 @@ final _coachAwardable = kMeritBadges
 /// reference. Automatic badges are awarded by award-merit-badge, not from
 /// this screen. The owner can still force-assign one, and that one stays.
 class MeritBadgesTab extends ConsumerStatefulWidget {
-  const MeritBadgesTab({
-    super.key,
-    required this.clientId,
-    this.embedded = false,
-  });
+  const MeritBadgesTab({super.key, required this.clientId, this.embedded = false});
 
   final String clientId;
 
@@ -143,10 +139,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
         ),
       );
       if (!widget.embedded) return page;
-      return SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.72,
-        child: page,
-      );
+      return SizedBox(height: MediaQuery.sizeOf(context).height * 0.72, child: page);
     }
 
     Future<void> refreshBadgesAndPoints() => _refreshBadgesAndPoints();
@@ -251,168 +244,46 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
     }
 
     final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SectionLabel("Merit Badges — ${info.name}"),
-        TapHighlight(
-          onTap: () => setState(() => _showGymCitizen = true),
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0x14D9D9D9),
-              border: Border.all(color: AppColors.goldDim),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                if (gymCitizenActiveSubCount > 0 &&
-                    gymCitizenActiveSubCount < 10)
-                  GymCitizenProgressRing(
-                    activeCount: gymCitizenActiveSubCount,
-                    size: 30,
-                    child: const MeritBadgeShield(
-                      badgeKey: "gym_citizen",
-                      size: 20,
-                      grayscale: true,
-                    ),
-                  )
-                else
-                  MeritBadgeShield(
-                    badgeKey: "gym_citizen",
-                    size: 30,
-                    grayscale: gymCitizenActiveSubCount < 10,
-                  ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Gym Citizen — $gymCitizenActiveSubCount/10 verified",
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.gold,
-                        ),
-                      ),
-                      Text(
-                        "Check off the 10 sub-badges — the badge itself awards automatically at 10/10.",
-                        style: TextStyle(fontSize: 11, color: AppColors.mute),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
-              ],
-            ),
-          ),
-        ),
-        if (isOwner && forceAssignable.isNotEmpty)
-          AppCard(
-            borderColor: AppColors.gold,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      LucideIcons.shieldAlert,
-                      size: 13,
-                      color: AppColors.gold,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      "OWNER OVERRIDE — ASSIGN ANY BADGE",
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  "Bypasses normal eligibility checks. A normally-automatic badge assigned this way can still be automatically removed later if it turns out the client doesn't actually qualify.",
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _forcePick,
-                        dropdownColor: AppColors.card,
-                        isExpanded: true,
-                        style: TextStyle(fontSize: 13, color: AppColors.txt),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: AppColors.bg,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 10,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: AppColors.line),
-                          ),
-                        ),
-                        hint: Text(
-                          "Choose a badge…",
-                          style: TextStyle(fontSize: 13, color: AppColors.mute),
-                        ),
-                        items: forceAssignable
-                            .map(
-                              (b) => DropdownMenuItem(
-                                value: b.key,
-                                child: Text(
-                                  "${b.name} (${b.category == 'coach' ? 'Coach Awarded' : 'Automatic'})",
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() => _forcePick = v),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    BtnGold(
-                      onPressed: _forcePick == null ? null : forceAward,
-                      child: const Text("Assign"),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        if (awardable.isNotEmpty) ...[
-          Text(
-            "AWARD A BADGE",
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.mute,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...awardable.map(
-            (b) => AppCard(
-              borderColor: AppColors.gold,
-              onTap: () => award(b),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionLabel("Merit Badges — ${info.name}"),
+          TapHighlight(
+            onTap: () => setState(() => _showGymCitizen = true),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0x14D9D9D9),
+                border: Border.all(color: AppColors.goldDim),
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: Row(
                 children: [
-                  MeritBadgeShield(badgeKey: b.key, size: 30),
+                  if (gymCitizenActiveSubCount > 0 &&
+                      gymCitizenActiveSubCount < 10)
+                    GymCitizenProgressRing(
+                      activeCount: gymCitizenActiveSubCount,
+                      size: 30,
+                      child: const MeritBadgeShield(
+                        badgeKey: "gym_citizen",
+                        size: 20,
+                        grayscale: true,
+                      ),
+                    )
+                  else
+                    MeritBadgeShield(
+                      badgeKey: "gym_citizen",
+                      size: 30,
+                      grayscale: gymCitizenActiveSubCount < 10,
+                    ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          b.name,
+                          "Gym Citizen — $gymCitizenActiveSubCount/10 verified",
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -420,241 +291,388 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
                           ),
                         ),
                         Text(
-                          b.description,
+                          "Check off the 10 sub-badges — the badge itself awards automatically at 10/10.",
                           style: TextStyle(fontSize: 11, color: AppColors.mute),
                         ),
                       ],
                     ),
                   ),
-                  Icon(LucideIcons.award, size: 15, color: AppColors.gold),
+                  Icon(
+                    LucideIcons.chevronRight,
+                    size: 16,
+                    color: AppColors.mute,
+                  ),
                 ],
               ),
             ),
           ),
-        ],
-        SectionLabel("Active (${activeBadges.length})"),
-        if (activeBadges.isEmpty)
-          const HintBox(text: "No Merit Badges earned yet.")
-        else
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: activeBadges.map((b) {
-              final meta = meritBadgeByKey(b.badgeKey);
-              return Container(
-                width: 148,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  border: Border.all(color: AppColors.line),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    MeritBadgeShield(badgeKey: b.badgeKey, size: 64),
-                    const SizedBox(height: 4),
-                    Text(
-                      meta?.name ?? b.badgeKey,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      b.earnedMethod == "coach" ? "COACH AWARDED" : "AUTOMATIC",
-                      style: TextStyle(
-                        fontSize: 9,
+          if (isOwner && forceAssignable.isNotEmpty)
+            AppCard(
+              borderColor: AppColors.gold,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        LucideIcons.shieldAlert,
+                        size: 13,
                         color: AppColors.gold,
-                        fontWeight: FontWeight.w700,
                       ),
-                    ),
-                    Text(
-                      b.earnedAt,
-                      style: TextStyle(fontSize: 11, color: AppColors.mute),
-                    ),
-                    if (b.earnedMethod == "coach" && b.grantedByUserId != null)
+                      SizedBox(width: 6),
                       Text(
-                        "by ${staffNames[b.grantedByUserId] ?? 'a coach'}",
-                        style: TextStyle(fontSize: 11, color: AppColors.mute),
-                      ),
-                    if (b.note != null)
-                      Text(
-                        '"${b.note}"',
-                        textAlign: TextAlign.center,
+                        "OWNER OVERRIDE — ASSIGN ANY BADGE",
                         style: TextStyle(
                           fontSize: 11,
-                          color: AppColors.mute,
-                          fontStyle: FontStyle.italic,
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                    if (b.earnedMethod == "coach")
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: OutlinedButton(
-                          onPressed: () => revoke(b, meta?.name ?? b.badgeKey),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.errorText,
-                            side: BorderSide(color: AppColors.danger),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    "Bypasses normal eligibility checks. A normally-automatic badge assigned this way can still be automatically removed later if it turns out the client doesn't actually qualify.",
+                    style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _forcePick,
+                          dropdownColor: AppColors.card,
+                          isExpanded: true,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.txt,
+                          ),
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: AppColors.bg,
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 10,
                             ),
-                            minimumSize: Size.zero,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(
+                                color: AppColors.line,
+                              ),
+                            ),
                           ),
-                          child: const Text(
-                            "Remove",
-                            style: TextStyle(fontSize: 10),
+                          hint: Text(
+                            "Choose a badge…",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.mute,
+                            ),
                           ),
+                          items: forceAssignable
+                              .map(
+                                (b) => DropdownMenuItem(
+                                  value: b.key,
+                                  child: Text(
+                                    "${b.name} (${b.category == 'coach' ? 'Coach Awarded' : 'Automatic'})",
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() => _forcePick = v),
                         ),
                       ),
-                  ],
-                ),
-              );
-            }).toList(),
-          ),
-        if (historyBadges.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          SectionLabel("History (${historyBadges.length})"),
-          ...historyBadges.map((b) {
-            final meta = meritBadgeByKey(b.badgeKey);
-            return Opacity(
-              opacity: 0.7,
-              child: AppCard(
+                      const SizedBox(width: 8),
+                      BtnGold(
+                        onPressed: _forcePick == null ? null : forceAward,
+                        child: const Text("Assign"),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          if (awardable.isNotEmpty) ...[
+            Text(
+              "AWARD A BADGE",
+              style: TextStyle(
+                fontSize: 11,
+                color: AppColors.mute,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...awardable.map(
+              (b) => AppCard(
+                borderColor: AppColors.gold,
+                onTap: () => award(b),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    MeritBadgeShield(
-                      badgeKey: b.badgeKey,
-                      size: 34,
-                      grayscale: true,
-                    ),
+                    MeritBadgeShield(badgeKey: b.key, size: 30),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            meta?.name ?? b.badgeKey,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            "Earned ${b.earnedAt} · ${b.earnedMethod == 'coach' ? 'Awarded by ${staffNames[b.grantedByUserId] ?? 'a coach'}' : 'Earned automatically'}",
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.mute,
-                            ),
-                          ),
-                          Text(
-                            "Removed ${b.revokedAt}${b.revokedByUserId != null ? ' by ${staffNames[b.revokedByUserId] ?? 'a coach'}' : ' automatically'}",
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.errorText,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        ],
-        const SizedBox(height: 16),
-        const SectionLabel("All Merit Badges — Reference"),
-        ...kMeritBadges.map((b) {
-          final earned = activeBadges.where((m) => m.badgeKey == b.key);
-          final isEarned = earned.isNotEmpty;
-          return AppCard(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    MeritBadgeShield(
-                      badgeKey: b.key,
-                      size: 34,
-                      grayscale: !isEarned,
-                    ),
-                    if (!isEarned)
-                      const Icon(
-                        LucideIcons.lock,
-                        size: 12,
-                        color: Colors.white,
-                      ),
-                  ],
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Text(
                             b.name,
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
-                              color: isEarned ? AppColors.gold : AppColors.txt,
+                              color: AppColors.gold,
                             ),
                           ),
                           Text(
-                            b.category == "coach"
-                                ? "COACH AWARDED"
-                                : "AUTOMATIC",
+                            b.description,
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 11,
                               color: AppColors.mute,
-                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ],
                       ),
+                    ),
+                    Icon(
+                      LucideIcons.award,
+                      size: 15,
+                      color: AppColors.gold,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          SectionLabel("Active (${activeBadges.length})"),
+          if (activeBadges.isEmpty)
+            const HintBox(text: "No Merit Badges earned yet.")
+          else
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: activeBadges.map((b) {
+                final meta = meritBadgeByKey(b.badgeKey);
+                return Container(
+                  width: 148,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      MeritBadgeShield(badgeKey: b.badgeKey, size: 64),
+                      const SizedBox(height: 4),
                       Text(
-                        b.description,
+                        meta?.name ?? b.badgeKey,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        b.earnedMethod == "coach"
+                            ? "COACH AWARDED"
+                            : "AUTOMATIC",
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        b.earnedAt,
                         style: TextStyle(
                           fontSize: 11,
                           color: AppColors.mute,
-                          height: 1.4,
                         ),
                       ),
-                      if (isEarned)
+                      if (b.earnedMethod == "coach" &&
+                          b.grantedByUserId != null)
                         Text(
-                          "Earned ${earned.first.earnedAt}",
+                          "by ${staffNames[b.grantedByUserId] ?? 'a coach'}",
                           style: TextStyle(
                             fontSize: 11,
-                            color: AppColors.gold,
-                            fontWeight: FontWeight.w700,
+                            color: AppColors.mute,
+                          ),
+                        ),
+                      if (b.note != null)
+                        Text(
+                          '"${b.note}"',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.mute,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      if (b.earnedMethod == "coach")
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: OutlinedButton(
+                            onPressed: () =>
+                                revoke(b, meta?.name ?? b.badgeKey),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.errorText,
+                              side: BorderSide(color: AppColors.danger),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              minimumSize: Size.zero,
+                            ),
+                            child: const Text(
+                              "Remove",
+                              style: TextStyle(fontSize: 10),
+                            ),
                           ),
                         ),
                     ],
                   ),
-                ),
-              ],
+                );
+              }).toList(),
             ),
-          );
-        }),
-      ],
+          if (historyBadges.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            SectionLabel("History (${historyBadges.length})"),
+            ...historyBadges.map((b) {
+              final meta = meritBadgeByKey(b.badgeKey);
+              return Opacity(
+                opacity: 0.7,
+                child: AppCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      MeritBadgeShield(
+                        badgeKey: b.badgeKey,
+                        size: 34,
+                        grayscale: true,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              meta?.name ?? b.badgeKey,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              "Earned ${b.earnedAt} · ${b.earnedMethod == 'coach' ? 'Awarded by ${staffNames[b.grantedByUserId] ?? 'a coach'}' : 'Earned automatically'}",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.mute,
+                              ),
+                            ),
+                            Text(
+                              "Removed ${b.revokedAt}${b.revokedByUserId != null ? ' by ${staffNames[b.revokedByUserId] ?? 'a coach'}' : ' automatically'}",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.errorText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ],
+          const SizedBox(height: 16),
+          const SectionLabel("All Merit Badges — Reference"),
+          ...kMeritBadges.map((b) {
+            final earned = activeBadges.where((m) => m.badgeKey == b.key);
+            final isEarned = earned.isNotEmpty;
+            return AppCard(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      MeritBadgeShield(
+                        badgeKey: b.key,
+                        size: 34,
+                        grayscale: !isEarned,
+                      ),
+                      if (!isEarned)
+                        const Icon(
+                          LucideIcons.lock,
+                          size: 12,
+                          color: Colors.white,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              b.name,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: isEarned
+                                    ? AppColors.gold
+                                    : AppColors.txt,
+                              ),
+                            ),
+                            Text(
+                              b.category == "coach"
+                                  ? "COACH AWARDED"
+                                  : "AUTOMATIC",
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.mute,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          b.description,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.mute,
+                            height: 1.4,
+                          ),
+                        ),
+                        if (isEarned)
+                          Text(
+                            "Earned ${earned.first.earnedAt}",
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.gold,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
     );
     if (widget.embedded) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(4, 10, 4, 18),
-        child: content,
-      );
+      return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: content);
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: content,
-    );
+    return SingleChildScrollView(padding: const EdgeInsets.all(18), child: content);
   }
 }
 

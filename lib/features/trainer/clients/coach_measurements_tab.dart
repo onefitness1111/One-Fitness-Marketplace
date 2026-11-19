@@ -12,19 +12,14 @@ import "../../../data/providers/trainer_providers.dart";
 /// list plus one comment box per entry (Notifications spec — "Coach
 /// comments on a measurement").
 class CoachMeasurementsTab extends ConsumerStatefulWidget {
-  const CoachMeasurementsTab({
-    super.key,
-    required this.clientId,
-    this.embedded = false,
-  });
+  const CoachMeasurementsTab({super.key, required this.clientId, this.embedded = false});
   final String clientId;
 
   /// Inside the Progress page, so the parent scrolls instead of this tab.
   final bool embedded;
 
   @override
-  ConsumerState<CoachMeasurementsTab> createState() =>
-      _CoachMeasurementsTabState();
+  ConsumerState<CoachMeasurementsTab> createState() => _CoachMeasurementsTabState();
 }
 
 class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
@@ -32,10 +27,7 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
   String? _savingId;
 
   TextEditingController _controllerFor(String id, String? current) =>
-      _controllers.putIfAbsent(
-        id,
-        () => TextEditingController(text: current ?? ""),
-      );
+      _controllers.putIfAbsent(id, () => TextEditingController(text: current ?? ""));
 
   @override
   void dispose() {
@@ -51,43 +43,18 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
     final text = _controllers[measurementId]?.text.trim() ?? "";
     setState(() => _savingId = measurementId);
     try {
-      final next = record.measurements
-          .map(
-            (m) => m.id == measurementId
-                ? m.copyWith(coachComment: text, coachCommentAt: stamp())
-                : m,
-          )
-          .toList();
+      final next = record.measurements.map((m) => m.id == measurementId ? m.copyWith(coachComment: text, coachCommentAt: stamp()) : m).toList();
       await SupabaseService.updateClientMeasurements(widget.clientId, next);
-      ref
-          .read(trainerClientRecordsProvider.notifier)
-          .update(widget.clientId, (r) => r.copyWith(measurements: next));
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(measurements: next));
       if (text.isNotEmpty) {
-        final info = ref
-            .read(trainerRosterProvider)
-            .where((c) => c.id == widget.clientId);
+        final info = ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId);
         if (info.isNotEmpty) {
-          notifyCoachComment(
-            toEmail: info.first.email ?? "",
-            toName: info.first.name,
-            kind: "measurement entry",
-            profileId: info.first.id,
-          );
+          notifyCoachComment(toEmail: info.first.email ?? "", toName: info.first.name, kind: "measurement entry", profileId: info.first.id);
         }
       }
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Comment saved.")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Comment saved.")));
     } catch (_) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "Couldn't save — check your connection and try again.",
-            ),
-          ),
-        );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save — check your connection and try again.")));
     } finally {
       if (mounted) setState(() => _savingId = null);
     }
@@ -96,99 +63,57 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
   @override
   Widget build(BuildContext context) {
     final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
-    final entries = (record?.measurements ?? const []).toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+    final entries = (record?.measurements ?? const []).toList()..sort((a, b) => b.date.compareTo(a.date));
 
     Widget frame(Widget column) {
       if (widget.embedded) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(4, 10, 4, 18),
-          child: column,
-        );
+        return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: column);
       }
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(18),
-        child: column,
-      );
+      return SingleChildScrollView(padding: const EdgeInsets.all(18), child: column);
     }
 
     if (entries.isEmpty) {
-      return frame(
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SectionLabel("Measurements"),
-            SizedBox(height: 8),
-            HintBox(text: "No measurements logged yet."),
-          ],
-        ),
-      );
+      return frame(const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionLabel("Measurements"),
+          SizedBox(height: 8),
+          HintBox(text: "No measurements logged yet."),
+        ],
+      ));
     }
 
-    return frame(
-      Column(
+    return frame(Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionLabel("Measurements"),
           ...entries.map((m) {
-            final filled = m.fields
-                .where((f) => f.$3 != null && f.$3!.isNotEmpty)
-                .toList();
+            final filled = m.fields.where((f) => f.$3 != null && f.$3!.isNotEmpty).toList();
             return Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      m.date,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
+                    Text(m.date, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 14,
                       runSpacing: 4,
                       children: filled
-                          .map(
-                            (f) => Text(
-                              "${f.$2}: ${f.$3}",
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.mute,
-                              ),
-                            ),
-                          )
+                          .map((f) => Text("${f.$2}: ${f.$3}", style: TextStyle(fontSize: 12, color: AppColors.mute)))
                           .toList(),
                     ),
                     const SizedBox(height: 10),
-                    Text(
-                      "COACH COMMENT",
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.mute,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
+                    Text("COACH COMMENT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.mute, letterSpacing: 0.5)),
                     const SizedBox(height: 6),
-                    AppField(
-                      controller: _controllerFor(m.id, m.coachComment),
-                      placeholder: "Leave a note on this entry…",
-                      maxLines: 2,
-                    ),
+                    AppField(controller: _controllerFor(m.id, m.coachComment), placeholder: "Leave a note on this entry…", maxLines: 2),
                     const SizedBox(height: 6),
                     Align(
                       alignment: Alignment.centerRight,
                       child: BtnGhost(
-                        onPressed: _savingId == m.id
-                            ? null
-                            : () => _saveComment(m.id),
-                        child: Text(
-                          _savingId == m.id ? "Saving…" : "Save comment",
-                        ),
+                        onPressed: _savingId == m.id ? null : () => _saveComment(m.id),
+                        child: Text(_savingId == m.id ? "Saving…" : "Save comment"),
                       ),
                     ),
                   ],
@@ -197,7 +122,6 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
             );
           }),
         ],
-      ),
-    );
+      ));
   }
 }
