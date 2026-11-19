@@ -35,6 +35,7 @@ Future<void> showAddManualBookingSheet(
   int? initialDurationMin,
   String? initialSessionType,
   String? initialDiscipline,
+  String? initialClientId,
 }) {
   return showModalBottomSheet(
     context: context,
@@ -43,7 +44,7 @@ Future<void> showAddManualBookingSheet(
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
     builder: (ctx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-      child: _AddManualBookingBody(initialDate: initialDate, initialTrainerId: initialTrainerId, initialSlot: initialSlot, initialDurationMin: initialDurationMin, initialSessionType: initialSessionType, initialDiscipline: initialDiscipline),
+      child: _AddManualBookingBody(initialDate: initialDate, initialTrainerId: initialTrainerId, initialSlot: initialSlot, initialDurationMin: initialDurationMin, initialSessionType: initialSessionType, initialDiscipline: initialDiscipline, initialClientId: initialClientId),
     ),
   );
 }
@@ -56,6 +57,7 @@ class _AddManualBookingBody extends ConsumerStatefulWidget {
     this.initialDurationMin,
     this.initialSessionType,
     this.initialDiscipline,
+    this.initialClientId,
   });
   final String initialDate;
   final String? initialTrainerId;
@@ -63,6 +65,7 @@ class _AddManualBookingBody extends ConsumerStatefulWidget {
   final int? initialDurationMin;
   final String? initialSessionType;
   final String? initialDiscipline;
+  final String? initialClientId;
 
   @override
   ConsumerState<_AddManualBookingBody> createState() => _AddManualBookingBodyState();
@@ -71,6 +74,17 @@ class _AddManualBookingBody extends ConsumerStatefulWidget {
 class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
   ClientInfo? _client;
   bool _picking = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = widget.initialClientId;
+    if (id == null) return;
+    final matches = ref.read(trainerRosterProvider).where((c) => c.id == id);
+    if (matches.isEmpty) return;
+    _client = matches.first;
+    _picking = false;
+  }
   bool _pickingCoach = false;
   late String? _trainerId = widget.initialTrainerId;
   late String _sessionType = widget.initialSessionType ?? "semi-private";
