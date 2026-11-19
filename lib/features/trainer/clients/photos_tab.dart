@@ -23,8 +23,11 @@ import "../../../data/providers/trainer_providers.dart";
 /// Anything staff add is stamped with their name so the client can tell it
 /// from one of their own.
 class PhotosTab extends ConsumerStatefulWidget {
-  const PhotosTab({super.key, required this.clientId});
+  const PhotosTab({super.key, required this.clientId, this.embedded = false});
   final String clientId;
+
+  /// Inside the Progress page, so the parent scrolls instead of this tab.
+  final bool embedded;
 
   @override
   ConsumerState<PhotosTab> createState() => _PhotosTabState();
@@ -185,24 +188,26 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
       ),
     );
 
-    if (photos.isEmpty) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionLabel("Progress Photos"),
-            const SizedBox(height: 8),
-            addButton,
-            const HintBox(text: "No progress photos yet."),
-          ],
-        ),
-      );
+    Widget frame(Widget column) {
+      if (widget.embedded) {
+        return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: column);
+      }
+      return SingleChildScrollView(padding: const EdgeInsets.all(18), child: column);
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
+    if (photos.isEmpty) {
+      return frame(Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel("Progress Photos"),
+          const SizedBox(height: 8),
+          addButton,
+          const HintBox(text: "No progress photos yet."),
+        ],
+      ));
+    }
+
+    return frame(Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionLabel("Progress Photos"),
@@ -249,7 +254,6 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
                 ),
               )),
         ],
-      ),
-    );
+      ));
   }
 }

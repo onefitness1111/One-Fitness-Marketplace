@@ -236,13 +236,13 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Avatar(src: info.photo, name: info.name, size: 64, active: true),
+              Avatar(src: info.photo, name: info.name, size: 52, active: true),
               const SizedBox(width: 14),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,7 +262,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
           const SectionLabel("Active Merit Badges"),
           hasActiveBadges
               ? Padding(

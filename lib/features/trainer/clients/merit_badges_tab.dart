@@ -24,9 +24,12 @@ final _coachAwardable = kMeritBadges
 /// reference. Automatic badges are awarded by award-merit-badge, not from
 /// this screen. The owner can still force-assign one, and that one stays.
 class MeritBadgesTab extends ConsumerStatefulWidget {
-  const MeritBadgesTab({super.key, required this.clientId});
+  const MeritBadgesTab({super.key, required this.clientId, this.embedded = false});
 
   final String clientId;
+
+  /// Inside the Progress page, so the parent scrolls instead of this tab.
+  final bool embedded;
 
   @override
   ConsumerState<MeritBadgesTab> createState() => _MeritBadgesTabState();
@@ -126,7 +129,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
         .length;
 
     if (_showGymCitizen) {
-      return LocalBackScope(
+      final page = LocalBackScope(
         isOpen: true,
         onBack: () => setState(() => _showGymCitizen = false),
         child: _GymCitizenChecklist(
@@ -135,6 +138,8 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
           onBack: () => setState(() => _showGymCitizen = false),
         ),
       );
+      if (!widget.embedded) return page;
+      return SizedBox(height: MediaQuery.sizeOf(context).height * 0.72, child: page);
     }
 
     Future<void> refreshBadgesAndPoints() => _refreshBadgesAndPoints();
@@ -238,9 +243,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
       }
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
+    final content = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionLabel("Merit Badges — ${info.name}"),
@@ -665,8 +668,11 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
             );
           }),
         ],
-      ),
     );
+    if (widget.embedded) {
+      return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: content);
+    }
+    return SingleChildScrollView(padding: const EdgeInsets.all(18), child: content);
   }
 }
 
