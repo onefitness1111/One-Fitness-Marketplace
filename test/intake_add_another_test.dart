@@ -8,12 +8,8 @@ import "package:onefitness/features/client/intake/form_filler_screen.dart";
 
 /// Adding another copy of an intake form for one client.
 ///
-/// A client re-doing their intake months later is giving new answers, not
-/// correcting old ones, so the new copy opens blank. The previous submission
-/// is kept and stays readable — that part is covered in
-/// intake_answers_view_test.dart; what's pinned here is that "add another"
-/// and "edit" really are different acts, because they share a screen and the
-/// only visible difference is what's in the fields when it opens.
+/// A new filing opens with the previous answers already filled in, so only
+/// what changed has to be typed. Saving still archives the previous filing.
 void main() {
   const schema = IntakeSchema(
     title: "Personalized Training Intake",
@@ -67,17 +63,9 @@ void main() {
     expect(find.text("Lose fat"), findsOneWidget);
   });
 
-  testWidgets("adding another opens blank", (tester) async {
-    // The bug this covers: a new copy that arrived pre-filled would look
-    // already answered, and a coach would be correcting last year's intake
-    // while believing they were taking a fresh one.
+  testWidgets("a new filing starts from the previous answers", (tester) async {
     await pump(tester, keepPrevious: true);
-    expect(find.text("Lose fat"), findsNothing);
-  });
-
-  testWidgets("the question itself is still there on a blank copy", (tester) async {
-    // Blank means empty answers, not an empty form.
-    await pump(tester, keepPrevious: true);
+    expect(find.text("Lose fat"), findsOneWidget);
     expect(find.text("Main goal"), findsOneWidget);
   });
 }

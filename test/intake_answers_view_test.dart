@@ -322,7 +322,7 @@ void main() {
     testWidgets("a coach gets both actions", (tester) async {
       await pump(tester, onFillAgain: () {});
       expect(find.text("Edit answers"), findsOneWidget);
-      expect(find.text("Add another"), findsOneWidget);
+      expect(find.text("Start new intake"), findsOneWidget);
     });
 
     testWidgets("a client gets only the correction", (tester) async {
@@ -335,7 +335,7 @@ void main() {
 
     testWidgets("the hint explains the difference when both are offered", (tester) async {
       await pump(tester, onFillAgain: () {});
-      expect(find.textContaining("Add another starts a blank copy"), findsOneWidget);
+      expect(find.textContaining("Start new intake files"), findsOneWidget);
     });
 
     testWidgets("and doesn't mention re-filling when it isn't on offer", (tester) async {
@@ -347,7 +347,7 @@ void main() {
     testWidgets("Add another is what fires the fresh-submission path", (tester) async {
       var fillAgain = false;
       await pump(tester, onFillAgain: () => fillAgain = true);
-      await tester.tap(find.text("Add another"));
+      await tester.tap(find.text("Start new intake"));
       expect(fillAgain, isTrue);
     });
   });

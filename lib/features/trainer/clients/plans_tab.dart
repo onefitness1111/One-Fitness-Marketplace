@@ -13,6 +13,7 @@ import "../../../data/models/client_record.dart";
 import "../../../data/models/nutrition_plan.dart";
 import "../../../data/models/saved_program.dart";
 import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/program_draft_request.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../dashboard/live_workouts_card.dart";
 import "../programs/nutrition_builder_screen.dart";
@@ -156,6 +157,18 @@ class _ProgramsPanel extends ConsumerStatefulWidget {
 }
 
 class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final next = ref.read(programDraftRequestProvider);
+      if (next == null || next.clientId != widget.clientId) return;
+      ref.read(programDraftRequestProvider.notifier).clear();
+      _draftFromRefresh(next.kind);
+    });
+  }
+
   bool _generatingWorkoutDraft = false;
   bool _regeneratingWorkoutDraft = false;
   bool _generatingNutritionDraft = false;
@@ -205,6 +218,32 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
 
   // ── Workout AI draft ────────────────────────────────────────────────
 
+  Future<void> _draftFromRefresh(String kind) async {
+    final nutrition = kind == "nutrition";
+    final hasProgram = nutrition
+        ? _record.savedNutritionPrograms.isNotEmpty
+        : _record.savedPrograms.isNotEmpty;
+    try {
+      final res = nutrition
+          ? await SupabaseService.generateAiNutritionProgram(widget.clientId, forceRegenerate: hasProgram)
+          : await SupabaseService.generateAiWorkoutProgram(widget.clientId, forceRegenerate: hasProgram);
+      if (res["ok"] == false) {
+        _showAlert(res["reason"] == "intakes-incomplete" || res["reason"] == "nutrition-intake-incomplete"
+            ? "That intake isn't marked complete yet."
+            : "Couldn't draft a program from the new intake.");
+        return;
+      }
+      await SupabaseService.clearProgramRefresh(widget.clientId, kind);
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) {
+        final flags = Map<String, String>.from(r.programRefresh)..remove(kind);
+        return r.copyWith(programRefresh: flags);
+      });
+    } catch (e) {
+      _showAlert(e.toString().replaceFirst("Exception: ", ""));
+    }
+    await _refreshClient();
+  }
+
   Future<void> _generateWorkoutDraft() async {
     setState(() => _generatingWorkoutDraft = true);
     try {
@@ -244,6 +283,11 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
     // which is where a coach looks to see what a client is on — has to show
     // it rather than staying empty.
     await _loadIntoLiveSplit(draft);
+    await SupabaseService.clearProgramRefresh(widget.clientId, "training");
+    ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) {
+      final flags = Map<String, String>.from(r.programRefresh)..remove("training");
+      return r.copyWith(programRefresh: flags);
+    });
     _notifyClientPlanAssigned("workout");
   }
 
@@ -406,7 +450,11 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
       );
       await SupabaseService.updateClientNutrition(widget.clientId, nextPlan);
       await SupabaseService.updateClientSavedNutritionPrograms(widget.clientId, nextPrograms);
-      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) => r.copyWith(nutrition: nextPlan, savedNutritionPrograms: nextPrograms));
+      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (r) {
+        final flags = Map<String, String>.from(r.programRefresh)..remove("nutrition");
+        return r.copyWith(nutrition: nextPlan, savedNutritionPrograms: nextPrograms, programRefresh: flags);
+      });
+      await SupabaseService.clearProgramRefresh(widget.clientId, "nutrition");
       _notifyClientPlanAssigned("nutrition");
     } catch (e) {
       if (mounted) setState(() => _error = "Couldn't apply this draft — check your connection and try again.");

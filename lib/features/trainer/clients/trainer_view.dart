@@ -8,6 +8,7 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../data/providers/program_draft_request.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../chat/coach_chat_screen.dart";
 import "../dashboard/live_workouts_card.dart";
@@ -270,6 +271,10 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
         return ProfileTab(
           clientId: widget.clientId,
           onGoToIntake: _goToIntakeForm,
+          onRequestProgram: (kind) {
+            ref.read(programDraftRequestProvider.notifier).ask(widget.clientId, kind);
+            _visit("plans", "programs");
+          },
         );
       case "intake":
         return IntakeTab(

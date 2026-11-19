@@ -213,12 +213,20 @@ class IntakeSubmission {
     this.by,
     this.attachments = const [],
     this.templateVersion,
+    this.archivedAt,
+    this.extra = const {},
   });
 
   final Map<String, dynamic> answers;
   final String? at;
   final String? by;
   final List<IntakeAttachment> attachments;
+
+  /// Set once this filing was replaced. Null means it is still current.
+  final String? archivedAt;
+
+  /// Movement-screen fields that do not live inside [answers].
+  final Map<String, dynamic> extra;
 
   /// Which version of a gym-defined form these answers were given against.
   ///
@@ -228,11 +236,14 @@ class IntakeSubmission {
 
   static IntakeSubmission fromJson(Map<String, dynamic> j) {
     final answers = j["answers"];
+    final extra = j["extra"];
     return IntakeSubmission(
       answers: answers is Map ? answers.cast<String, dynamic>() : const {},
       at: j["at"] as String?,
       by: j["by"] as String?,
       templateVersion: (j["templateVersion"] as num?)?.toInt(),
+      archivedAt: j["archivedAt"] as String?,
+      extra: extra is Map ? extra.cast<String, dynamic>() : const {},
       attachments: ((j["attachments"] as List?) ?? const [])
           .whereType<Map>()
           .map((a) => IntakeAttachment.fromJson(a.cast<String, dynamic>()))
@@ -247,6 +258,8 @@ class IntakeSubmission {
     "by": by,
     "attachments": [for (final a in attachments) a.toJson()],
     if (templateVersion != null) "templateVersion": templateVersion,
+    if (archivedAt != null) "archivedAt": archivedAt,
+    if (extra.isNotEmpty) "extra": extra,
   };
 }
 
@@ -343,6 +356,8 @@ class IntakeRecord {
           // Travels with the answers: without it an archived submission would
           // be read back against whatever the form says today.
           templateVersion: templateVersion,
+          archivedAt: next.at,
+          extra: extra,
         ),
         ...history,
       ].take(kMaxIntakeHistory).toList(),

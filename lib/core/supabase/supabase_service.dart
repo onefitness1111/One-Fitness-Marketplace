@@ -2943,6 +2943,11 @@ class SupabaseService {
               "at": prior?["at"],
               "by": prior?["by"],
               "attachments": prior?["attachments"] ?? const [],
+              "archivedAt": record.at,
+              "extra": {
+                for (final entry in prior!.entries)
+                  if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
+              },
             },
             ...priorHistory,
           ].take(kMaxIntakeHistory).toList()
@@ -2974,6 +2979,116 @@ class SupabaseService {
         "data": {...current, "intake": nextIntake},
       });
     }
+    await _syncIntakeSubmissions(
+      profileId: profileId,
+      assessmentKey: assessmentKey,
+      prior: prior,
+      record: record,
+      keepPrevious: keepPrevious && prior?["completed"] == true,
+    );
+  }
+
+  /// Best-effort copy into intake_submissions. The JSON on client_records
+  /// remains the current filing, so a build that predates this table still
+  /// reads the latest answers. A missing table is ignored.
+  static Future<void> _syncIntakeSubmissions({
+    required String profileId,
+    required String assessmentKey,
+    required Map<String, dynamic>? prior,
+    required IntakeRecord record,
+    required bool keepPrevious,
+  }) async {
+    try {
+      final closed = await client
+          .from("intake_submissions")
+          .update({
+            "archived_at": DateTime.now().toUtc().toIso8601String(),
+            "archived_by": currentUser?.id,
+          })
+          .eq("client_id", profileId)
+          .eq("assessment_key", assessmentKey)
+          .isFilter("archived_at", null)
+          .select("id");
+      final closedCount = closed.length;
+      if (keepPrevious && closedCount == 0 && prior != null) {
+        final answers = prior["answers"];
+        final extra = {
+          for (final entry in prior.entries)
+            if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
+        };
+        await client.from("intake_submissions").insert({
+          "client_id": profileId,
+          "assessment_key": assessmentKey,
+          "answers": answers is Map ? answers : const {},
+          "completed": true,
+          "completed_at": prior["at"],
+          "completed_by": prior["by"],
+          "archived_at": DateTime.now().toUtc().toIso8601String(),
+          "archived_by": currentUser?.id,
+          "attachments": prior["attachments"] ?? const [],
+          "extra": extra,
+        });
+      }
+      await _insertCurrentIntakeSubmission(
+        profileId: profileId,
+        assessmentKey: assessmentKey,
+        record: record,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> _insertCurrentIntakeSubmission({
+    required String profileId,
+    required String assessmentKey,
+    required IntakeRecord record,
+  }) async {
+    try {
+      await client.from("intake_submissions").insert({
+        "client_id": profileId,
+        "assessment_key": assessmentKey,
+        "answers": record.answers,
+        "completed": record.completed,
+        "completed_at": record.at,
+        "completed_by": record.by,
+        "attachments": [for (final a in record.attachments) a.toJson()],
+        "template_version": record.templateVersion,
+        "extra": record.extra,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> flagProgramRefresh(String profileId, String kind) async {
+    final at = DateTime.now().toUtc().toIso8601String();
+    try {
+      await client.from("program_refresh_flags").upsert({
+        "client_id": profileId,
+        "kind": kind,
+        "flagged_at": at,
+      });
+    } catch (_) {}
+    try {
+      final row = await client.from("client_records").select("data").eq("profile_id", profileId).maybeSingle();
+      final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+      final existing = current["programRefresh"];
+      final flags = existing is Map ? existing.cast<String, dynamic>() : <String, dynamic>{};
+      await upsertClientRecordPatch(profileId, {
+        "programRefresh": {...flags, kind: at},
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> clearProgramRefresh(String profileId, String kind) async {
+    try {
+      await client.from("program_refresh_flags").delete().eq("client_id", profileId).eq("kind", kind);
+    } catch (_) {}
+    try {
+      final row = await client.from("client_records").select("data").eq("profile_id", profileId).maybeSingle();
+      final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
+      final existing = current["programRefresh"];
+      final flags = existing is Map ? Map<String, dynamic>.from(existing) : <String, dynamic>{};
+      flags.remove(kind);
+      await upsertClientRecordPatch(profileId, {"programRefresh": flags});
+    } catch (_) {}
   }
 
   /// `client_records.data.tourSeen` — one-time "seen" flags for the
@@ -6086,7 +6201,16 @@ class SupabaseService {
               ),
             )
           : const {},
+      programRefresh: _programRefreshFromJson(j["programRefresh"]),
     );
+  }
+
+  static Map<String, String> _programRefreshFromJson(dynamic j) {
+    if (j is! Map) return const {};
+    return {
+      for (final entry in j.entries)
+        if (entry.value != null) entry.key.toString(): entry.value.toString(),
+    };
   }
 
   static MacroTargets _macroTargetsFromJson(dynamic j) => j is Map

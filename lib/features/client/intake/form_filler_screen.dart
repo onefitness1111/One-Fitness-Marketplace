@@ -87,18 +87,10 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
   void initState() {
     super.initState();
     final existing = widget.client.intake[widget.assessmentKey];
-    if (widget.keepPrevious) {
-      // Adding another copy of this form, so it opens blank. Carrying the
-      // last answers over would make a fresh intake look already filled in,
-      // and a client re-doing it months later would be correcting old
-      // answers instead of giving new ones. The previous submission isn't
-      // lost — it's saved and readable as soon as this one is filed.
-      _answers = {};
-      _attachments = [];
-    } else {
-      _answers = Map<String, dynamic>.from(existing?.answers ?? {});
-      _attachments = [...?existing?.attachments];
-    }
+    // A new filing starts from the previous answers so only what changed
+    // has to be typed again. Saving still archives that previous filing.
+    _answers = Map<String, dynamic>.from(existing?.answers ?? {});
+    _attachments = [...?existing?.attachments];
   }
 
   @override
@@ -153,22 +145,8 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
         keepPrevious: widget.keepPrevious,
       );
       widget.onSaved(record);
-      // Nutrition Intake completing kicks off an AI-drafted calorie/macro
-      // target set (training vs. rest day) — fire-and-forget, mirroring
-      // IntakeArea.jsx's own trigger; a coach reviews and applies it later
-      // from NutritionBuilder, it's never visible to the client directly.
-      // Fires for a client completing their own intake (self-service, not
-      // "a coach generating a program") — but NOT for a coach filling this
-      // out on a client's behalf unless that coach is the owner, since
-      // generating a program is now a hard owner-only capability. Only
-      // checks for a prior AI draft (not any nutrition program at all —
-      // most real clients already have a coach-built plan on file, and
-      // that shouldn't block their first AI target draft from generating).
-      final isOwner = ref.read(trainerAuthProvider) == "owner";
-      final allowedToGenerate = isOwner;
-      if (widget.assessmentKey == "nutritional" && allowedToGenerate && !widget.client.savedNutritionPrograms.any((p) => p.source == "ai")) {
-        SupabaseService.generateAiNutritionProgram(widget.profileId).catchError((_) => <String, dynamic>{});
-      }
+      // A new filing never drafts a program by itself. The owner does that
+      // from the client's profile, after they have seen the new answers.
       widget.onBack();
     } catch (e) {
       if (!mounted) return;

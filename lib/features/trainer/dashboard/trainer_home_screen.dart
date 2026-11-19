@@ -9,6 +9,7 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
+import "../../../core/utils/intake_resubmit.dart";
 import "../../../core/utils/quiet_nudge.dart";
 import "../../../data/models/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
@@ -252,6 +253,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       ...computeNeedsAttention(myRoster, clientRecords),
       ...computeUnloggedAttendance(myRoster, bookings),
       ...computeCoachCodeAlerts(myRoster),
+      ...programRefreshAttention(myRoster, clientRecords, forOwner: isOwner),
       ...quietClientAttention(
         nudges: _quietNudges,
         records: clientRecords,

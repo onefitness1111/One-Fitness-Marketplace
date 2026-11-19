@@ -7,6 +7,8 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/write_failure.dart";
 import "../../../core/utils/intake_entitlements.dart";
+import "../../../core/utils/intake_resubmit.dart";
+import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/intake_forms.dart";
 import "../../../data/providers/client_providers.dart";
@@ -90,6 +92,9 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
   /// as an earlier submission or writes over them.
   bool _fillingAgain = false;
 
+  /// An archived filing opened read-only. viewing 1 is the newest archived.
+  ({AssessmentDef form, int viewing})? _archive;
+
   @override
   void initState() {
     super.initState();
@@ -131,23 +136,68 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
         _open = null;
         _editing = true;
         _fillingAgain = false;
+        _archive = null;
       });
+
+  void _beginNew(AssessmentDef form) {
+    final done = widget.client.intake[form.key]?.completed ?? false;
+    setState(() {
+      _archive = null;
+      _open = form;
+      _editing = true;
+      _fillingAgain = done;
+    });
+  }
+
+  Future<void> _noteRefresh(String key, {required bool fresh}) async {
+    if (!fresh) return;
+    final kind = programRefreshKind(key);
+    if (kind == null) return;
+    final at = stamp();
+    if (widget.who == "client") {
+      ref.read(clientRecordProvider.notifier).update(
+            (r) => r.copyWith(programRefresh: {...r.programRefresh, kind: at}),
+          );
+    } else {
+      ref.read(trainerClientRecordsProvider.notifier).update(
+            widget.profileId,
+            (r) => r.copyWith(programRefresh: {...r.programRefresh, kind: at}),
+          );
+    }
+    await SupabaseService.flagProgramRefresh(widget.profileId, kind);
+    final named = widget.who == "client"
+        ? ref.read(clientInfoProvider).name
+        : ref.read(trainerRosterProvider).where((c) => c.id == widget.profileId).map((c) => c.name).firstOrNull;
+    notifyOwnerInternal(
+      title: programRefreshLabel(kind, forOwner: true),
+      body: "${(named ?? "").trim().isEmpty ? "A client" : named} filed a new intake.",
+    );
+  }
 
   /// Writes the movement screen beside `completed` rather than inside
   /// `answers`, matching the shape the web app writes and
   /// generate-ai-workout-program reads.
   Future<void> _savePhysical(String assessmentKey, Map<String, dynamic> payload) async {
     final prior = widget.client.intake[assessmentKey];
+    final already = prior?.completed ?? false;
+    final fresh = _fillingAgain || !already;
     final record = IntakeRecord(
       answers: prior?.answers ?? const {},
       completed: true,
       at: stamp(),
       by: "Trainer/Coach",
-      attachments: prior?.attachments ?? const [],
-      extra: {...?prior?.extra, ...payload},
+      attachments: _fillingAgain ? const [] : (prior?.attachments ?? const []),
+      extra: _fillingAgain ? payload : {...?prior?.extra, ...payload},
+      history: prior?.history ?? const [],
     );
     try {
-      await SupabaseService.updateClientIntake(widget.profileId, assessmentKey, record);
+      await SupabaseService.updateClientIntake(
+        widget.profileId,
+        assessmentKey,
+        record,
+        keepPrevious: _fillingAgain && already,
+      );
+      await _noteRefresh(assessmentKey, fresh: fresh);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,6 +235,63 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
         if (mounted) _closeAssessment();
       });
       return const SizedBox.shrink();
+    }
+
+    final archive = _archive;
+    if (archive != null) {
+      final past = client.intake[archive.form.key];
+      if (past == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _archive = null);
+        });
+      } else if (archive.form.schema != null) {
+        return LocalBackScope(
+          isOpen: true,
+          onBack: () => setState(() => _archive = null),
+          child: IntakeAnswersScreen(
+            schema: archive.form.schema!,
+            schemaFor: (version) =>
+                templateVersionFor(archive.form.key, version, ref.read(intakeFormTemplatesProvider))?.schema ??
+                archive.form.schema!,
+            record: past,
+            profileId: widget.profileId,
+            assessmentKey: archive.form.key,
+            initialViewing: archive.viewing,
+            onBack: () => setState(() => _archive = null),
+            onEdit: () {},
+          ),
+        );
+      } else {
+        final item = archive.viewing > 0 && archive.viewing <= past.history.length
+            ? past.history[archive.viewing - 1]
+            : null;
+        final summary = item?.extra["coachSummary"]?.toString() ?? past.extra["coachSummary"]?.toString() ?? "";
+        return LocalBackScope(
+          isOpen: true,
+          onBack: () => setState(() => _archive = null),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                BackBar(onBack: () => setState(() => _archive = null)),
+                const SizedBox(height: 10),
+                Text(archive.form.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                const SizedBox(height: 6),
+                Text(
+                  "Completed by ${item?.by ?? past.by ?? "Coach"} · ${item?.at ?? past.at ?? ""}",
+                  style: TextStyle(fontSize: 12, color: AppColors.mute),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  summary.trim().isEmpty ? "This movement screen was kept as it was recorded." : summary.trim(),
+                  style: const TextStyle(fontSize: 14, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
     }
 
     if (_open != null) {
@@ -257,12 +364,10 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
             // Coaches only: a client re-opening their own intake is almost
             // always correcting something they just typed, not starting a
             // fresh one.
-            onFillAgain: isClientView
-                ? null
-                : () => setState(() {
-                      _editing = true;
-                      _fillingAgain = true;
-                    }),
+            onFillAgain: () => setState(() {
+              _editing = true;
+              _fillingAgain = true;
+            }),
           ),
         );
       }
@@ -289,7 +394,9 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
           who: widget.who,
           keepPrevious: _fillingAgain,
           onSaved: (record) {
+            final already = client.intake[a.key]?.completed ?? false;
             widget.onSaved(a.key, record);
+            _noteRefresh(a.key, fresh: _fillingAgain || !already);
             // A client who has bought nothing has just told the gym what they
             // want out of training. Choosing a plan is the next thing they
             // came to do, so take them there rather than returning them to a
@@ -339,6 +446,14 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
                 ),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: BtnGhost(
+              full: true,
+              onPressed: () => _chooseNewIntake(isClientView, entitlements),
+              child: const Text("Start new intake"),
+            ),
+          ),
           ...intakeFormsWith(ref.watch(liveIntakeFormTemplatesProvider)).map((group) {
           final visible = group.assessments
               .where((a) => a.clientCanFill || a.physical)
@@ -501,6 +616,118 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
             ),
           );
         }),
+        _archivedSection(isClientView),
+        ],
+      ),
+    );
+  }
+
+  List<AssessmentDef> _formsFor(bool isClientView, IntakeEntitlements entitlements) {
+    final forms = <AssessmentDef>[];
+    for (final group in intakeFormsWith(ref.read(liveIntakeFormTemplatesProvider))) {
+      for (final form in group.assessments) {
+        if (form.physical && isClientView) continue;
+        if (!form.physical && !form.clientCanFill && isClientView) continue;
+        if (isClientView && !entitlements.allows(form.key)) continue;
+        if (!form.physical && form.schema == null) continue;
+        forms.add(form);
+      }
+    }
+    return forms;
+  }
+
+  Future<void> _chooseNewIntake(bool isClientView, IntakeEntitlements entitlements) async {
+    final forms = _formsFor(isClientView, entitlements);
+    if (!mounted) return;
+    if (forms.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("There isn't a form you can start right now.")),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<AssessmentDef>(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 16, 18, 8),
+              child: Text("Start new intake", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            ),
+            for (final form in forms)
+              ListTile(
+                title: Text(form.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text("Conducted by: ${form.by}", style: TextStyle(color: AppColors.mute, fontSize: 12)),
+                onTap: () => Navigator.pop(ctx, form),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) _beginNew(picked);
+  }
+
+  Widget _archivedSection(bool isClientView) {
+    final rows = <({AssessmentDef form, int viewing, String at, String by})>[];
+    for (final group in intakeFormsWith(ref.watch(liveIntakeFormTemplatesProvider))) {
+      for (final form in group.assessments) {
+        if (form.physical && isClientView) continue;
+        final record = widget.client.intake[form.key];
+        if (record == null) continue;
+        for (var i = 0; i < record.history.length; i++) {
+          final past = record.history[i];
+          rows.add((form: form, viewing: i + 1, at: past.at ?? "", by: past.by ?? "Client"));
+        }
+      }
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    rows.sort((a, b) => b.at.compareTo(a.at));
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: AppColors.line),
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        iconColor: AppColors.mute,
+        collapsedIconColor: AppColors.mute,
+        tilePadding: EdgeInsets.zero,
+        title: Text(
+          "Archived (${rows.length})",
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        children: [
+          for (final row in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: AppCard(
+                padding: EdgeInsets.zero,
+                onTap: () => setState(() => _archive = (form: row.form, viewing: row.viewing)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.history, size: 16, color: AppColors.mute),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(row.form.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Completed by ${row.by}${row.at.isEmpty ? "" : " · ${row.at}"}",
+                              style: TextStyle(fontSize: 12, color: AppColors.mute),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
