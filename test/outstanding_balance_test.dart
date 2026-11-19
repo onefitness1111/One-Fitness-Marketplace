@@ -119,6 +119,17 @@ void main() {
     expect(staff.contains("phone"), isFalse);
   });
 
+  test("book anyway stays available until a coach has used the one grace booking", () {
+    const open = BalanceGate(balanceCents: -2500);
+    expect(staffBalanceChoices(isOwner: false, gate: open).bookAnywayEnabled, isTrue);
+    expect(staffBalanceChoices(isOwner: false, gate: open).note, isNull);
+    const used = BalanceGate(balanceCents: -2500, graceUsed: true);
+    final coach = staffBalanceChoices(isOwner: false, gate: used);
+    expect(coach.bookAnywayEnabled, isFalse);
+    expect(coach.note, contains("one session"));
+    expect(staffBalanceChoices(isOwner: true, gate: used).bookAnywayEnabled, isTrue);
+  });
+
   test("a coach is warned, may add one session, and is blocked after that", () {
     var gate = const BalanceGate(balanceCents: -2500);
     expect(staffBalanceWarning(gate.balanceCents), "This client has an outstanding balance of \$25.00.");
