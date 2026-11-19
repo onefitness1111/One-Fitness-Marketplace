@@ -161,6 +161,18 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
     _visit(k, k == "plans" ? "training" : _plansSub);
   }
 
+  Widget _quickActions() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: _QuickActions(
+        onMessage: _message,
+        onBook: _book,
+        onLog: _logWorkout,
+        onNote: _addNote,
+      ),
+    );
+  }
+
   void _message() {
     ref.read(coachChatOpenRequestProvider.notifier).open(widget.clientId);
     ref.read(trainerModeProvider.notifier).go("chat");
@@ -206,15 +218,6 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-            child: _QuickActions(
-              onMessage: _message,
-              onBook: _book,
-              onLog: _logWorkout,
-              onNote: _addNote,
-            ),
-          ),
           Container(
             key: const Key("client-tabs"),
             decoration: BoxDecoration(
@@ -246,7 +249,15 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
             ),
           ),
           Expanded(
-            child: AnimatedScreenSwitcher(screenKey: _tab, child: _body()),
+            child: AnimatedScreenSwitcher(
+              screenKey: _tab,
+              child: NestedScrollView(
+                headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                  SliverToBoxAdapter(child: _quickActions()),
+                ],
+                body: _body(),
+              ),
+            ),
           ),
         ],
       ),

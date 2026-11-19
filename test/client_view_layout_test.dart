@@ -93,4 +93,42 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(const Key("client-more")), findsNothing);
   });
+
+  testWidgets("quick actions scroll away with the page", (tester) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(body: TrainerView(clientId: "demo-jordan")),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final action = find.byKey(const Key("quick-action-Message"));
+    final tabs = find.byKey(const Key("client-tabs"));
+    final tabsTop = tester.getTopLeft(tabs).dy;
+    final name = find.text("Jordan Casey");
+    expect(tester.getTopLeft(action).dy, greaterThan(tabsTop));
+    final nameBefore = tester.getTopLeft(name).dy;
+    expect(nameBefore, greaterThan(tester.getTopLeft(action).dy));
+
+    await tester.drag(name, const Offset(0, -160));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(tester.getTopLeft(tabs).dy, tabsTop);
+    expect(tester.getTopLeft(name).dy, lessThan(nameBefore));
+    final nestedTop = tester.getTopLeft(find.byType(NestedScrollView)).dy;
+    final stillBuilt = action.evaluate();
+    if (stillBuilt.isNotEmpty) {
+      final box = tester.renderObject<RenderBox>(action);
+      final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+      expect(bottom, lessThanOrEqualTo(nestedTop + 1));
+    }
+  });
 }
