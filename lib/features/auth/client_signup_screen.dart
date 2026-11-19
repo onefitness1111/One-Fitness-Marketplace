@@ -163,16 +163,13 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
       // false, so doing nothing correctly leaves them opted out.
       if (_smsConsent) {
         await SupabaseService.updateSmsOptIn(userId, true);
-        notifyPush(
-          profileId: userId,
-          title: "Welcome to ONE Fitness",
-          body: "Your account is set up. You'll get booking confirmations, reminders and waitlist offers here. Reply STOP to opt out.",
-          sms: true,
-        );
+        SupabaseService.clientNotify("welcome", {});
       }
       // Fire-and-forget, deliberately not awaited: the welcome email must
       // never be a reason signup takes longer or appears to fail.
       notifyWelcome(toEmail: email, firstName: firstName);
+      notifyPush(profileId: userId, title: "Welcome", body: "Your ONE Fitness account is ready.");
+      notifyOwnerInternal(title: "New client", body: "$name signed up.");
       await SupabaseService.recordTermsAcceptance(
         userId,
         version: kTermsVersion,
@@ -240,8 +237,9 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
               Center(
                 child: Column(
                   children: [
-                    GestureDetector(
+                    TapHighlight(
                       onTap: _pickingPhoto ? null : _pickPhoto,
+                      shape: BoxShape.circle,
                       child: Container(
                         width: 80,
                         height: 80,
@@ -323,7 +321,7 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
               const SizedBox(height: 10),
               FieldLabeled(
                 label: "Birthday (optional)",
-                child: InkWell(
+                child: TapHighlight(
                   onTap: _pickBirthday,
                   child: InputDecorator(
                     decoration: InputDecoration(
@@ -375,7 +373,7 @@ class _ClientSignupScreenState extends ConsumerState<ClientSignupScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     const Text("I agree to the ", style: TextStyle(fontSize: 13, height: 1.4)),
-                    GestureDetector(
+                    TapHighlight(
                       onTap: () => setState(() => _readingTerms = true),
                       child: Text(
                         "Terms of Use",

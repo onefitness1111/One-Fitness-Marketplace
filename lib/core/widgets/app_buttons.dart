@@ -1,5 +1,7 @@
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "../theme/app_colors.dart";
+import "../theme/app_theme.dart";
 import "pressable_scale.dart";
 
 /// Mirrors FormPrimitives.jsx `BtnGold` — solid gold pill button.
@@ -13,7 +15,12 @@ class BtnGold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = ElevatedButton(
-      onPressed: onPressed,
+      onPressed: onPressed == null
+          ? null
+          : () {
+              HapticFeedback.lightImpact();
+              onPressed!();
+            },
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.gold,
         foregroundColor: AppColors.onGold,
@@ -23,7 +30,7 @@ class BtnGold extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-      ),
+      ).copyWith(overlayColor: AppTheme.pressedOverlay(AppColors.pressOverlay)),
       child: child,
     );
     final scaled = PressableScale(child: button);
@@ -42,14 +49,19 @@ class BtnGhost extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = OutlinedButton(
-      onPressed: onPressed,
+      onPressed: onPressed == null
+          ? null
+          : () {
+              HapticFeedback.lightImpact();
+              onPressed!();
+            },
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.mute,
         side: BorderSide(color: AppColors.line),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-      ),
+      ).copyWith(overlayColor: AppTheme.pressedOverlay(AppColors.pressOverlay)),
       child: child,
     );
     final scaled = PressableScale(child: button);

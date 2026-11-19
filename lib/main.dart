@@ -3,9 +3,13 @@ import "package:app_links/app_links.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "core/chat/unread_chat.dart";
+import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
 import "core/supabase/supabase_service.dart";
 import "core/theme/app_colors.dart";
+import "core/updates/app_update.dart";
+import "core/updates/app_update_sheet.dart";
 import "core/theme/palette_scope.dart";
 import "data/providers/client_providers.dart";
 import "data/providers/role_provider.dart";
@@ -84,6 +88,9 @@ class _RootGate extends ConsumerStatefulWidget {
 
 class _RootGateState extends ConsumerState<_RootGate> {
   bool _checkedStripeReturn = false;
+  AppUpdateConfig? _updateConfig;
+  UpdatePrompt _updatePrompt = UpdatePrompt.none;
+  bool _updateDismissed = false;
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
 
@@ -91,10 +98,20 @@ class _RootGateState extends ConsumerState<_RootGate> {
   /// or freeze made on another device (staff cancelling a client's
   /// membership, say) shows without signing out and in again.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
-    onResume: () => refreshClientInfos(ref).catchError((Object e) {
-      // ignore: avoid_print
-      print("[resume] membership refresh failed: $e");
-    }),
+    onPause: () {
+      LiveLogStore.instance.flush();
+    },
+    onInactive: () {
+      LiveLogStore.instance.flush();
+    },
+    onResume: () {
+      refreshClientInfos(ref).catchError((Object e) {
+        // ignore: avoid_print
+        print("[resume] membership refresh failed: $e");
+      });
+      _checkAppUpdate();
+      ref.read(unreadChatKeysProvider.notifier).refresh();
+    },
   );
 
   @override
@@ -106,7 +123,21 @@ class _RootGateState extends ConsumerState<_RootGate> {
     // deep link instead — see membership_hub_screen.dart's returnUrl and
     // the matching intent-filter/CFBundleURLTypes entries.
     if (!kIsWeb) _initDeepLinks();
+    LiveLogStore.instance.ensureLoaded();
     _lifecycle; // created now so it's listening from the first frame
+    _checkAppUpdate();
+  }
+
+  Future<void> _checkAppUpdate() async {
+    final row = await SupabaseService.loadAppConfig();
+    if (!mounted || row == null) return;
+    final config = AppUpdateConfig.fromJson(row);
+    final installed = await installedAppVersion();
+    if (!mounted) return;
+    setState(() {
+      _updateConfig = config;
+      _updatePrompt = updatePromptFor(installed: installed, config: config);
+    });
   }
 
   Future<void> _initDeepLinks() async {
@@ -149,6 +180,25 @@ class _RootGateState extends ConsumerState<_RootGate> {
     _showStripeSnack(stripeParam);
   }
 
+  Widget _withUpdateNotice(Widget child) {
+    final config = _updateConfig;
+    if (config == null || _updatePrompt == UpdatePrompt.none) return child;
+    if (_updatePrompt == UpdatePrompt.optional && _updateDismissed) return child;
+    final blocking = _updatePrompt == UpdatePrompt.blocking;
+    return Stack(
+      children: [
+        child,
+        Positioned.fill(
+          child: AppUpdateNotice(
+            config: config,
+            blocking: blocking,
+            onDismiss: blocking ? null : () => setState(() => _updateDismissed = true),
+          ),
+        ),
+      ],
+    );
+  }
+
   void _showStripeSnack(String stripeParam) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final messenger = scaffoldMessengerKey.currentState;
@@ -176,11 +226,23 @@ class _RootGateState extends ConsumerState<_RootGate> {
     final bootstrap = ref.watch(supabaseBootstrapProvider);
 
     return bootstrap.when(
-      loading: () => Scaffold(backgroundColor: AppColors.bg, body: Center(child: CircularProgressIndicator(color: AppColors.gold))),
+      loading: () => Scaffold(
+        backgroundColor: AppColors.bg,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: AppColors.gold),
+              const SizedBox(height: 14),
+              Text("Loading…", style: TextStyle(fontSize: 14, color: AppColors.txt)),
+            ],
+          ),
+        ),
+      ),
       error: (err, st) => const _RootContent(), // fall back to mock/signed-out state rather than block the app
       data: (_) {
         _checkStripeReturn();
-        return const _RootContent();
+        return _withUpdateNotice(const _RootContent());
       },
     );
   }

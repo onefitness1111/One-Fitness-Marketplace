@@ -13,9 +13,10 @@ const bool kClientsCanMessageAnyCoach = false;
 const String kMessageIdentity = "self"; // "self" | "business"
 
 // scheduling defaults (DEFAULT_PLATFORM_SETTINGS.scheduling)
-const int kLateCancellationHours = 24;
+const int kLateCancellationHours = 12;
 const bool kBlockRescheduleInWindow = true;
-const int kLateCancellationFeeCents = 2500;
+const int kLateCancellationFeeCents = 1500;
+const int kNoShowCancelHours = 4;
 const int kNoShowFeeCents = 2500;
 const int kMaxBookingHorizonDays = 30;
 const int kMinBookingLeadHours = 2;

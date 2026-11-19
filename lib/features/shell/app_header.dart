@@ -1,3 +1,4 @@
+import "../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/theme/app_colors.dart";
@@ -24,7 +25,7 @@ class AppHeader extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
           child: Container(
             padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(color: const Color(0xFF1A1A1B), borderRadius: BorderRadius.circular(50), border: Border.all(color: AppColors.line)),
+            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(50), border: Border.all(color: AppColors.line)),
             child: Row(
               children: [
                 _PillButton(label: "Coach", selected: role == "trainer", onTap: () => ref.read(roleProvider.notifier).set("trainer")),
@@ -47,7 +48,7 @@ class _PillButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(50),
         child: Container(

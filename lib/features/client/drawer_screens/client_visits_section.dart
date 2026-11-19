@@ -144,6 +144,7 @@ class _ClientVisitsSectionState extends ConsumerState<ClientVisitsSection> {
           b,
           blockRescheduleInWindow: settings.blockRescheduleInWindow,
           lateCancellationHours: settings.lateCancellationHours,
+          noShowCancelHours: settings.noShowCancelHours,
         );
 
     // Back from Past Visits returns to Future Visits before leaving the page.
@@ -187,7 +188,12 @@ class _ClientVisitsSectionState extends ConsumerState<ClientVisitsSection> {
                   booking: b,
                   trainer: trainerFor(b),
                   reschedulable: canRescheduleNow(b),
-                  charged: cancelWindow(b, lateCancellationHours: settings.lateCancellationHours) != "free",
+                  charged: cancelWindow(
+                        b,
+                        lateCancellationHours: settings.lateCancellationHours,
+                        noShowCancelHours: settings.noShowCancelHours,
+                      ) !=
+                      "free",
                   onReschedule: () => widget.onReschedule(b),
                   onCancel: () => setState(() => _cancelTarget = b),
                 ),
@@ -216,7 +222,7 @@ class _VisitsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

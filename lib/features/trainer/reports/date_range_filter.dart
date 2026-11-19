@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
@@ -60,7 +61,7 @@ class _DateRangeFilterState extends State<DateRangeFilter> {
               final selected = widget.range.preset == p.$1;
               return Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => widget.onChange(p.$1 == "custom" ? presetRange("custom", customStart: widget.range.start, customEnd: widget.range.end) : presetRange(p.$1)),
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
@@ -100,7 +101,7 @@ class _CustomDateField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

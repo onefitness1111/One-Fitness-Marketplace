@@ -21,8 +21,8 @@ final _coachAwardable = kMeritBadges
 /// Badges). Award a coach-category badge, remove an active coach-awarded
 /// one, an owner-only "force assign any badge" override, an Active grid, a
 /// History section for removed coach-awarded badges, and a full-catalog
-/// reference. Automatic badges are never awarded here — this mock build
-/// has no eligibility engine, so they only ever appear via mock seed data.
+/// reference. Automatic badges are awarded by award-merit-badge, not from
+/// this screen. The owner can still force-assign one, and that one stays.
 class MeritBadgesTab extends ConsumerStatefulWidget {
   const MeritBadgesTab({super.key, required this.clientId});
 
@@ -244,7 +244,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionLabel("Merit Badges — ${info.name}"),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _showGymCitizen = true),
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -514,7 +514,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
                                 revoke(b, meta?.name ?? b.badgeKey),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.errorText,
-                              side: const BorderSide(color: Color(0xFF6B3B3B)),
+                              side: BorderSide(color: AppColors.danger),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
                                 vertical: 3,

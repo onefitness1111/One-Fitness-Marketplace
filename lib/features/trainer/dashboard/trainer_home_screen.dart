@@ -1,3 +1,4 @@
+import "../../../core/live_log/live_log_store.dart";
 import "../../../core/live_log/live_log_sync.dart";
 import "dart:async";
 
@@ -8,11 +9,16 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
+import "../../../core/utils/quiet_nudge.dart";
+import "../../../data/models/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/late_fee_notice.dart";
+import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/notification_triggers.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
@@ -24,6 +30,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/booking/date_strip.dart";
 import "../../shared/session_logger_view.dart";
+import "update_announcement_card.dart";
 import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
 import "../../../core/widgets/session_timer.dart";
@@ -60,6 +67,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   LiveSession? _run;
   List<String> _runClientIds = const [];
   bool _startingRun = false;
+  List<QuietNudge> _quietNudges = const [];
 
   /// Starting a session the coach is already running returns the existing
   /// row rather than a second one, so backing out of this screen and
@@ -86,6 +94,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         location: first?.locationName,
       );
       if (!mounted) return;
+      LiveLogStore.instance.rememberPlace(slot: slot);
       setState(() => _run = run);
       if (run != null) ref.read(liveSessionsProvider.notifier).apply(run);
     } catch (e) {
@@ -121,10 +130,8 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final run = _run;
     _run = null;
     if (run == null) return;
-    // Ending the session ends everyone's live workout in it too.
-    for (final id in _runClientIds) {
-      unawaited(LiveActivity.end(id, isoToday()));
-    }
+    // Ending the booked clock does not finish a program day. Each day is
+    // saved and closed on its own, so two days on the same date stay separate.
     _runClientIds = const [];
     try {
       await SupabaseService.endSessionRun(run.id);
@@ -139,7 +146,22 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   @override
   void initState() {
     super.initState();
+    final saved = LiveLogStore.instance;
+    if (saved.openSlot != null) {
+      _sessionSlot = saved.openSlot;
+      _sessionClientId = saved.openClientId;
+      if (saved.openClientId != null) _openedClientIds.add(saved.openClientId!);
+    }
     _sweepStaleAttendance();
+    unawaited(_loadQuietNudges());
+  }
+
+  Future<void> _loadQuietNudges() async {
+    try {
+      final rows = await SupabaseService.loadQuietNudges();
+      if (!mounted) return;
+      setState(() => _quietNudges = rows);
+    } catch (_) {}
   }
 
   /// Opportunistic, one-shot per screen visit — same "no cron, safe to call
@@ -175,7 +197,15 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   Future<void> _saveCoachSession(String clientId, WorkoutLogEntry entry) async {
     final record = ref.read(trainerClientRecordsProvider)[clientId];
     final updatedLogs = [...?record?.workoutLogs.where((l) => l.id != entry.id), entry];
-    await SupabaseService.updateClientWorkoutLogs(clientId, updatedLogs);
+    await SupabaseService.appendWorkoutLog(clientId, entry);
+    final roster = ref.read(trainerRosterProvider);
+    final matches = roster.where((c) => c.id == clientId);
+    final person = matches.isEmpty ? null : matches.first;
+    flagSessionSwaps(
+      entry: entry,
+      clientName: person?.name ?? "A client",
+      coachId: person?.primaryTrainerId,
+    );
     ref
         .read(trainerClientRecordsProvider.notifier)
         .update(clientId, (r) => r.copyWith(workoutLogs: updatedLogs));
@@ -209,6 +239,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       ...computeNeedsAttention(myRoster, clientRecords),
       ...computeUnloggedAttendance(myRoster, bookings),
       ...computeCoachCodeAlerts(myRoster),
+      ...quietClientAttention(
+        nudges: _quietNudges,
+        records: clientRecords,
+        rosterIds: roster.map((c) => c.id).toSet(),
+        isOwner: isOwner,
+        viewerId: isOwner ? null : trainerAuth,
+      ),
     ];
     final grouped = <String, List<AttentionItem>>{};
     for (final n in needsAttention) {
@@ -247,11 +284,14 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       // dashboard offered "Start Session" again as though nothing had
       // happened, and Beep Your Coach switched off under the clients still
       // training. Eleven separate runs were recorded for one slot that way.
-      void closeSession() => setState(() {
-        _sessionSlot = null;
-        _sessionClientId = null;
-        _openedClientIds.clear();
-      });
+      void closeSession() {
+        LiveLogStore.instance.rememberPlace(clear: true);
+        setState(() {
+          _sessionSlot = null;
+          _sessionClientId = null;
+          _openedClientIds.clear();
+        });
+      }
 
       // Ending it is its own, deliberate act — and it asks first, because
       // it takes Beep Your Coach away from everyone in the session.
@@ -331,7 +371,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               ...loggable.map((b) {
                 final attendee = resolveAttendee(b.clientId, roster, trainers);
                 return AppCard(
-                  onTap: () => setState(() => _sessionClientId = b.clientId),
+                  onTap: () {
+                    LiveLogStore.instance.rememberPlace(clientId: b.clientId, slot: slot);
+                    setState(() => _sessionClientId = b.clientId);
+                  },
                   child: Row(
                     children: [
                       Avatar(src: attendee.photo, name: attendee.name, size: 36),
@@ -412,10 +455,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                       final b = loggable[i];
                       final person = resolveAttendee(b.clientId, roster, trainers);
                       final active = b.clientId == activeClientId;
-                      return InkWell(
+                      return TapHighlight(
                         onTap: active
                             ? null
-                            : () => setState(() => _sessionClientId = b.clientId),
+                            : () {
+                                LiveLogStore.instance.rememberPlace(clientId: b.clientId, slot: slot);
+                                setState(() => _sessionClientId = b.clientId);
+                              },
                         borderRadius: BorderRadius.circular(10),
                         child: Container(
                           width: 76,
@@ -435,7 +481,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 10.5,
+                                  fontSize: 12,
                                   fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                                   color: active ? AppColors.onGold : AppColors.mute,
                                 ),
@@ -474,7 +520,16 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                               key: ValueKey(id),
                               client: clientRecords[id]!,
                               loggedBy: "coach",
-                              authorName: myName,
+                              loggedByName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
+                              sessionId: _run?.id ?? "${_viewDate}|$slot|${group.isEmpty ? (trainerAuth ?? "") : group.first.trainerId}",
+                              initialFocusIndex: LiveLogStore.instance.exerciseIndexByClient[id] ?? 0,
+                              onFocusIndex: (index) => LiveLogStore.instance.rememberPlace(
+                                clientId: id,
+                                slot: slot,
+                                exerciseClientId: id,
+                                exerciseIndex: index,
+                              ),
+                              authorName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
                               authorRole: isOwner ? "owner" : "coach",
                               emptyProgramText:
                                   "This client doesn't have an active workout program yet.",
@@ -569,6 +624,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           )),
           const SizedBox(height: 18),
           const LiveWorkoutsCard(),
+          if (isOwner) const UpdateAnnouncementCard(),
           if (isOwner)
             stag(Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -608,7 +664,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                     Text(
                       "${entry.key.toUpperCase()} (${entry.value.length})",
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w800,
                         color: AppColors.warning,
                         letterSpacing: 0.5,
@@ -661,7 +717,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                     Text(
                                       "${dayLabel(n.date!)}${n.date == isoToday() ? ' · Today' : ''} · ${fmtSlot(n.slot!)}",
                                       style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize: 12,
                                         color: AppColors.mute,
                                       ),
                                     ),
@@ -681,7 +737,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 ),
               ),
             ),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _calendarOpen = !_calendarOpen),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 2),
@@ -812,7 +868,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                           child: Text(
                             alreadyLive ? "● Live — rejoin" : "▶ Start Session",
                             style: const TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -826,7 +882,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
                           "Check in at least one client to start this session",
-                          style: TextStyle(fontSize: 10.5, color: AppColors.mute),
+                          style: TextStyle(fontSize: 12, color: AppColors.mute),
                         ),
                       ),
                     const SizedBox(height: 8),
@@ -853,7 +909,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            InkWell(
+                            TapHighlight(
                               onTap: clickable
                                   ? () => openClient(rosterClient.id)
                                   : null,
@@ -912,7 +968,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                               t.first.displayTitle,
                                           ].join(" · "),
                                           style: TextStyle(
-                                            fontSize: 11,
+                                            fontSize: 12,
                                             color: AppColors.mute,
                                           ),
                                         ),
@@ -935,21 +991,56 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                 runSpacing: 5,
                                 children: kAttendanceOptions.map((opt) {
                                   final active = b.attendanceStatus == opt.key;
-                                  return InkWell(
+                                  return TapHighlight(
                                     onTap: () {
                                       final prev = b.attendanceStatus;
                                       final next = active ? null : opt.key;
                                       ref
                                           .read(allBookingsProvider.notifier)
                                           .updateAttendance(b.id, next);
-                                      SupabaseService.updateBookingAttendance(
+                                      final marked = SupabaseService.updateBookingAttendance(
                                         b.id,
                                         next,
                                       ).catchError((Object _) {
                                         ref
                                             .read(allBookingsProvider.notifier)
                                             .updateAttendance(b.id, prev);
+                                        return null;
                                       });
+                                      if (next == "early-cancel" || next == "late-cancel" || next == "no-show") {
+                                        final coachName = t.isNotEmpty ? t.first.displayTitle : "Your coach";
+                                        final settings = ref.read(platformSettingsProvider);
+                                        final window = cancelWindow(
+                                          b,
+                                          lateCancellationHours: settings.lateCancellationHours,
+                                          noShowCancelHours: settings.noShowCancelHours,
+                                        );
+                                        final cents = next == "no-show"
+                                            ? settings.noShowFeeCents
+                                            : next == "late-cancel"
+                                                ? cancelFeeCentsFor(
+                                                    window,
+                                                    lateCents: settings.lateCancellationFeeCents,
+                                                    closeCents: settings.noShowFeeCents,
+                                                  )
+                                                : 0;
+                                        marked.then((fee) {
+                                          final onBalance = fee?["balanceRecorded"] == true;
+                                          final coachBody = "${attendee.name} was marked ${next == "no-show" ? "a no-show" : next == "late-cancel" ? "a late cancel" : "an early cancel"}.";
+                                          if (onBalance) {
+                                            notifyPush(profileId: b.trainerId, title: "Session updated", body: coachBody);
+                                            return;
+                                          }
+                                          notifyClientAndCoach(
+                                            clientId: b.clientId,
+                                            coachId: b.trainerId,
+                                            clientTitle: next == "no-show" ? "No-show fee" : "Session updated",
+                                            clientBody: attendanceMarkedNotice(coachName: coachName, status: next!, cents: cents),
+                                            coachTitle: "Session updated",
+                                            coachBody: coachBody,
+                                          );
+                                        });
+                                      }
                                       if (next == "checked-in" &&
                                           next != prev) {
                                         final total = ref
@@ -987,7 +1078,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                       child: Text(
                                         opt.label,
                                         style: TextStyle(
-                                          fontSize: 10.5,
+                                          fontSize: 12,
                                           fontWeight: FontWeight.w700,
                                           color: active
                                               ? opt.color
@@ -1011,7 +1102,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           if (isOwner && todayCharges.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: InkWell(
+              child: TapHighlight(
                 onTap: () => goMode("schedule"),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -1067,7 +1158,7 @@ class _StatBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -1090,7 +1181,7 @@ class _StatBox extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: AppColors.mute,
                   letterSpacing: 0.5,
                 ),
@@ -1126,7 +1217,7 @@ class _AttendanceBadge extends StatelessWidget {
       child: Text(
         _attendanceLabels[status] ?? status,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.w800,
           color: opt.color,
         ),

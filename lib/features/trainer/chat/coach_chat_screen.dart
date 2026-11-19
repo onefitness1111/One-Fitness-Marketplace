@@ -3,10 +3,15 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/chat/chat_entry.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/widgets/chat_gate.dart";
+import "../../../core/widgets/message_reactions.dart";
+import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
@@ -16,10 +21,11 @@ import "../../../data/models/comm_message.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "broadcast_screen.dart";
 import "team_chat_screen.dart";
 
 /// The three things the Chat tab can be showing.
-enum _ChatView { list, thread, picker }
+enum _ChatView { list, thread, picker, broadcast }
 
 const _prefRecipientKey = "coach_chat_client_id";
 const _prefChannelKey = "coach_chat_channel";
@@ -72,15 +78,22 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     super.initState();
     _loadPrefs();
     _loadStaff();
-    _staffChannel = SupabaseService.client
-        .channel("coach_chat_staff_live")
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: "public",
-          table: "staff_messages",
-          callback: (_) => _loadStaff(),
-        )
-        .subscribe();
+    // The trainer shell builds this page even when another tab is showing.
+    // A test, or a moment before sign-in finishes, has no live client yet.
+    // The thread still opens; the live staff list starts once the client is up.
+    try {
+      _staffChannel = SupabaseService.client
+          .channel("coach_chat_staff_live")
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: "public",
+            table: "staff_messages",
+            callback: (_) => _loadStaff(),
+          )
+          .subscribe();
+    } catch (_) {
+      _staffChannel = null;
+    }
   }
 
   Future<void> _loadStaff() async {
@@ -105,7 +118,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           ..sort((a, b) => ((a["name"] as String?) ?? "").compareTo((b["name"] as String?) ?? ""))),
       ];
 
-  List<ChatConversation> _staffConversations() {
+  List<ChatConversation> _staffConversations(Set<String> unreadKeys) {
     final out = <ChatConversation>[];
     for (final t in _teammates) {
       final key = t["id"] as String;
@@ -123,6 +136,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         preview: last["body"] as String? ?? "",
         at: DateTime.tryParse(last["created_at"]?.toString() ?? "")?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0),
         outgoing: last["sender_id"] == _me,
+        unread: unreadKeys.contains("staff:$key"),
       ));
     }
     return out;
@@ -207,20 +221,33 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             body: SafeArea(child: TeamChatScreen(initialKey: key, initialChannels: channels)),
           ),
         ))
-        .then((_) => _loadStaff());
+        .then((_) {
+          _loadStaff();
+          ref.read(unreadChatKeysProvider.notifier).refresh();
+        });
   }
 
   @override
   void dispose() {
     final sc = _staffChannel;
-    if (sc != null) SupabaseService.client.removeChannel(sc);
+    if (sc != null) {
+      try {
+        SupabaseService.client.removeChannel(sc);
+      } catch (_) {}
+    }
     _msgController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      if (mounted) setState(() => _prefsLoaded = true);
+      return;
+    }
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // Values written by an older build come through the legacy spellings,
     // so a coach's remembered choice survives the update.
@@ -265,6 +292,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// into it (including a remembered thread reopened via SharedPreferences)
   /// — mirrors the old _CoachCompose.initState's read-receipt behavior.
   void _markThreadRead(String clientId) {
+    SupabaseService.markChatRead(clientId);
+    ref.read(unreadChatKeysProvider.notifier).clear(clientId);
     final trainerAuth = ref.read(trainerAuthProvider);
     final record = ref.read(trainerClientRecordsProvider)[clientId];
     if (record == null) return;
@@ -320,12 +349,19 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     required Set<ChatChannel> channels,
     required String? trainerAuth,
   }) async {
-    final text = _msgController.text.trim();
-    if (text.isEmpty) return;
+    var deliver = channelsSavedOnTheMessage(channels);
+    if (deliver.contains(ChatChannel.sms)) {
+      final agreed = await ensureSmsConsent(context);
+      if (!agreed) deliver = {...deliver}..remove(ChatChannel.sms);
+    }
+    if (deliver.isEmpty) deliver = {ChatChannel.inapp};
+    final typed = _msgController.text.trim();
+    if (typed.isEmpty) return;
     // Clients only ever see the coach name ("Coach Chris"), never the legal
     // name. An owner writing from the owner account goes out as the business.
     final sender = ref.read(trainersProvider).where((t) => t.id == trainerAuth);
-    final from = sender.isNotEmpty ? sender.first.displayTitle : settings.businessName;
+    final from = sender.isNotEmpty ? sender.first.displayTitle : "ONE Fitness Marketplace";
+    final text = prefixMessage(from, typed);
     // Optimistic bubble under a temporary id; the server returns the real
     // row, and is where the content filter and block rules are applied.
     final tempId = DateTime.now().microsecondsSinceEpoch.toString();
@@ -336,7 +372,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       at: stamp(),
       trainerId: trainerAuth,
       readByCoach: true,
-      channel: encodeChannels(channels),
+      channel: encodeChannels(deliver),
       createdAt: DateTime.now(),
     );
     _msgController.clear();
@@ -349,7 +385,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         trainerId: trainerAuth,
         who: "trainer",
         text: text,
-        channel: encodeChannels(channels),
+        channel: encodeChannels(deliver),
       );
       ref.read(trainerClientRecordsProvider.notifier).update(
             client.id,
@@ -359,7 +395,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       // thread either way. `sms: false` because SMS is a channel of its
       // own here; letting the push text them too would double-send to a
       // coach who picked both.
-      if (channels.contains(ChatChannel.inapp)) {
+      if (deliver.contains(ChatChannel.inapp)) {
         notifyPush(profileId: client.id, title: "New message from $from", body: text);
       }
     } catch (e) {
@@ -371,50 +407,27 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         // Keep the text so it only needs rewording, and say why it bounced.
         _msgController.text = text;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceFirst("Exception: ", "")),
-            duration: const Duration(seconds: 5),
+          const SnackBar(
+            content: Text("That message didn't send. Check your connection and try again."),
+            duration: Duration(seconds: 5),
           ),
         );
       }
     } finally {
       if (mounted) setState(() => _pendingIds.remove(tempId));
     }
-    if (channels.contains(ChatChannel.email) && client.email != null) {
+    if (channels.contains(ChatChannel.email)) {
       SupabaseService.sendEmail(
-        to: client.email!,
+        profileId: client.id,
         subject: "New message from $from — ${settings.businessName}",
         text: text,
       ).catchError((Object e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't send the email: ${e.toString().replaceFirst("Exception: ", "")}")),
+            const SnackBar(content: Text("The email didn't send. The message in the app is still there.")),
           );
         }
       });
-    }
-    if (channels.contains(ChatChannel.sms)) {
-      final phone = (client.phone ?? "").trim();
-      if (phone.isEmpty) {
-        // A client is no longer asked for a number to use chat, so this is
-        // now the normal case rather than an oversight. The message is
-        // already in their thread, so it's a note, not a failure.
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("${client.name} has no phone number on file — sent in the app instead.")),
-          );
-        }
-      } else {
-        // The client can reply to this text; twilio-inbound writes the reply
-        // into this same thread.
-        SupabaseService.sendSms(to: phone, text: "$from: $text").catchError((Object e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Couldn't send the SMS: ${e.toString().replaceFirst("Exception: ", "")}")),
-            );
-          }
-        });
-      }
     }
   }
 
@@ -426,6 +439,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     Map<String, ClientRecord> records,
     String? trainerAuth,
     bool isOwner,
+    Set<String> unreadKeys,
   ) {
     final out = <ChatConversation>[];
     for (final c in roster) {
@@ -443,7 +457,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         outgoing: last.who == "trainer",
         // Unread means the client wrote something the coach hasn't opened
         // yet — the same flag the thread clears on open.
-        unread: mine.any((m) => m.who == "client" && !m.readByCoach),
+        unread: unreadKeys.contains(c.id) || mine.any((m) => m.who == "client" && !m.readByCoach),
       ));
     }
     out.sort((a, b) => b.at.compareTo(a.at));
@@ -452,7 +466,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_prefsLoaded) return const SizedBox.shrink();
+    return ChatEntryGate(child: _buildChat(context));
+  }
+
+  Widget _buildChat(BuildContext context) {
+    if (!_prefsLoaded) {
+      return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
+    }
 
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
@@ -465,6 +485,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         .where((c) => isOwner || coachClientScope != "own" || c.primaryTrainerId == trainerAuth)
         .toList();
     final records = ref.watch(trainerClientRecordsProvider);
+    final unreadKeys = ref.watch(unreadChatKeysProvider);
     final settings = ref.watch(platformSettingsProvider);
 
     final selectedMatches = roster.where((c) => c.id == _recipientId);
@@ -487,6 +508,14 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       );
     }
 
+    if (_view == _ChatView.broadcast) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _view = _ChatView.list),
+        child: const BroadcastScreen(),
+      );
+    }
+
     if (_view == _ChatView.list) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -498,7 +527,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             ),
           Expanded(
             child: ConversationList(
-              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner), ..._staffConversations(), ..._pairConversations()]
+              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys), ..._staffConversations(unreadKeys), ..._pairConversations()]
                 ..sort((a, b) => b.at.compareTo(a.at)),
               emptyText: "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
               onOpen: (clientId) {
@@ -507,6 +536,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
                   return;
                 }
                 if (clientId.startsWith("staff:")) {
+                  SupabaseService.markChatRead(clientId);
+                  ref.read(unreadChatKeysProvider.notifier).clear(clientId);
                   _openStaffChat(clientId.substring(6), _channels);
                   return;
                 }
@@ -520,6 +551,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
                 _markThreadRead(clientId);
               },
               onNewChat: () => setState(() => _view = _ChatView.picker),
+              onNewBroadcast: () => setState(() => _view = _ChatView.broadcast),
             ),
           ),
         ],
@@ -556,7 +588,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
               : ListView(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  children: _buildBubbleList(thread),
+                  children: _buildBubbleList(thread, client.id),
                 ),
         ),
         _Composer(
@@ -569,7 +601,39 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     );
   }
 
-  List<Widget> _buildBubbleList(List<CommMessage> thread) {
+  Future<void> _react({
+    required String clientId,
+    required CommMessage message,
+    required String reaction,
+  }) async {
+    final me = SupabaseService.currentUser?.id;
+    if (me == null) return;
+    final reactions = [
+      ...message.reactions.where((r) => r.userId != me),
+      MessageReaction(userId: me, reaction: reaction),
+    ];
+    ref.read(trainerClientRecordsProvider.notifier).update(
+          clientId,
+          (r) => r.copyWith(
+            comms: r.comms.map((c) => c.id == message.id ? c.copyWith(reactions: reactions) : c).toList(),
+          ),
+        );
+    try {
+      await SupabaseService.setMessageReaction(
+        messageId: message.id,
+        clientId: clientId,
+        reaction: reaction,
+        routedTo: message.trainerId == null ? "business" : "conversation",
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("That like didn't save. The message is still there.")),
+      );
+    }
+  }
+
+  List<Widget> _buildBubbleList(List<CommMessage> thread, String clientId) {
     final items = <Widget>[];
     DateTime? lastDay;
     for (final c in thread) {
@@ -578,7 +642,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         items.add(_DaySeparator(label: _dayLabel(day)));
         lastDay = day;
       }
-      items.add(_Bubble(message: c, isPending: _pendingIds.contains(c.id)));
+      items.add(_Bubble(
+        message: c,
+        isPending: _pendingIds.contains(c.id),
+        onReact: _pendingIds.contains(c.id)
+            ? null
+            : (reaction) => _react(clientId: clientId, message: c, reaction: reaction),
+      ));
     }
     return items;
   }
@@ -648,7 +718,10 @@ class _RecipientSetupState extends State<_RecipientSetup> {
   /// isn't a client without a number.
   bool get _selectedHasNoPhone {
     final client = _selected;
-    return client != null && (client.phone ?? "").trim().isEmpty;
+    final phone = client?.phone;
+    // A missing value means this viewer is not allowed to see the number.
+    // It does not mean the client has no phone.
+    return client != null && phone != null && phone.trim().isEmpty;
   }
 
   @override
@@ -712,7 +785,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
               final selected = c.id == _recipientId;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => setState(() => _recipientId = c.id),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -762,7 +835,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             for (final t in teamMatches)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: () => setState(() => _recipientId = "staff:${t["id"]}"),
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -863,7 +936,7 @@ class _SegOption extends StatelessWidget {
       child: Semantics(
         checked: multi ? selected : null,
         selected: multi ? null : selected,
-        child: InkWell(
+        child: TapHighlight(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
           child: Container(
@@ -964,9 +1037,10 @@ class _DaySeparator extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.isPending});
+  const _Bubble({required this.message, required this.isPending, this.onReact});
   final CommMessage message;
   final bool isPending;
+  final void Function(String reaction)? onReact;
 
   @override
   Widget build(BuildContext context) {
@@ -985,19 +1059,28 @@ class _Bubble extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-              decoration: BoxDecoration(
-                color: isMine ? AppColors.gold : AppColors.card,
-                border: isMine ? null : Border.all(color: AppColors.line),
-                borderRadius: radius,
-              ),
-              child: Text(
-                message.text,
-                style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
+            child: TapHighlight(
+              onTap: onReact == null ? null : () => onReact!("heart"),
+              onLongPress: () async {
+                final action = await showMessageActions(context, canReport: false);
+                if (!context.mounted || action == null) return;
+                if (action == "heart" || action == "thumb") onReact?.call(action);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+                decoration: BoxDecoration(
+                  color: isMine ? AppColors.gold : AppColors.card,
+                  border: isMine ? null : Border.all(color: AppColors.line),
+                  borderRadius: radius,
+                ),
+                child: Text(
+                  message.text,
+                  style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
+                ),
               ),
             ),
           ),
+          ReactionMarks(reactions: message.reactions),
           const SizedBox(height: 3),
           isPending
               ? Text("Sending…", style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic))
@@ -1082,7 +1165,11 @@ class _ComposerState extends State<_Composer> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ChatSavedNotice(),
+            Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
@@ -1118,7 +1205,7 @@ class _ComposerState extends State<_Composer> {
               ),
             ),
             const SizedBox(width: 8),
-            InkWell(
+            TapHighlight(
               onTap: hasText ? widget.onSend : null,
               borderRadius: BorderRadius.circular(22),
               child: Container(
@@ -1133,6 +1220,8 @@ class _ComposerState extends State<_Composer> {
                 child: Icon(LucideIcons.send, size: 17, color: hasText ? AppColors.onGold : AppColors.mute),
               ),
             ),
+          ],
+        ),
           ],
         ),
       ),

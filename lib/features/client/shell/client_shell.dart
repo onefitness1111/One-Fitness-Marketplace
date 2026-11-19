@@ -2,6 +2,7 @@ import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -12,6 +13,8 @@ import "../../../core/utils/merge_token_utils.dart" show outstandingWaivers;
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
+import "../../../data/models/earned_badge.dart";
+import "../../../data/models/merit_badge_def.dart";
 import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
@@ -195,6 +198,11 @@ class _ClientShellState extends ConsumerState<ClientShell> {
   /// session, on top of the stored tourSeen flag.
   bool _dashboardTourArmed = true;
 
+  /// Set when "Sign now" leaves the dashboard for the waiver. Signing used
+  /// to drop the client on Booking, and the button tour waited until they
+  /// found their own way back. Finishing the signature comes home first.
+  bool _openTourAfterWaiver = false;
+
   /// "Sign your waiver" — asked once per app session, on Dashboard, while a
   /// required waiver is unsigned (a brand-new client always has one). They
   /// can skip it; booking still asks again before the first session.
@@ -269,9 +277,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
       // Straight into the document itself. Sending them to the Signatures
       // list meant finding the waiver they had just said yes to, which is
       // a step nobody asked for. The first outstanding one is the one the
-      // prompt named first.
+      // prompt named first. When they finish, [go] brings them home so the
+      // button tour can start — it does not leave them on Booking.
+      _openTourAfterWaiver = true;
       _waiverToOpen = outstanding.first.id;
-      // Leaving Dashboard also stands the tour down until it's next shown.
       go("signatures");
     } else {
       // Rebuild so the Dashboard tour, held back while this was open, runs.
@@ -324,6 +333,39 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     super.dispose();
   }
 
+  final Set<String> _shownBadgeIds = {};
+  bool _celebrationQueued = false;
+
+  void _queueBadgeCelebration(String clientId, List<EarnedBadge> earned) {
+    if (_celebrationQueued) return;
+    final pending = earned.where((b) => b.clientId == clientId && b.awaitingCelebration && meritBadgeByKey(b.badgeKey) != null && !_shownBadgeIds.contains(b.id));
+    if (pending.isEmpty) return;
+    _celebrationQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await _celebrateBadges(clientId, earned);
+      } finally {
+        _celebrationQueued = false;
+      }
+    });
+  }
+
+  Future<void> _celebrateBadges(String clientId, List<EarnedBadge> earned) async {
+    final unseen = earned.where((b) => b.clientId == clientId && b.awaitingCelebration && meritBadgeByKey(b.badgeKey) != null && !_shownBadgeIds.contains(b.id)).toList();
+    if (unseen.isEmpty) return;
+    for (final b in unseen) {
+      _shownBadgeIds.add(b.id);
+    }
+    if (!mounted) return;
+    for (final b in unseen) {
+      if (!mounted) return;
+      await BadgeEarnedModal.show(context, badgeKey: b.badgeKey);
+    }
+    try {
+      await SupabaseService.markMeritBadgesSeen(unseen.map((b) => b.id).toList());
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final screen = ref.watch(clientScreenProvider);
@@ -331,6 +373,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     final client = ref.watch(clientRecordProvider);
     final bookings = ref.watch(clientBookingsProvider);
     final earnedBadges = ref.watch(earnedBadgesProvider);
+    _queueBadgeCelebration(info.id, earnedBadges);
     final plan = ref
         .watch(membershipPlansProvider.notifier)
         .byId(info.membershipPlanId);
@@ -423,10 +466,11 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
-                          vertical: 14,
+                          vertical: 10,
                         ),
-                        child: Row(
-                          children: [
+                        child: CenteredTitleBar(
+                          title: _titles[screen] ?? "",
+                          leading: [
                             // Both of these used to be 22x22 hit areas sitting
                             // 6px apart — roughly 3.5mm on a real phone, with
                             // a 1mm gap between two different actions. Taps
@@ -471,17 +515,8 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                                 ),
                               ),
                             ],
-                            Expanded(
-                              child: Text(
-                                _titles[screen] ?? "",
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                            ),
+                          ],
+                          trailing: [
                             if (screen == "chat") ...[
                               IconButton(
                                 onPressed: () => showChatInfoSheet(context),
@@ -491,11 +526,14 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                                   color: AppColors.mute,
                                 ),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
+                                constraints: const BoxConstraints(
+                                  minWidth: 44,
+                                  minHeight: 44,
+                                ),
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 4),
                             ],
-                            InkWell(
+                            TapHighlight(
                               onTap: () => go("settings"),
                               borderRadius: BorderRadius.circular(20),
                               child: (info.photo != null && info.photo!.isNotEmpty)
@@ -573,7 +611,14 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                         "habits" => const HabitTrackerScreen(),
                         "history" => const HistoryScreen(),
                         "signatures" => SignaturesScreen(
-                          onGoBooking: goBooking,
+                          onGoBooking: () {
+                            if (_openTourAfterWaiver) {
+                              _openTourAfterWaiver = false;
+                              go("dashboard");
+                              return;
+                            }
+                            goBooking();
+                          },
                           openDocId: _waiverToOpen,
                           onOpened: () => _waiverToOpen = null,
                         ),
@@ -658,6 +703,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
               ClientLiveSessionLayer(
                 screen: screen,
                 onOpenChat: () => go("chat"),
+                onOpenWorkout: () => go("plans"),
               ),
             ],
           ),
@@ -670,13 +716,15 @@ class _ClientShellState extends ConsumerState<ClientShell> {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 58,
-              child: Row(
+              height: 68,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
                 children: _bottomItems.map((item) {
                   final on = screen == item.key;
                   return Expanded(
                     key: kDashboardTourKeys["dash-nav-${item.key}"],
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: item.key == "booking"
                           ? goBooking
                           : () => go(item.key),
@@ -686,11 +734,13 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                           icon: item.icon,
                           label: item.label,
                           selected: on,
+                          showDot: item.key == "chat" && ref.watch(unreadChatKeysProvider).isNotEmpty,
                         ),
                       ),
                     ),
                   );
                 }).toList(),
+              ),
               ),
             ),
           ),
@@ -737,6 +787,10 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
       builder: (ctx) => CoachmarkOverlay(
         steps: kDrawerTourSteps,
         keys: kDrawerTourKeys,
+        // Closing the menu early used to start the tour over at step 1 the
+        // next time it opened. Pick up the step they were on instead.
+        initialKey: TourMemory.clientDrawerKey,
+        onPause: (key) => TourMemory.clientDrawerKey = key,
         onDone: _finishTour,
       ),
     );
@@ -745,6 +799,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
   }
 
   void _finishTour() {
+    TourMemory.clientDrawerKey = null;
     _tourEntry?.remove();
     _tourEntry = null;
     ref
@@ -834,11 +889,15 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                 child: Divider(color: AppColors.line, height: 1),
               ),
               Expanded(
-                child: ListView(
+                // A plain scroll view, not a lazy list, so every row exists
+                // when the tour opens — including the ones below the fold on
+                // a short phone. The tour then scrolls each row into view.
+                child: SingleChildScrollView(
                   padding: EdgeInsets.zero,
+                  child: Column(
                   children: _drawerItems.map((item) {
                     final on = screen == item.key;
-                    return InkWell(
+                    return TapHighlight(
                       key: kDrawerTourKeys["drawer-${item.key}"],
                       onTap: () => onGo(item.key),
                       borderRadius: BorderRadius.circular(8),
@@ -874,10 +933,11 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                       ),
                     );
                   }).toList(),
+                  ),
                 ),
               ),
               Divider(color: AppColors.line, height: 1),
-              InkWell(
+              TapHighlight(
                 onTap: () {
                   SupabaseService.signOut();
                   ref.read(clientSignedInProvider.notifier).signOut();

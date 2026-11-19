@@ -56,7 +56,7 @@ class CoachProfileCard extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Avatar(src: trainer.photo, name: trainer.name, size: 52, active: true),
+                Avatar(src: trainer.photo, name: trainer.displayTitle, size: 52, active: true),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(

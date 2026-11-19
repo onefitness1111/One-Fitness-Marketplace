@@ -235,7 +235,7 @@ class _CouponEditFormState extends State<_CouponEditForm> {
             runSpacing: 6,
             children: [
               for (final t in const [("percent", "Percent off"), ("flat", "Flat amount off")])
-                InkWell(
+                TapHighlight(
                   onTap: () => setState(() => _type = t.$1),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
@@ -263,7 +263,7 @@ class _CouponEditFormState extends State<_CouponEditForm> {
             ),
           const SizedBox(height: 10),
           AppCard(
-            child: InkWell(
+            child: TapHighlight(
               onTap: () => setState(() => _archived = !_archived),
               child: Row(
                 children: [

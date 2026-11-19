@@ -82,9 +82,10 @@ class CustomProfileField {
 /// itself, which is real and fully interactive.
 class PlatformSettings {
   const PlatformSettings({
-    this.lateCancellationHours = 24,
+    this.lateCancellationHours = 12,
     this.blockRescheduleInWindow = true,
-    this.lateCancellationFeeCents = 2500,
+    this.lateCancellationFeeCents = 1500,
+    this.noShowCancelHours = 4,
     this.noShowFeeCents = 2500,
     this.maxBookingHorizonDays = 30,
     this.minBookingLeadHours = 2,
@@ -124,7 +125,6 @@ class PlatformSettings {
     this.locationName = "",
     this.locationAddress = "",
     this.locationHint = "",
-    this.meritBadgeProgressWeeks = 3,
     this.meritBadgeHabitPercent = 80,
     this.meritBadgeHabitWeeks = 3,
     this.badgeFullHouseCents = 2500,
@@ -134,6 +134,9 @@ class PlatformSettings {
     this.badgeHabitCoachCents = 2500,
     this.badgeChallengeCoachCents = 2500,
     this.badgeCoachOfMonthCents = 5000,
+    this.badgeSessionsCoachedCents = 0,
+    this.badgeClientMilestoneCents = 0,
+    this.badgeRetentionCents = 0,
     this.beepSounds = const {},
   });
 
@@ -146,11 +149,13 @@ class PlatformSettings {
   /// membership_utils.dart's kGiveBackAttendanceStatuses).
   final int lateCancellationFeeCents;
 
-  /// Charged when a coach marks a booking "no-show" — unlike a late
-  /// cancellation, a no-show does NOT give the session back (Attendance &
-  /// Cancellation Charging Policy, July 2026: a no-show costs the client
-  /// both the fee and the session itself). Independent from
-  /// [lateCancellationFeeCents] — the two are never assumed equal.
+  /// Inside this many hours, a cancel is the higher fee ([noShowFeeCents]).
+  /// The session is still returned. A coach-marked no-show is what uses it.
+  final int noShowCancelHours;
+
+  /// Charged when a cancel is inside [noShowCancelHours], and when a coach
+  /// marks a real no-show. The cancel does not use the session. The no-show
+  /// does.
   final int noShowFeeCents;
 
   final int maxBookingHorizonDays;
@@ -277,7 +282,6 @@ class PlatformSettings {
 
   /// Parking / arrival notes, e.g. "Side entrance, buzz 4".
   final String locationHint;
-  final int meritBadgeProgressWeeks;
   final int meritBadgeHabitPercent;
   final int meritBadgeHabitWeeks;
 
@@ -293,6 +297,9 @@ class PlatformSettings {
   final int badgeHabitCoachCents;
   final int badgeChallengeCoachCents;
   final int badgeCoachOfMonthCents;
+  final int badgeSessionsCoachedCents;
+  final int badgeClientMilestoneCents;
+  final int badgeRetentionCents;
 
   /// Which alert tone each Beep Your Coach request plays on the coach's
   /// phone, keyed by request type ("help" | "spot" | "done"). Set by the
@@ -305,6 +312,7 @@ class PlatformSettings {
     int? lateCancellationHours,
     bool? blockRescheduleInWindow,
     int? lateCancellationFeeCents,
+    int? noShowCancelHours,
     int? noShowFeeCents,
     int? maxBookingHorizonDays,
     int? minBookingLeadHours,
@@ -345,7 +353,6 @@ class PlatformSettings {
     String? locationName,
     String? locationAddress,
     String? locationHint,
-    int? meritBadgeProgressWeeks,
     int? meritBadgeHabitPercent,
     int? meritBadgeHabitWeeks,
     int? badgeFullHouseCents,
@@ -355,12 +362,16 @@ class PlatformSettings {
     int? badgeHabitCoachCents,
     int? badgeChallengeCoachCents,
     int? badgeCoachOfMonthCents,
+    int? badgeSessionsCoachedCents,
+    int? badgeClientMilestoneCents,
+    int? badgeRetentionCents,
     Map<String, String>? beepSounds,
   }) =>
       PlatformSettings(
         lateCancellationHours: lateCancellationHours ?? this.lateCancellationHours,
         blockRescheduleInWindow: blockRescheduleInWindow ?? this.blockRescheduleInWindow,
         lateCancellationFeeCents: lateCancellationFeeCents ?? this.lateCancellationFeeCents,
+        noShowCancelHours: noShowCancelHours ?? this.noShowCancelHours,
         noShowFeeCents: noShowFeeCents ?? this.noShowFeeCents,
         maxBookingHorizonDays: maxBookingHorizonDays ?? this.maxBookingHorizonDays,
         minBookingLeadHours: minBookingLeadHours ?? this.minBookingLeadHours,
@@ -400,7 +411,6 @@ class PlatformSettings {
         locationName: locationName ?? this.locationName,
         locationAddress: locationAddress ?? this.locationAddress,
         locationHint: locationHint ?? this.locationHint,
-        meritBadgeProgressWeeks: meritBadgeProgressWeeks ?? this.meritBadgeProgressWeeks,
         meritBadgeHabitPercent: meritBadgeHabitPercent ?? this.meritBadgeHabitPercent,
         meritBadgeHabitWeeks: meritBadgeHabitWeeks ?? this.meritBadgeHabitWeeks,
         badgeFullHouseCents: badgeFullHouseCents ?? this.badgeFullHouseCents,
@@ -411,6 +421,9 @@ class PlatformSettings {
         badgeHabitCoachCents: badgeHabitCoachCents ?? this.badgeHabitCoachCents,
         badgeChallengeCoachCents: badgeChallengeCoachCents ?? this.badgeChallengeCoachCents,
         badgeCoachOfMonthCents: badgeCoachOfMonthCents ?? this.badgeCoachOfMonthCents,
+        badgeSessionsCoachedCents: badgeSessionsCoachedCents ?? this.badgeSessionsCoachedCents,
+        badgeClientMilestoneCents: badgeClientMilestoneCents ?? this.badgeClientMilestoneCents,
+        badgeRetentionCents: badgeRetentionCents ?? this.badgeRetentionCents,
       );
 }
 

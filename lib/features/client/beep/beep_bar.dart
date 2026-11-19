@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "dart:async";
 
 import "package:flutter/material.dart";
@@ -6,6 +7,8 @@ import "package:lucide_flutter/lucide_flutter.dart";
 
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
+import "../../../core/widgets/app_buttons.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
 import "../../../data/providers/beep_providers.dart";
@@ -142,11 +145,23 @@ class _BeepBarState extends ConsumerState<BeepBar> {
   @override
   Widget build(BuildContext context) {
     final clientId = ref.watch(clientInfoProvider).id;
-    final run = ref.watch(liveSessionsProvider.notifier).beepable;
-    // Watch the list too, so the bar appears and disappears as the coach
-    // starts and ends the session.
+    final coachLed = ref.watch(coachLedDaysProvider.notifier).forClient(clientId);
+    ref.watch(coachLedDaysProvider);
+    // A booked clock by itself is not enough. Beep is only on while a coach
+    // has started this client's program day, including from Log workout.
+    if (coachLed == null) return const SizedBox.shrink();
+    final booked = ref.watch(liveSessionsProvider.notifier).beepable;
     ref.watch(liveSessionsProvider);
-    if (run == null) return const SizedBox.shrink();
+    final run = booked ??
+        LiveSession(
+          id: coachLed.fallbackRunId,
+          trainerId: coachLed.trainerId ?? "",
+          date: isoToday(),
+          slotMin: 0,
+          sessionType: "log-workout",
+          startedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+    if (run.trainerId.isEmpty) return const SizedBox.shrink();
 
     final mine = ref.watch(beepsProvider.notifier).mineFor(clientId);
     ref.watch(beepsProvider);
@@ -168,27 +183,23 @@ class _BeepBarState extends ConsumerState<BeepBar> {
               Expanded(
                 child: Text(
                   "Your coach has started the session.",
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  style: TextStyle(fontSize: 12, color: AppColors.txt),
                 ),
               ),
             ],
           ),
         ),
-        SizedBox(
-          height: 46,
-          child: ElevatedButton.icon(
-            onPressed: _sending ? null : () => _openOptions(run),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold,
-              foregroundColor: AppColors.onGold,
-              disabledBackgroundColor: AppColors.goldDim,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            icon: const Icon(LucideIcons.bell, size: 17),
-            label: const Text(
-              "Beep Your Coach",
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-            ),
+        BtnGold(
+          full: true,
+          onPressed: _sending ? null : () => _openOptions(run),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.bell, size: 17),
+              SizedBox(width: 8),
+              Text("Beep Your Coach"),
+            ],
           ),
         ),
         for (final beep in standing)
@@ -329,7 +340,7 @@ class _BeepOptionsSheetState extends State<_BeepOptionsSheet> {
                   separatorBuilder: (_, _) => const SizedBox(width: 6),
                   itemBuilder: (ctx, i) {
                     final on = i == _exerciseIndex;
-                    return InkWell(
+                    return TapHighlight(
                       onTap: () => setState(() => _exerciseIndex = i),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -406,7 +417,7 @@ class _BeepChoice extends StatelessWidget {
     final waiting = remaining > Duration.zero;
     final accent = kind.isUrgent ? AppColors.danger : AppColors.gold;
 
-    return InkWell(
+    return TapHighlight(
       onTap: waiting ? null : onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(

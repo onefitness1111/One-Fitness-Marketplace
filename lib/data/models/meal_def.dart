@@ -15,6 +15,7 @@ class MealDef {
     this.notes,
     this.dietTags = const [],
     this.isCustom = false,
+    this.photoDataUrl,
   });
 
   final String id;
@@ -29,6 +30,10 @@ class MealDef {
   final String? notes;
   final List<String> dietTags;
   final bool isCustom;
+
+  /// Optional compressed photo (`data:image/jpeg;base64,...`). Absent on
+  /// every built-in meal and on meals saved before photos existed.
+  final String? photoDataUrl;
 }
 
 /// Mirrors mealDatabase.js `DIET_TAGS` — the real diet-filter taxonomy (raw
@@ -46,6 +51,19 @@ const kDietTags = <(String, String)>[
   ("paleo", "Paleo"),
   ("high-protein", "High-Protein"),
   ("low-carb", "Low-Carb"),
+  ("gluten-free", "Gluten-free"),
+];
+
+/// Filters on the client's meal picker. One at a time. An empty key means
+/// show every meal of that slot.
+const kClientDietFilters = <(String, String)>[
+  ("", "No restrictions"),
+  ("vegetarian", "Vegetarian"),
+  ("vegan", "Vegan"),
+  ("keto", "Keto"),
+  ("paleo", "Paleo"),
+  ("kosher", "Kosher"),
+  ("gluten-free", "Gluten-free"),
 ];
 
 String dietTagLabel(String key) => kDietTags.firstWhere((t) => t.$1 == key, orElse: () => (key, key)).$2;

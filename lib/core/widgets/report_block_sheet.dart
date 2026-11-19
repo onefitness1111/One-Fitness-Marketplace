@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
@@ -139,7 +140,7 @@ Future<void> _showReportReasons(
                 ),
                 const SizedBox(height: 14),
                 for (final r in _reasons)
-                  InkWell(
+                  TapHighlight(
                     onTap: () => setSheetState(() => chosen = r.key),
                     borderRadius: BorderRadius.circular(10),
                     child: Container(

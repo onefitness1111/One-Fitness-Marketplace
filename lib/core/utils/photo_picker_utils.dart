@@ -48,17 +48,41 @@ Future<String?> pickProfilePhotoDataUrl(BuildContext context) async {
 /// Returns null if the user cancels, picking fails, or the file isn't
 /// decodable as an image.
 Future<String?> pickProgressPhotoDataUrl() async {
+  final bytes = await pickProgressPhotoBytes();
+  if (bytes == null) return null;
+  return "data:image/jpeg;base64,${base64Encode(bytes)}";
+}
+
+/// A plate or meal photo, from the camera or the library, compressed the
+/// same way as a progress photo so it stays small.
+Future<Uint8List?> pickPlatePhotoBytes({required bool camera}) async {
   try {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final picked = await ImagePicker().pickImage(
+      source: camera ? ImageSource.camera : ImageSource.gallery,
+      maxWidth: 1024,
+      imageQuality: 70,
+    );
     if (picked == null) return null;
     final bytes = await picked.readAsBytes();
-    return compute(_compressProgressPhoto, bytes);
+    return await compute(_compressProgressPhotoBytes, bytes);
   } catch (_) {
     return null;
   }
 }
 
-String? _compressProgressPhoto(Uint8List bytes) {
+/// Compressed JPEG bytes for the private progress-photo bucket.
+Future<Uint8List?> pickProgressPhotoBytes() async {
+  try {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked == null) return null;
+    final bytes = await picked.readAsBytes();
+    return compute(_compressProgressPhotoBytes, bytes);
+  } catch (_) {
+    return null;
+  }
+}
+
+Uint8List? _compressProgressPhotoBytes(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
   const max = 700;
@@ -66,6 +90,5 @@ String? _compressProgressPhoto(Uint8List bytes) {
   final resized = longest <= max
       ? decoded
       : (decoded.width >= decoded.height ? img.copyResize(decoded, width: max) : img.copyResize(decoded, height: max));
-  final jpg = img.encodeJpg(resized, quality: 80);
-  return "data:image/jpeg;base64,${base64Encode(jpg)}";
+  return Uint8List.fromList(img.encodeJpg(resized, quality: 80));
 }

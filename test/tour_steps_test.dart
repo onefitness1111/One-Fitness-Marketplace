@@ -1,6 +1,8 @@
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
+import "package:onefitness/core/theme/app_colors.dart";
+import "package:onefitness/core/utils/date_utils.dart";
 import "package:onefitness/core/widgets/coachmark_overlay.dart";
 import "package:onefitness/data/models/tour_step.dart";
 
@@ -61,6 +63,23 @@ void main() {
       for (final s in kDrawerTourSteps) {
         expect(kDrawerTourKeys[s.key], isNotNull, reason: "${s.key} has no key");
       }
+    });
+
+    test("covers every menu button, in menu order", () {
+      expect(kDrawerTourSteps.map((s) => s.key).toList(), [
+        "drawer-progress",
+        "drawer-habits",
+        "drawer-history",
+        "drawer-forms",
+        "drawer-shop",
+        "drawer-rewards",
+        "drawer-badges",
+        "drawer-challenges",
+        "drawer-squad",
+        "drawer-signatures",
+        "drawer-support",
+        "drawer-settings",
+      ]);
     });
 
     test("the two steps that pointed at nothing are gone", () {
@@ -148,5 +167,58 @@ void main() {
       final keys = kDashboardTourSteps.map((s) => s.key).toList();
       expect(keys.toSet().length, keys.length);
     });
+
+    test("the last tab is Access Hub, and Plans mentions nutrition", () {
+      final plans = kDashboardTourSteps.firstWhere((s) => s.key == "dash-nav-plans");
+      final hub = kDashboardTourSteps.last;
+      expect(plans.desc.toLowerCase(), contains("nutrition"));
+      expect(hub.title, "Access Hub");
+      expect(hub.title, isNot("Membership Hub"));
+    });
+  });
+
+  testWidgets("how-to words follow the theme, including light mode", (tester) async {
+    AppColors.apply(AppPalette.light);
+    addTearDown(() => AppColors.apply(AppPalette.dark));
+    final keys = {"a": GlobalKey()};
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              SizedBox(key: keys["a"], height: 40, width: 80, child: const Text("Target")),
+              CoachmarkOverlay(
+                steps: const [TourStep("a", "Menu", "Opens the rest of the app.")],
+                keys: keys,
+                onDone: () {},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final title = tester.widget<Text>(find.text("Menu"));
+    expect(title.style?.color, AppColors.txt);
+    expect(title.textAlign, TextAlign.center);
+    expect(kCoachmarkRing, const Color(0xFFD9D9D9));
+  });
+
+  test("coach and owner tours each have a button to point at", () {
+    for (final s in [...kCoachHomeTourSteps, ...kCoachMenuTourSteps, ...kOwnerHomeTourSteps, ...kOwnerMenuTourSteps]) {
+      expect(kStaffTourKeys[s.key], isNotNull, reason: s.key);
+    }
+    expect(kOwnerHomeTourSteps.map((s) => s.title), contains("Staff"));
+    expect(kOwnerMenuTourSteps.map((s) => s.title), containsAll(["Reports", "Coaches", "Customize Platform", "Waivers & Contracts"]));
+    expect(kCoachHomeTourSteps.map((s) => s.title), contains("Schedule"));
+  });
+
+  test("a stored invite time reads as a date", () {
+    expect(friendlyStamp("2026-07-27T15:45:00"), contains("Jul 27"));
+    expect(friendlyStamp("Jul 27, 3:45 PM"), "Jul 27, 3:45 PM");
   });
 }

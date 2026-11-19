@@ -1,19 +1,31 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
+import "../../../core/widgets/schedule_day_dot.dart";
 
 const _weekdayShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 /// Mirrors DateStrip.jsx — a 7-day horizontal week strip with paging
 /// arrows; `disablePast` blocks selecting/paging before today.
 class DateStrip extends StatefulWidget {
-  const DateStrip({super.key, required this.date, required this.onSelect, this.disablePast = false});
+  const DateStrip({
+    super.key,
+    required this.date,
+    required this.onSelect,
+    this.disablePast = false,
+    this.dayFill,
+  });
 
   final String date;
   final ValueChanged<String> onSelect;
   final bool disablePast;
+
+  /// Open, booked, or full for each day on the strip. Null hides the dots.
+  final ScheduleDayFill? Function(String date)? dayFill;
 
   @override
   State<DateStrip> createState() => _DateStripState();
@@ -65,10 +77,11 @@ class _DateStripState extends State<DateStrip> {
                     final isToday = d == todayStr;
                     final past = widget.disablePast && d.compareTo(todayStr) < 0;
                     final dt = DateTime.parse(d);
+                    final fill = widget.dayFill?.call(d);
                     return Expanded(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: past ? null : () => widget.onSelect(d),
                           borderRadius: BorderRadius.circular(10),
                           child: Container(
@@ -79,15 +92,15 @@ class _DateStripState extends State<DateStrip> {
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Opacity(
-                              opacity: past ? 0.6 : 1,
+                              opacity: 1,
                               child: Column(
                                 children: [
                                   Text(
                                     _weekdayShort[dt.weekday % 7],
                                     style: TextStyle(
-                                      fontSize: 9.5,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w700,
-                                      color: sel ? AppColors.onGold : (past ? const Color(0xFF454545) : (isToday ? AppColors.gold : AppColors.txt)),
+                                      color: sel ? AppColors.onGold : (past ? AppColors.mute : (isToday ? AppColors.gold : AppColors.txt)),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
@@ -96,9 +109,11 @@ class _DateStripState extends State<DateStrip> {
                                     style: TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w800,
-                                      color: sel ? AppColors.onGold : (past ? const Color(0xFF454545) : (isToday ? AppColors.gold : AppColors.txt)),
+                                      color: sel ? AppColors.onGold : (past ? AppColors.mute : (isToday ? AppColors.gold : AppColors.txt)),
                                     ),
                                   ),
+                                  const SizedBox(height: 3),
+                                  ScheduleDayDot(fill: fill, onDark: sel),
                                 ],
                               ),
                             ),
@@ -113,6 +128,7 @@ class _DateStripState extends State<DateStrip> {
               _NavButton(icon: LucideIcons.chevronRight, disabled: false, onTap: () => _page(1)),
             ],
           ),
+          if (widget.dayFill != null) const ScheduleDayLegend(),
         ],
       ),
     );
@@ -127,7 +143,7 @@ class _NavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: disabled ? null : onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
@@ -138,7 +154,7 @@ class _NavButton extends StatelessWidget {
           border: Border.all(color: AppColors.line),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, size: 16, color: disabled ? const Color(0xFF333333) : AppColors.txt),
+        child: Icon(icon, size: 16, color: disabled ? AppColors.mute : AppColors.txt),
       ),
     );
   }

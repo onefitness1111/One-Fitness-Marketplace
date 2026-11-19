@@ -415,7 +415,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
               ),
             ),
 
-          if (clientId != null && aiDrafts.isEmpty && nutritionIntakeComplete)
+          if (isOwner && clientId != null && aiDrafts.isEmpty && nutritionIntakeComplete)
             Container(
               padding: const EdgeInsets.all(14),
               margin: const EdgeInsets.only(bottom: 16),
@@ -431,19 +431,17 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          hasAnyAiNutrition ? "Regenerate from their Nutrition Intake" : "Draft calorie & macro targets with AI",
+                          hasAnyAiNutrition ? "Regenerate from their Nutrition Intake" : "Draft calorie and macro targets",
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      const Tag(text: "AI", gold: true),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
                     hasAnyAiNutrition
                         ? "If this client has updated their Nutrition Intake answers since their targets were last set, draft a fresh set from their current answers. You'll review it here before anything on this page changes."
-                        : "This client's Nutrition Intake is complete but no AI draft has been generated yet. Draft whole-number Training/Rest Day targets, Water, Calorie Budget, and coaching notes from their intake answers — you'll review it here before anything is applied.",
+                        : "This client's Nutrition Intake is complete but no draft has been created yet. Draft whole-number Training/Rest Day targets, Water, Calorie Budget, and coaching notes from their intake answers — you'll review it here before anything is applied.",
                     style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                   ),
                   const SizedBox(height: 10),
@@ -456,15 +454,16 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                       child: Text(_generatingDraft || _regeneratingDraft
                           ? "Generating…"
                           : hasAnyAiNutrition
-                              ? "Regenerate AI Nutrition Targets"
-                              : "Generate AI Nutrition Targets"),
+                              ? "Regenerate targets"
+                              : "Draft nutrition targets"),
                     )
                   else
-                    Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                    Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
                 ],
               ),
             ),
 
+          if (isOwner)
           for (final p in aiDrafts)
             Container(
               padding: const EdgeInsets.all(14),
@@ -477,13 +476,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
-                    children: [
-                      Expanded(child: Text("AI-drafted calorie & macro targets are ready", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                      SizedBox(width: 6),
-                      Tag(text: "AI Draft", gold: true),
-                    ],
-                  ),
+                  const Text("Calorie and macro targets are ready", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                   const SizedBox(height: 6),
                   Text(
                     "Training: ${p.trainingTargets.calories ?? "—"} kcal · ${p.trainingTargets.protein ?? "—"}/${p.trainingTargets.carbs ?? "—"}/${p.trainingTargets.fats ?? "—"}% P/C/F",
@@ -527,7 +520,7 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _saving ? null : () => _discardNutritionDraft(p.id),
-                          style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                           child: const Text("Discard"),
                         ),
                       ),
@@ -651,11 +644,11 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
                         ],
                       ),
                     ),
-                    IconButton(onPressed: () => _removeAttachment(doc.id), icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B))),
+                    IconButton(onPressed: () => _removeAttachment(doc.id), icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger)),
                   ],
                 ),
               )),
-          InkWell(
+          TapHighlight(
             onTap: _pickAttachment,
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -705,15 +698,23 @@ class _NutritionBuilderScreenState extends ConsumerState<NutritionBuilderScreen>
 
 Future<String?> _promptName(BuildContext context, {String? initial}) {
   final controller = TextEditingController(text: initial ?? "");
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: AppColors.card,
-      title: const Text("Nutrition program name"),
-      content: AppField(kind: FieldKind.name, controller: controller, placeholder: "e.g. Cutting Phase — 1800 kcal"),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel")),
-        TextButton(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("Save")),
+  return showKeyboardSheet<String>(
+    context,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text("Nutrition program name", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        AppField(kind: FieldKind.name, controller: controller, placeholder: "e.g. Cutting Phase — 1800 kcal"),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: BtnGhost(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel"))),
+            const SizedBox(width: 8),
+            Expanded(child: BtnGold(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text("Save"))),
+          ],
+        ),
       ],
     ),
   );
@@ -727,7 +728,7 @@ class _DayTypeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(

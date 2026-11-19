@@ -63,6 +63,16 @@ String fmtSlotCompactAmPm(int minutes) {
 
 /// Mirrors lib/format.js `stamp()` — "Jul 27, 3:45 PM", used as the display
 /// timestamp on logged chat messages.
+/// A stored timestamp shown to a person. An ISO string becomes
+/// "Jul 27, 3:45 PM". A value that is already a plain date is left as it is.
+String friendlyStamp(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return "";
+  final parsed = DateTime.tryParse(trimmed);
+  if (parsed == null) return trimmed;
+  return stamp(parsed.toLocal());
+}
+
 String stamp([DateTime? at]) {
   final d = at ?? DateTime.now();
   final h = d.hour % 12 == 0 ? 12 : d.hour % 12;

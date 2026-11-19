@@ -1,5 +1,6 @@
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
+import "package:image_picker/image_picker.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
@@ -223,6 +224,9 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
   );
   late String? _videoPath = widget.initial?.videoPath;
   late String? _videoName = widget.initial?.videoName;
+  late String? _photoPath = widget.initial?.photoPath;
+  late String? _photoName = widget.initial?.photoName;
+  bool _photoBusy = false;
 
   /// Clips uploaded while this form has been open. Replacing one of these is
   /// safe to clean up, because no saved exercise has ever pointed at it —
@@ -243,6 +247,29 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
 
   /// Points the form at [path], cleaning up whatever it was showing if that
   /// clip was uploaded here and so was never saved anywhere.
+  Future<void> _pickPhoto() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
+    if (picked == null) return;
+    setState(() => _photoBusy = true);
+    try {
+      final bytes = await picked.readAsBytes();
+      final path = await SupabaseService.uploadExercisePhoto(exerciseId: _exerciseId(), bytes: bytes);
+      if (!mounted) return;
+      setState(() {
+        _photoPath = path;
+        _photoName = picked.name;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't save that photo. Try again.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
+  }
+
   void _setVideo(String? path, String? name) {
     setState(() {
       final previous = _videoPath;
@@ -364,7 +391,7 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
                     runSpacing: 6,
                     children: [
                       for (final name in [...library, ...extras])
-                        InkWell(
+                        TapHighlight(
                           onTap: () => setState(() {
                             if (!_equipment.remove(name)) _equipment.add(name);
                           }),
@@ -423,6 +450,38 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
               onRemoved: () => _setVideo(null, null),
             ),
           ),
+          const SizedBox(height: 10),
+          FieldLabeled(
+            label: "Equipment photo (a picture, not a video)",
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_photoPath != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      SupabaseService.exercisePhotoUrl(_photoPath!),
+                      height: 120,
+                      width: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Icon(LucideIcons.dumbbell, color: AppColors.mute, size: 36),
+                    ),
+                  )
+                else
+                  Icon(LucideIcons.dumbbell, color: AppColors.mute, size: 36),
+                const SizedBox(height: 8),
+                BtnGhost(
+                  onPressed: _photoBusy ? null : _pickPhoto,
+                  child: Text(_photoBusy ? "Saving…" : (_photoPath == null ? "Add equipment photo" : "Replace equipment photo")),
+                ),
+                if ((_photoName ?? "").isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(_photoName!, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  ),
+              ],
+            ),
+          ),
           const SizedBox(height: 18),
           Row(
             children: [
@@ -452,6 +511,8 @@ class _ExerciseEditFormState extends State<_ExerciseEditForm> {
                                   : _coachNotes.text.trim(),
                               videoPath: _videoPath,
                               videoName: _videoName,
+                              photoPath: _photoPath,
+                              photoName: _photoName,
                             ),
                           );
                         },
@@ -723,7 +784,7 @@ class _ChipPicker extends StatelessWidget {
       runSpacing: 6,
       children: options.map((o) {
         final selected = value == o;
-        return InkWell(
+        return TapHighlight(
           onTap: () => onChanged(o),
           borderRadius: BorderRadius.circular(8),
           child: Container(

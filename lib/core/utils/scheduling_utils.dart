@@ -1,5 +1,6 @@
 import "../../data/models/booking.dart";
 import "../../data/models/trainer.dart";
+import "membership_utils.dart";
 import "offered_catalog.dart";
 
 /// Ported from schedulingHelpers.js, trimmed to what the coach-side
@@ -45,7 +46,7 @@ class CapacityInfo {
 }
 
 CapacityInfo capacityInfo(List<Booking> bookings, String trainerId, String date, int slot, String sessionType, {int semiPrivateCap = 4}) {
-  final group = sessionGroup(bookings, trainerId, date, slot).where((b) => b.status != "cancelled").toList();
+  final group = sessionGroup(bookings, trainerId, date, slot).where(bookingHoldsSeat).toList();
   return CapacityInfo(count: group.length, cap: capFor(sessionType, semiPrivateCap: semiPrivateCap));
 }
 
@@ -53,7 +54,7 @@ CapacityInfo capacityInfo(List<Booking> bookings, String trainerId, String date,
 /// type/discipline) per time slot; adding a different type to an occupied
 /// slot is a conflict, adding the same type just joins the existing group.
 Booking? findTrainerConflict(List<Booking> bookings, String trainerId, String date, int slot, String sessionType, String discipline) {
-  final group = sessionGroup(bookings, trainerId, date, slot).where((b) => b.status != "cancelled").toList();
+  final group = sessionGroup(bookings, trainerId, date, slot).where(bookingHoldsSeat).toList();
   if (group.isEmpty) return null;
   final mismatch = group.where((b) => b.sessionType != sessionType || b.discipline != discipline);
   return mismatch.isEmpty ? null : mismatch.first;

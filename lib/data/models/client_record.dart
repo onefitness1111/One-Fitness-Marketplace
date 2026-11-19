@@ -1,11 +1,13 @@
 import "challenge.dart";
 import "comm_message.dart";
+import "food_log.dart";
 import "habit_def.dart";
 import "habit_log_entry.dart";
 import "intake_schema.dart";
 import "measurement.dart";
 import "nutrition_plan.dart";
 import "program_day.dart";
+import "progress_goal.dart";
 import "progress_photo.dart";
 import "saved_program.dart";
 import "session_feedback.dart";
@@ -35,10 +37,12 @@ class ClientRecord {
     this.intake = const {},
     this.measurements = const [],
     this.photos = const [],
+    this.progressGoal,
     this.trainerNotes = const [],
     this.sessionFeedback = const [],
     this.savedNutritionPrograms = const [],
     this.myMeals = const {},
+    this.foodLog = const FoodLog(),
     this.challengeBadges = const [],
     this.adoptedSignatureImage,
     this.adoptedInitialsImage,
@@ -109,6 +113,9 @@ class ClientRecord {
   /// Uploaded progress photos (client.photos).
   final List<ProgressPhoto> photos;
 
+  /// The one goal shown on Log Progress. Null until they set one.
+  final ProgressGoal? progressGoal;
+
   /// Coach-authored flag/notes on this client (client.trainerNotes).
   final List<TrainerNote> trainerNotes;
 
@@ -123,6 +130,10 @@ class ClientRecord {
   /// lunch / dinner). Their coach's suggestions stay as they are — these sit
   /// alongside them, chosen against the calorie budget for that meal.
   final Map<String, List<NutritionMeal>> myMeals;
+
+  /// What this client logged themselves (search, quick add, a photo
+  /// estimate, or a restaurant suggestion). Separate from the meal plan.
+  final FoodLog foodLog;
 
   /// Challenge badges awarded to this client (client.challengeBadges) — a
   /// winner badge and/or a "complete-{challengeId}" participation badge per
@@ -164,10 +175,13 @@ class ClientRecord {
     Map<String, IntakeRecord>? intake,
     List<Measurement>? measurements,
     List<ProgressPhoto>? photos,
+    ProgressGoal? progressGoal,
+    bool clearProgressGoal = false,
     List<TrainerNote>? trainerNotes,
     List<SessionFeedbackEntry>? sessionFeedback,
     List<NutritionProgramEntry>? savedNutritionPrograms,
     Map<String, List<NutritionMeal>>? myMeals,
+    FoodLog? foodLog,
     List<ChallengeBadge>? challengeBadges,
     bool? tourSeenDashboard,
     bool? tourSeenDrawer,
@@ -195,10 +209,12 @@ class ClientRecord {
         intake: intake ?? this.intake,
         measurements: measurements ?? this.measurements,
         photos: photos ?? this.photos,
+        progressGoal: clearProgressGoal ? null : (progressGoal ?? this.progressGoal),
         trainerNotes: trainerNotes ?? this.trainerNotes,
         sessionFeedback: sessionFeedback ?? this.sessionFeedback,
         savedNutritionPrograms: savedNutritionPrograms ?? this.savedNutritionPrograms,
         myMeals: myMeals ?? this.myMeals,
+        foodLog: foodLog ?? this.foodLog,
         challengeBadges: challengeBadges ?? this.challengeBadges,
         adoptedSignatureImage: adoptedSignatureImage ?? this.adoptedSignatureImage,
         adoptedInitialsImage: adoptedInitialsImage ?? this.adoptedInitialsImage,

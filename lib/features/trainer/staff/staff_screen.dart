@@ -53,7 +53,10 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
                 await SupabaseService.updateTrainerRow(
                   t.id,
                   name: t.name,
-        title: t.title,
+                  title: t.title,
+                  coachName: t.coachName ?? "",
+                  secondaryCoachName: t.secondaryCoachName,
+                  clearSecondaryCoachName: (t.secondaryCoachName ?? "").isEmpty,
                   email: t.email,
                   phone: t.phone,
                   photo: t.photo,

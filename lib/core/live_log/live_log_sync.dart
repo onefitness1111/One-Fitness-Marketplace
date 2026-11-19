@@ -35,6 +35,24 @@ class LiveNote {
   final DateTime createdAt;
 }
 
+/// A newer value for the same set field replaces the one still waiting.
+/// A different set, or the other field, is kept. Nothing is added twice.
+List<Map<String, dynamic>> queueLiveLogOp(List<Map<String, dynamic>> waiting, Map<String, dynamic> op) {
+  final next = [for (final item in waiting) Map<String, dynamic>.from(item)];
+  if (op["t"] == "set") {
+    next.removeWhere((o) =>
+        o["t"] == "set" &&
+        o["client"] == op["client"] &&
+        o["date"] == op["date"] &&
+        o["day"] == op["day"] &&
+        o["exercise"] == op["exercise"] &&
+        o["set"] == op["set"] &&
+        o["field"] == op["field"]);
+  }
+  next.add(Map<String, dynamic>.from(op));
+  return next;
+}
+
 /// Entries waiting to reach the server. Persisted on the phone, so a dropped
 /// connection (or the app being closed) loses nothing: everything is retried,
 /// in order, until it lands. The server applies each entry idempotently, so a
@@ -79,19 +97,7 @@ class LiveLogOutbox {
 
   static Future<void> add(Map<String, dynamic> op) async {
     final ops = await _load();
-    // A newer value for the same field replaces the older one still waiting,
-    // so a long offline stretch of typing is one entry per field, not hundreds.
-    if (op["t"] == "set") {
-      ops.removeWhere((o) =>
-          o["t"] == "set" &&
-          o["client"] == op["client"] &&
-          o["date"] == op["date"] &&
-          o["day"] == op["day"] &&
-          o["exercise"] == op["exercise"] &&
-          o["set"] == op["set"] &&
-          o["field"] == op["field"]);
-    }
-    ops.add(op);
+    _ops = queueLiveLogOp(ops, op);
     await _save();
     unawaited(flush());
   }
@@ -397,13 +403,33 @@ class LiveActivity {
     }).toList();
   }
 
-  /// Marks a client's live workout for [isoDate] as finished.
-  static Future<void> end(String clientId, String isoDate) async {
+  /// Finishes one program day. A different day logged on the same date stays open.
+  static Future<void> end(String clientId, String isoDate, {required String dayId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
     try {
-      await SupabaseService.client.rpc("end_live_logs", params: {"p_client": clientId, "p_date": isoDate});
+      await SupabaseService.client.rpc("end_live_logs", params: {
+        "p_client": clientId,
+        "p_date": isoDate,
+        "p_day": dayId,
+      });
     } catch (_) {
-      // Best-effort: it also stops showing once it has been idle for a while.
+      try {
+        await SupabaseService.client
+            .from("live_set_logs")
+            .update({"ended_at": now})
+            .eq("client_id", clientId)
+            .eq("log_date", isoDate)
+            .eq("day_id", dayId);
+      } catch (_) {}
     }
+    try {
+      await SupabaseService.client
+          .from("live_day_runs")
+          .update({"ended_at": now})
+          .eq("client_id", clientId)
+          .eq("log_date", isoDate)
+          .eq("day_id", dayId);
+    } catch (_) {}
   }
 
   static RealtimeChannel watch({String? clientId, required void Function() onChange}) {

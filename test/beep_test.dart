@@ -169,12 +169,12 @@ void main() {
       expect(expired.supportsBeep, isFalse);
     });
 
-    test("not in a one-on-one — the coach is already standing there", () {
-      expect(run(type: "one-on-one").supportsBeep, isFalse);
+    test("a live one-on-one still supports it", () {
+      expect(run(type: "one-on-one").supportsBeep, isTrue);
     });
 
-    test("not in a large group", () {
-      expect(run(type: "large-group").supportsBeep, isFalse);
+    test("a live large group still supports it", () {
+      expect(run(type: "large-group").supportsBeep, isTrue);
     });
   });
 

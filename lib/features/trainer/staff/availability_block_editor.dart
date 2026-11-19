@@ -139,7 +139,7 @@ class _AvailabilityBlockEditorState extends State<AvailabilityBlockEditor> {
               runSpacing: 6,
               children: widget.disciplineOptions.map((d) {
                 final on = _discipline == d;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(() {
                     _discipline = d;
                     _err = null;
@@ -169,7 +169,7 @@ class _AvailabilityBlockEditorState extends State<AvailabilityBlockEditor> {
                 return Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(right: 4),
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: () => _toggleDay(d),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -282,7 +282,7 @@ class _SlotGroup extends StatelessWidget {
               final st = stateOf(s);
               final on = st == "on";
               final partial = st == "partial";
-              return InkWell(
+              return TapHighlight(
                 onTap: () => onTap(s),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -311,7 +311,7 @@ class _IntervalToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(
@@ -330,7 +330,7 @@ class _MiniBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(7),
       child: Container(

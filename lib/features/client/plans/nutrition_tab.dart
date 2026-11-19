@@ -3,16 +3,22 @@ import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/meal_resize.dart";
 import "../../../core/utils/nutrition_utils.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/models/food_log.dart";
+import "../../../data/models/meal_def.dart";
 import "../../../data/models/nutrition_plan.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../core/legal/health_sources.dart";
 import "../../../core/widgets/source_citations.dart";
 import "../../../core/utils/nutrition_helpers.dart"
     show effectiveIngredients, effectiveMacros;
+import "add_meal_screen.dart";
+import "food_log_section.dart";
 import "meal_ingredient_editor.dart";
 import "client_meal_picker.dart";
+import "restaurant_sheet.dart";
 
 /// Mirrors NutritionScreenReadOnly.jsx: training/rest macro targets, a
 /// reference-only calorie budget panel, suggested meals per category, a
@@ -45,16 +51,82 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
     }
   }
 
-  Future<void> _pickMeal(String category, String label) async {
+  SlotBudget _slotBudget(String category) {
     final n = ref.read(clientRecordProvider).nutrition;
-    final budget = int.tryParse(
-      ((_dayType == "training" ? n?.mealBudgets.training : n?.mealBudgets.rest) ?? const {})[category] ?? "",
+    if (n == null) return const SlotBudget();
+    final targets = _dayType == "training" ? n.trainingTargets : n.restTargets;
+    final budgets = _dayType == "training" ? n.mealBudgets.training : n.mealBudgets.rest;
+    return SlotBudget.forSlot(
+      slotCalories: int.tryParse(budgets[category] ?? ""),
+      proteinPct: targets.protein,
+      carbsPct: targets.carbs,
+      fatsPct: targets.fats,
     );
-    final picked = await showClientMealPicker(context, ref, category: category, label: label, budget: budget);
+  }
+
+  Future<void> _pickMeal(String category, String label) async {
+    final picked = await showClientMealPicker(
+      context,
+      ref,
+      category: category,
+      label: label,
+      budget: _slotBudget(category),
+    );
     if (picked == null) return;
     final current = ref.read(clientRecordProvider).myMeals[category] ?? const <NutritionMeal>[];
     if (current.any((m) => m.id == picked.id)) return;
     await _saveChoices(category, [...current, picked]);
+  }
+
+  Future<void> _addOwnMeal(String category, String label) async {
+    final created = await Navigator.of(context).push<MealDef>(
+      MaterialPageRoute(builder: (_) => AddMealScreen(mealType: category, label: label)),
+    );
+    if (created == null) return;
+    final fitted = mealFittedToBudget(created, _slotBudget(category));
+    final current = ref.read(clientRecordProvider).myMeals[category] ?? const <NutritionMeal>[];
+    await _saveChoices(category, [...current, fitted]);
+  }
+
+  /// Copies a coach meal into the client's own list and fits the portions.
+  /// The meal on the program is left as it was uploaded.
+  Future<void> _fitUploaded(String category, NutritionMeal meal) async {
+    final source = MealDef(
+      id: "fit-${DateTime.now().microsecondsSinceEpoch}",
+      name: meal.name,
+      mealType: category,
+      calories: meal.calories,
+      protein: meal.protein,
+      carbs: meal.carbs,
+      fats: meal.fats,
+      ingredients: meal.ingredients,
+      instructions: meal.instructions,
+      notes: meal.notes,
+      isCustom: meal.isCustom,
+      photoDataUrl: meal.photoDataUrl,
+    );
+    final fitted = mealFittedToBudget(source, _slotBudget(category));
+    final current = ref.read(clientRecordProvider).myMeals[category] ?? const <NutritionMeal>[];
+    await _saveChoices(category, [...current, fitted]);
+  }
+
+  Future<void> _restaurant(String category, String label) async {
+    final item = await showRestaurantSheet(context, slot: category, label: label, budget: _slotBudget(category));
+    if (item == null) return;
+    final id = ref.read(clientInfoProvider).id;
+    final today = foodLogDate(DateTime.now());
+    final next = ref.read(clientRecordProvider).foodLog.add(today, category, item);
+    ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(foodLog: next));
+    try {
+      await SupabaseService.updateClientFoodLog(id, next);
+      try {
+        final fresh = await SupabaseService.loadMeritBadgesFor(id);
+        ref.read(earnedBadgesProvider.notifier).replaceForClient(id, fresh);
+      } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save that. Try again.")));
+    }
   }
 
   /// Lets the client change how much of each ingredient is in a meal they
@@ -85,9 +157,20 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
     final n = client.nutrition;
 
     if (n == null) {
-      return const Padding(
-        padding: EdgeInsets.all(18),
-        child: HintBox(text: "Complete your Nutritional Assessment (under Forms) so your coach can build your nutrition program. It'll show up here."),
+      return ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          FoodLogSection(dayType: _dayType),
+          for (final c in const [("breakfast", "Breakfast"), ("lunch", "Lunch"), ("dinner", "Dinner")])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: OutlinedButton(
+                onPressed: () => _restaurant(c.$1, c.$2),
+                child: Text("Restaurant for ${c.$2.toLowerCase()}"),
+              ),
+            ),
+          const HintBox(text: "Complete your Nutritional Assessment (under Forms) so your coach can build your nutrition program. It'll show up here. You can still log food above."),
+        ],
       );
     }
 
@@ -158,9 +241,10 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
             _CalorieBudgetPanel(mealBudgets: _dayType == "training" ? n.mealBudgets.training : n.mealBudgets.rest, dailyCalTarget: dailyCal),
             const SizedBox(height: 18),
           ],
+          FoodLogSection(dayType: _dayType),
 
           // The client picks their own meals for every category, alongside
-          // whatever their coach or the AI suggested. Snacks and smoothies
+          // whatever their coach suggested. Snacks and smoothies
           // used to be one read-only section that disappeared entirely when
           // the program suggested none — so a client could never add their
           // own. Each category is now separately choosable and always shown.
@@ -190,8 +274,13 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
                 (_dayType == "training" ? n.mealBudgets.training : n.mealBudgets.rest)[c.$1] ?? "",
               ),
               onChoose: () => _pickMeal(c.$1, c.$2),
+              onAddMeal: () => _addOwnMeal(c.$1, c.$2),
+              onRestaurant: c.$1 == "breakfast" || c.$1 == "lunch" || c.$1 == "dinner"
+                  ? () => _restaurant(c.$1, c.$2)
+                  : null,
               onRemoveChoice: (meal) => _removeChoice(c.$1, meal),
               onEditMeal: (meal) => _editMeal(c.$1, meal),
+              onFitUploaded: (meal) => _fitUploaded(c.$1, meal),
             ),
 
           if (grocery.isNotEmpty) ...[
@@ -275,7 +364,7 @@ class _DayTypeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(6),
         child: Container(
@@ -320,16 +409,29 @@ class _CalorieBudgetPanel extends StatelessWidget {
         children: [
           Text(
             "CALORIE BUDGET · REFERENCE ONLY",
-            style: TextStyle(fontSize: 10, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+            style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              _BudgetBox(label: "Breakfast", value: mealBudgets["breakfast"]),
-              _BudgetBox(label: "Lunch", value: mealBudgets["lunch"]),
-              _BudgetBox(label: "Dinner", value: mealBudgets["dinner"]),
-              _BudgetBox(label: "Snacks & Smoothies", value: mealBudgets["snacks"]),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked = constraints.maxWidth < 520;
+              final boxes = [
+                _BudgetBox(label: "Breakfast", value: mealBudgets["breakfast"], stacked: stacked),
+                _BudgetBox(label: "Lunch", value: mealBudgets["lunch"], stacked: stacked),
+                _BudgetBox(label: "Dinner", value: mealBudgets["dinner"], stacked: stacked),
+                _BudgetBox(label: "Snacks & Smoothies", value: mealBudgets["snacks"], stacked: stacked),
+              ];
+              // Four meal names at a readable size do not fit on one row of
+              // a phone. Stack them. A wide screen can keep the row.
+              if (stacked) {
+                return Column(
+                  children: [
+                    for (final box in boxes) Padding(padding: const EdgeInsets.only(bottom: 6), child: box),
+                  ],
+                );
+              }
+              return Row(children: boxes);
+            },
           ),
           const SizedBox(height: 8),
           Row(
@@ -337,7 +439,7 @@ class _CalorieBudgetPanel extends StatelessWidget {
             children: [
               RichText(
                 text: TextSpan(
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  style: TextStyle(fontSize: 12, color: AppColors.mute),
                   children: [
                     const TextSpan(text: "Total: "),
                     TextSpan(text: "$allocated kcal", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
@@ -348,9 +450,9 @@ class _CalorieBudgetPanel extends StatelessWidget {
                 Text(
                   allGood ? "✓ On target" : (over ? "${remaining.abs()} kcal over" : "$remaining kcal left"),
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: allGood ? AppColors.grn : (over ? AppColors.errorText : AppColors.gold),
+                    color: allGood ? AppColors.statusGreen : (over ? AppColors.errorText : AppColors.gold),
                   ),
                 ),
             ],
@@ -370,7 +472,7 @@ class _CalorieBudgetPanel extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             "Daily target: ${dailyCalTarget > 0 ? '$dailyCalTarget kcal' : 'not set'}",
-            style: TextStyle(fontSize: 9, color: AppColors.mute),
+            style: TextStyle(fontSize: 12, color: AppColors.mute),
           ),
         ],
       ),
@@ -379,38 +481,45 @@ class _CalorieBudgetPanel extends StatelessWidget {
 }
 
 class _BudgetBox extends StatelessWidget {
-  const _BudgetBox({required this.label, this.value});
+  const _BudgetBox({required this.label, this.value, required this.stacked});
   final String label;
   final String? value;
+  final bool stacked;
 
   @override
   Widget build(BuildContext context) {
+    final narrow = stacked;
+    final labelStyle = TextStyle(fontSize: 13, color: AppColors.mute, fontWeight: FontWeight.w600);
+    final chip = Container(
+      width: narrow ? 88 : double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        value ?? "—",
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: value != null ? AppColors.gold : AppColors.mute),
+      ),
+    );
+    if (narrow) {
+      return Row(
+        children: [
+          Expanded(child: Text(label, style: labelStyle)),
+          chip,
+        ],
+      );
+    }
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Column(
           children: [
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 8.5, color: AppColors.mute, fontWeight: FontWeight.w600),
-            ),
+            Text(label, textAlign: TextAlign.center, style: labelStyle),
             const SizedBox(height: 3),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              decoration: BoxDecoration(
-                color: AppColors.bg,
-                border: Border.all(color: AppColors.line),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                value ?? "—",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: value != null ? AppColors.gold : AppColors.mute),
-              ),
-            ),
+            chip,
           ],
         ),
       ),
@@ -425,8 +534,11 @@ class _MealSection extends StatelessWidget {
     this.chosen = const [],
     this.budget,
     this.onChoose,
+    this.onAddMeal,
+    this.onRestaurant,
     this.onRemoveChoice,
     this.onEditMeal,
+    this.onFitUploaded,
   });
   final String title;
   final List<NutritionMeal> meals;
@@ -438,11 +550,14 @@ class _MealSection extends StatelessWidget {
   /// the picker so a client can pick something that fits.
   final int? budget;
   final VoidCallback? onChoose;
+  final VoidCallback? onAddMeal;
+  final VoidCallback? onRestaurant;
   final ValueChanged<NutritionMeal>? onRemoveChoice;
 
   /// Opens the ingredient editor for one of the client's own picks. Null on
   /// the coach's suggested meals, which stay as prescribed.
   final ValueChanged<NutritionMeal>? onEditMeal;
+  final ValueChanged<NutritionMeal>? onFitUploaded;
 
   @override
   Widget build(BuildContext context) {
@@ -461,7 +576,7 @@ class _MealSection extends StatelessWidget {
                   style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero),
                   icon: const Icon(Icons.add, size: 15),
                   label: Text(
-                    budget != null ? "Choose your own (~$budget kcal)" : "Choose your own",
+                    budget != null ? "Choose (~$budget kcal)" : "Choose",
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -477,7 +592,10 @@ class _MealSection extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(child: Text(meal.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
-                        Text("Your pick", style: TextStyle(fontSize: 10, color: AppColors.gold, fontWeight: FontWeight.w700)),
+                        Text(
+                          meal.scale != null && (meal.scale! - 1).abs() > 0.02 ? "Fitted" : "Your pick",
+                          style: TextStyle(fontSize: 10, color: AppColors.gold, fontWeight: FontWeight.w700),
+                        ),
                         if (onRemoveChoice != null)
                           IconButton(
                             tooltip: "Remove",
@@ -516,23 +634,37 @@ class _MealSection extends StatelessWidget {
                           ),
                         )),
                     if (onEditMeal != null)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => onEditMeal!(meal),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.gold,
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                            minimumSize: Size.zero,
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () => onEditMeal!(meal),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.gold,
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                              minimumSize: Size.zero,
+                            ),
+                            icon: const Icon(Icons.tune, size: 15),
+                            label: Text(
+                              meal.overrides.isEmpty ? "Adjust ingredients" : "Adjusted · edit again",
+                              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+                            ),
                           ),
-                          icon: const Icon(Icons.tune, size: 15),
-                          label: Text(
-                            meal.overrides.isEmpty
-                                ? "Adjust ingredients"
-                                : "Adjusted · edit again",
-                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+                          TextButton.icon(
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: ingredientListAsText(effectiveIngredients(meal))));
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ingredient list copied.")));
+                            },
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.mute,
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                              minimumSize: Size.zero,
+                            ),
+                            icon: const Icon(Icons.copy, size: 14),
+                            label: const Text("Copy ingredients", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
                           ),
-                        ),
+                        ],
                       ),
                   ],
                 ),
@@ -583,9 +715,49 @@ class _MealSection extends StatelessWidget {
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(meal.notes!, style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
                       ),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: ingredientListAsText(meal.ingredients)));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ingredient list copied.")));
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.mute,
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                            minimumSize: Size.zero,
+                          ),
+                          icon: const Icon(Icons.copy, size: 14),
+                          label: const Text("Copy ingredients", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                        ),
+                        if (onFitUploaded != null)
+                          TextButton(
+                            onPressed: () => onFitUploaded!(meal),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.gold,
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                              minimumSize: Size.zero,
+                            ),
+                            child: const Text("Fit a serving to my budget", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               )),
+          if (onAddMeal != null || onRestaurant != null)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (onAddMeal != null)
+                  OutlinedButton(onPressed: onAddMeal, child: const Text("Add a meal")),
+                if (onRestaurant != null)
+                  OutlinedButton(onPressed: onRestaurant, child: Text("Restaurant for ${title.toLowerCase()}")),
+              ],
+            ),
         ],
       ),
     );

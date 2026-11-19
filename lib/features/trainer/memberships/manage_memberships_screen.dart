@@ -618,7 +618,7 @@ class _ManageMembershipsScreenState
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        InkWell(
+                        TapHighlight(
                           onTap: i == 0 ? null : () => _move(p.id, -1),
                           child: Icon(
                             LucideIcons.chevronUp,
@@ -626,7 +626,7 @@ class _ManageMembershipsScreenState
                             color: i == 0 ? AppColors.line : AppColors.mute,
                           ),
                         ),
-                        InkWell(
+                        TapHighlight(
                           onTap: i == total - 1 ? null : () => _move(p.id, 1),
                           child: Icon(
                             LucideIcons.chevronDown,
@@ -832,7 +832,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
   Widget _dateField({required String label, required TextEditingController controller, required String hint}) {
     return FieldLabeled(
       label: label,
-      child: InkWell(
+      child: TapHighlight(
         onTap: () => _pickDateInto(controller),
         child: InputDecorator(
           decoration: InputDecoration(
@@ -862,7 +862,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
                 ),
               ),
               if (controller.text.isNotEmpty)
-                InkWell(
+                TapHighlight(
                   onTap: () => setState(controller.clear),
                   child: Icon(LucideIcons.x, size: 14, color: AppColors.mute),
                 ),
@@ -1032,7 +1032,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
             runSpacing: 6,
             children: PlanKind.values.map((k) {
               final selected = _kind == k;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => _kind = k),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -1111,7 +1111,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
               // owner added (Customize Platform → Services).
               children: ref.watch(platformSettingsProvider).offeredSessionTypes.map((t) {
                 final selected = _allowedTypes.contains(t);
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(
                     () => selected
                         ? _allowedTypes.remove(t)
@@ -1157,7 +1157,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
               runSpacing: 6,
               children: [
                 for (final c in categories)
-                  InkWell(
+                  TapHighlight(
                     onTap: () => setState(() => _category = c),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
@@ -1258,7 +1258,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
 
             // ── Advanced Settings ──
             const SizedBox(height: 14),
-            InkWell(
+            TapHighlight(
               onTap: () => setState(() => _advancedOpen = !_advancedOpen),
               child: Row(
                 children: [
@@ -1424,7 +1424,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
             ],
           ],
           const SizedBox(height: 10),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _archived = !_archived),
             child: Row(
               children: [
@@ -1915,7 +1915,7 @@ class _PlanMembers extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           for (final m in members)
-            InkWell(
+            TapHighlight(
               onTap: () => ref.read(trainerModeProvider.notifier).openClient(m.id),
               borderRadius: BorderRadius.circular(8),
               child: Container(
@@ -1980,7 +1980,7 @@ class _MoveButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(4),
       child: Padding(

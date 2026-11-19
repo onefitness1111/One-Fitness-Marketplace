@@ -648,7 +648,7 @@ class _SectionEditor extends StatelessWidget {
               children: [
                 Expanded(child: SectionLabel("Section ${index + 1}")),
                 if (canRemove)
-                  InkWell(
+                  TapHighlight(
                     onTap: onRemove,
                     child: Padding(
                       padding: const EdgeInsets.all(4),
@@ -726,7 +726,7 @@ class _QuestionEditor extends StatelessWidget {
                   ),
                 ),
                 if (canRemove)
-                  InkWell(
+                  TapHighlight(
                     onTap: onRemove,
                     child: Padding(
                       padding: const EdgeInsets.only(left: 8),
@@ -777,7 +777,7 @@ class _QuestionEditor extends StatelessWidget {
                         ),
                       ),
                       if (question.optionCtrls.length > 1)
-                        InkWell(
+                        TapHighlight(
                           onTap: () {
                             question.optionCtrls.removeAt(i).dispose();
                             onChanged();
@@ -790,7 +790,7 @@ class _QuestionEditor extends StatelessWidget {
                     ],
                   ),
                 ),
-              InkWell(
+              TapHighlight(
                 onTap: () {
                   question.optionCtrls.add(TextEditingController());
                   onChanged();

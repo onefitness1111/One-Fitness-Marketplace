@@ -4,6 +4,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/ai_visibility.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/write_failure.dart";
@@ -51,37 +52,51 @@ class _PlansTabState extends ConsumerState<PlansTab> {
 
     final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final canEdit = isOwner || ref.watch(platformSettingsProvider).coachCanEditClientWorkouts;
-    if (!canEdit) {
-      return const Padding(
-        padding: EdgeInsets.all(18),
-        child: HintBox(
-          text: "Only the owner can build, approve, or assign workout and nutrition programs.",
+    final logButton = Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: BtnGold(
+        full: true,
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => LiveWorkoutPage(
+              clientId: widget.clientId,
+              clientName: ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId).map((c) => c.name).firstOrNull ?? "Client",
+            ),
+          ),
         ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.play, size: 14),
+            SizedBox(width: 6),
+            Text("Log workout"),
+          ],
+        ),
+      ),
+    );
+    // Logging a workout is not editing the program. The button stays even
+    // when a coach is not allowed to build or assign programs.
+    if (!canEdit) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          logButton,
+          const Expanded(
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: HintBox(
+                text: "Only the owner can build, approve, or assign workout and nutrition programs.",
+              ),
+            ),
+          ),
+        ],
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
-          child: BtnGold(
-            full: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => LiveWorkoutPage(clientId: widget.clientId, clientName: ref.read(trainerRosterProvider).where((c) => c.id == widget.clientId).map((c) => c.name).firstOrNull ?? "Client"),
-              ),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.play, size: 14),
-                SizedBox(width: 6),
-                Text("Log workout"),
-              ],
-            ),
-          ),
-        ),
+        logButton,
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
           child: Container(
@@ -90,7 +105,7 @@ class _PlansTabState extends ConsumerState<PlansTab> {
             child: Row(
               children: [("training", "Training"), ("nutrition", "Nutrition"), ("programs", "Programs")]
                   .map((t) => Expanded(
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => widget.onSubChanged(t.$1),
                           borderRadius: BorderRadius.circular(7),
                           child: Container(
@@ -554,7 +569,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12))),
 
         // ── AI workout draft ──
-        if (workoutDrafts.isEmpty)
+        if (isOwner && workoutDrafts.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             margin: const EdgeInsets.only(bottom: 16),
@@ -564,16 +579,14 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text(hasAnyAiWorkout ? "Regenerate from their Training Intake" : "Draft a workout with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                    const SizedBox(width: 6),
-                    const Tag(text: "AI", gold: true),
+                    Expanded(child: Text(hasAnyAiWorkout ? "Regenerate from their Training Intake" : "Draft a workout", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
                   hasAnyAiWorkout
                       ? "If this client has updated their Personalized Training Intake answers, draft a fresh split from their current answers. You'll review it here before anything changes."
-                      : "This client's Personalized Training Intake is complete but no AI draft has been generated yet. Draft a weekly split from their intake answers — you'll review it here before assigning it.",
+                      : "This client's Personalized Training Intake is complete but no draft has been created yet. Draft a weekly split from their intake answers — you'll review it here before assigning it.",
                   style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                 ),
                 const SizedBox(height: 10),
@@ -584,14 +597,15 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     child: Text(_generatingWorkoutDraft || _regeneratingWorkoutDraft
                         ? "Generating…"
                         : hasAnyAiWorkout
-                            ? "Regenerate AI Workout Draft"
-                            : "Draft a Workout with AI"),
+                            ? "Regenerate draft"
+                            : "Draft a workout"),
                   )
                 else
-                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                  Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
               ],
             ),
           ),
+        if (isOwner)
         for (final p in workoutDrafts)
           Container(
             padding: const EdgeInsets.all(14),
@@ -649,7 +663,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: _busy ? null : () => _discardWorkoutDraft(p),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                         child: const Text("Discard"),
                       ),
                     ),
@@ -660,7 +674,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           ),
 
         // ── AI nutrition draft ──
-        if (nutritionDrafts.isEmpty)
+        if (isOwner && nutritionDrafts.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             margin: const EdgeInsets.only(bottom: 16),
@@ -668,12 +682,12 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(hasAnyAiNutrition ? "Regenerate Nutrition Targets from Intake" : "Draft Nutrition Targets with AI", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                Text(hasAnyAiNutrition ? "Regenerate Nutrition Targets from Intake" : "Draft nutrition targets", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 const SizedBox(height: 6),
                 Text(
                   hasAnyAiNutrition
                       ? "If this client has updated their Nutrition Intake answers since their targets were last set, draft a fresh set from their current answers. You'll review it here before anything changes."
-                      : "This client's Nutrition Intake is complete but no AI draft has been generated yet. Draft whole-number Training/Rest Day targets from their intake answers — you'll review it here before anything is applied.",
+                      : "This client's Nutrition Intake is complete but no draft has been created yet. Draft whole-number Training/Rest Day targets from their intake answers — you'll review it here before anything is applied.",
                   style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5),
                 ),
                 const SizedBox(height: 10),
@@ -684,14 +698,15 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     child: Text(_generatingNutritionDraft || _regeneratingNutritionDraft
                         ? "Generating…"
                         : hasAnyAiNutrition
-                            ? "Regenerate AI Nutrition Targets"
-                            : "Generate AI Nutrition Targets"),
+                            ? "Regenerate targets"
+                            : "Draft nutrition targets"),
                   )
                 else
-                  Text("Only the owner can generate AI drafts.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
+                  Text("Only the owner can draft a program.", style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic)),
               ],
             ),
           ),
+        if (isOwner)
         for (final p in nutritionDrafts)
           Container(
             padding: const EdgeInsets.all(14),
@@ -702,9 +717,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text("AI-drafted calorie & macro targets are ready", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                    const SizedBox(width: 6),
-                    const Tag(text: "AI Draft", gold: true),
+                    Expanded(child: Text("Calorie and macro targets are ready", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -735,7 +748,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                     Expanded(
                       child: OutlinedButton(
                         onPressed: _busy ? null : () => _discardNutritionDraft(p.id),
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6B3B3B)), foregroundColor: AppColors.errorText),
+                        style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.danger), foregroundColor: AppColors.errorText),
                         child: const Text("Discard"),
                       ),
                     ),
@@ -787,7 +800,9 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _ProgramCard(
                   name: p.name,
-                  meta: "${p.trainingTargets.calories ?? "—"} kcal/day · ${p.createdBy ?? "—"}${p.createdAt != null ? " · ${p.createdAt}" : ""}",
+                  meta: "${p.trainingTargets.calories ?? "—"} kcal/day"
+                      "${() { final who = attributionForRole(p.createdBy, isOwner: isOwner); return who.isEmpty ? "" : " · $who"; }()}"
+                      "${p.createdAt != null ? " · ${p.createdAt}" : ""}",
                   archived: p.status == "archived",
                   busy: _busy,
                   onEdit: () => widget.onEditNutrition(),
@@ -831,7 +846,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
           child: Row(
             children: [("training", "Training"), ("nutrition", "Nutrition")]
                 .map((t) => Expanded(
-                      child: InkWell(
+                      child: TapHighlight(
                         onTap: () => setState(() {
                           if (_libraryTab == t.$1) return;
                           _libraryTabHistory.add(_libraryTab);
@@ -1014,7 +1029,7 @@ class _ActionChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = danger ? AppColors.errorText : AppColors.gold;
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

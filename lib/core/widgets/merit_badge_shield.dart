@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "../theme/app_colors.dart";
 import "../../data/models/merit_badge_def.dart";
 
 /// Mirrors MeritBadgeShield.jsx — the one place any badge's artwork is
@@ -14,7 +15,23 @@ class MeritBadgeShield extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = kBadgeImagePaths[badgeKey];
-    if (path == null) return SizedBox(width: size, height: size);
+    if (path == null) {
+      final letter = (meritBadgeByKey(badgeKey)?.name ?? badgeKey).trim();
+      return Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          border: Border.all(color: AppColors.line),
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          letter.isEmpty ? "?" : letter[0].toUpperCase(),
+          style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: size * 0.38),
+        ),
+      );
+    }
     final image = Image.asset(path, width: size, height: size, fit: BoxFit.contain);
     if (!grayscale) return image;
     return ColorFiltered(

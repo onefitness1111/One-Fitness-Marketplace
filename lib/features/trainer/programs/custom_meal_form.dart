@@ -1,7 +1,12 @@
+import "dart:convert";
+import "dart:typed_data";
+
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/food_catalog.dart";
 import "../../../core/utils/nutrition_helpers.dart";
+import "../../../core/utils/photo_picker_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/meal_def.dart";
 import "../../../data/models/nutrition_plan.dart";
@@ -45,6 +50,7 @@ class _CustomMealFormState extends State<CustomMealForm> {
   final _notes = TextEditingController();
   final Set<String> _tags = {};
   late List<_IngredientRow> _rows = [_IngredientRow(id: _uid())];
+  Uint8List? _photo;
   String? _err;
 
   static String _uid() => DateTime.now().microsecondsSinceEpoch.toString();
@@ -66,7 +72,13 @@ class _CustomMealFormState extends State<CustomMealForm> {
 
   List<Ingredient> get _liveIngredients => _rows
       .where((r) => r.item.text.trim().isNotEmpty)
-      .map((r) => Ingredient(item: r.item.text.trim(), qty: num.tryParse(r.qty.text.trim()), unit: r.unit.text.trim(), category: r.category))
+      .map((r) => Ingredient(
+            item: r.item.text.trim(),
+            qty: num.tryParse(r.qty.text.trim()),
+            unit: r.unit.text.trim(),
+            category: r.category,
+            macros: macrosForNamedFood(r.item.text.trim(), r.unit.text.trim()),
+          ))
       .toList();
 
   @override
@@ -96,7 +108,16 @@ class _CustomMealFormState extends State<CustomMealForm> {
         protein: macros?.protein ?? double.tryParse(_protein.text.trim()) ?? 0,
         carbs: macros?.carbs ?? double.tryParse(_carbs.text.trim()) ?? 0,
         fats: macros?.fats ?? double.tryParse(_fats.text.trim()) ?? 0,
-        ingredients: clean.map((r) => Ingredient(item: r.item.text.trim(), qty: num.tryParse(r.qty.text.trim()), unit: r.unit.text.trim(), category: r.category)).toList(),
+        ingredients: clean
+            .map((r) => Ingredient(
+                  item: r.item.text.trim(),
+                  qty: num.tryParse(r.qty.text.trim()),
+                  unit: r.unit.text.trim(),
+                  category: r.category,
+                  macros: macrosForNamedFood(r.item.text.trim(), r.unit.text.trim()),
+                ))
+            .toList(),
+        photoDataUrl: _photo == null ? null : "data:image/jpeg;base64,${base64Encode(_photo!)}",
         instructions: _instructions.text.trim().isEmpty ? null : _instructions.text.trim(),
         notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
         dietTags: _tags.isNotEmpty ? {"omnivore", ..._tags}.toList() : const ["omnivore"],
@@ -111,6 +132,28 @@ class _CustomMealFormState extends State<CustomMealForm> {
         children: [
           BackBar(onBack: widget.onCancel, title: "Create Custom Meal"),
           const SizedBox(height: 12),
+          if (_photo != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.memory(_photo!, height: 140, width: double.infinity, fit: BoxFit.cover),
+            ),
+          Row(
+            children: [
+              TextButton(onPressed: () async {
+                final bytes = await pickPlatePhotoBytes(camera: true);
+                if (bytes != null) setState(() => _photo = bytes);
+              }, child: Text("Take photo", style: TextStyle(color: AppColors.gold))),
+              TextButton(onPressed: () async {
+                final bytes = await pickPlatePhotoBytes(camera: false);
+                if (bytes != null) setState(() => _photo = bytes);
+              }, child: Text("Choose photo", style: TextStyle(color: AppColors.gold))),
+            ],
+          ),
+          Text(
+            "Known foods fill in calories and macros from the amount and unit. Use the unit the food is listed in, such as oz, cup, or whole.",
+            style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.35),
+          ),
+          const SizedBox(height: 8),
           FieldLabeled(label: "Meal name *", child: AppField(kind: FieldKind.name, controller: _name, placeholder: "e.g. Protein Pancakes")),
           const SizedBox(height: 14),
           Text("INGREDIENTS *", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
@@ -130,7 +173,7 @@ class _CustomMealFormState extends State<CustomMealForm> {
                             row.dispose();
                             _rows = _rows.where((r) => r.id != row.id).toList();
                           }),
-                      icon: const Icon(LucideIcons.x, size: 16, color: Color(0xFF6B3B3B)),
+                      icon: Icon(LucideIcons.x, size: 16, color: AppColors.danger),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(minWidth: 32),
                     ),
@@ -217,7 +260,7 @@ class _CustomMealFormState extends State<CustomMealForm> {
             runSpacing: 6,
             children: kDietTags.map((t) {
               final on = _tags.contains(t.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => on ? _tags.remove(t.$1) : _tags.add(t.$1)),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),

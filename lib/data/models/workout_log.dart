@@ -36,9 +36,11 @@ class WorkoutLogEntry {
     this.exercises = const [],
     this.loggedAt,
     this.loggedBy = "client",
-    this.coachComment,
-    this.coachCommentAt,
-  });
+    this.loggedByName,
+  this.coachComment,
+  this.coachCommentAt,
+  this.swaps = const [],
+});
 
   final String id;
   final String date; // ISO yyyy-MM-dd
@@ -53,13 +55,19 @@ class WorkoutLogEntry {
   /// the coach's own Start Session flow) — see SessionLoggerView.
   final String loggedBy;
 
+  /// Public coach name when [loggedBy] is "coach". Never a legal name.
+  final String? loggedByName;
+
   /// A coach's note left on this specific session (Notifications spec —
   /// "Coach comments on a workout"), shown to the client and emailed once
   /// on save. One comment per session, editable — not a full thread.
   final String? coachComment;
   final String? coachCommentAt;
 
-  WorkoutLogEntry copyWith({String? coachComment, String? coachCommentAt}) => WorkoutLogEntry(
+  /// Equipment swaps for this session only. The program itself is unchanged.
+  final List<LoggedSwap> swaps;
+
+  WorkoutLogEntry copyWith({String? coachComment, String? coachCommentAt, List<LoggedSwap>? swaps}) => WorkoutLogEntry(
         id: id,
         date: date,
         programId: programId,
@@ -69,7 +77,18 @@ class WorkoutLogEntry {
         exercises: exercises,
         loggedAt: loggedAt,
         loggedBy: loggedBy,
+        loggedByName: loggedByName,
         coachComment: coachComment ?? this.coachComment,
         coachCommentAt: coachCommentAt ?? this.coachCommentAt,
+        swaps: swaps ?? this.swaps,
       );
+}
+
+/// One exercise swapped for another during a single workout.
+class LoggedSwap {
+  const LoggedSwap({required this.fromName, required this.toName, required this.muscle});
+
+  final String fromName;
+  final String toName;
+  final String muscle;
 }

@@ -96,7 +96,7 @@ class _VisitsTabState extends ConsumerState<VisitsTab> {
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.only(right: t.$1 == "upcoming" ? 8 : 0),
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: () => setState(() => _tab = t.$1),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -131,7 +131,19 @@ class _VisitsTabState extends ConsumerState<VisitsTab> {
           const SizedBox(height: 14),
           if (_failed) const HintBox(text: "Couldn't load cancelled visits — showing booked sessions only."),
           if (!_loaded)
-            const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 12),
+                    Text("Loading visits…", style: TextStyle(fontSize: 14)),
+                  ],
+                ),
+              ),
+            )
           else if (shown.isEmpty)
             HintBox(text: _tab == "upcoming" ? "No upcoming visits." : "No past visits yet.")
           else

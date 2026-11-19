@@ -29,7 +29,11 @@ class BookingCancelScreen extends ConsumerWidget {
     final matches = trainers.where((t) => t.id == booking.trainerId);
     final trainer = matches.isNotEmpty ? matches.first : null;
     final settings = ref.watch(platformSettingsProvider);
-    final w = cancelWindow(booking, lateCancellationHours: settings.lateCancellationHours);
+    final w = cancelWindow(
+      booking,
+      lateCancellationHours: settings.lateCancellationHours,
+      noShowCancelHours: settings.noShowCancelHours,
+    );
     final charged = w != "free";
 
     return SingleChildScrollView(
@@ -46,7 +50,7 @@ class BookingCancelScreen extends ConsumerWidget {
               children: [
                 Text("${dayLabel(booking.date)} · ${fmtSlot(booking.slot)}", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 const SizedBox(height: 2),
-                Text(trainer?.displayTitle ?? "Trainer", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                Text(trainer?.displayTitle ?? "your coach", style: TextStyle(fontSize: 12, color: AppColors.mute)),
               ],
             ),
           ),
@@ -63,12 +67,19 @@ class BookingCancelScreen extends ConsumerWidget {
                 if (charged)
                   Padding(
                     padding: EdgeInsets.only(bottom: 4),
-                    child: Text("Late cancellation", style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.warning)),
+                    child: Text(
+                      w == "close" ? "Short-notice cancellation" : "Late cancellation",
+                      style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.warning),
+                    ),
                   ),
                 Text(
-                  charged
-                      ? "This is within ${settings.lateCancellationHours} hours of your session — a late cancellation. You'll be charged ${lateCancellationFeeLabel(feeCents: settings.lateCancellationFeeCents)}."
-                      : "You're outside the ${settings.lateCancellationHours}-hour window — no charge.",
+                  cancelFeeExplanation(
+                    w,
+                    lateHours: settings.lateCancellationHours,
+                    closeHours: settings.noShowCancelHours,
+                    lateCents: settings.lateCancellationFeeCents,
+                    closeCents: settings.noShowFeeCents,
+                  ),
                   style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.5),
                 ),
               ],

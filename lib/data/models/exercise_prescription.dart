@@ -38,6 +38,8 @@ class ExercisePrescription {
 
   ExercisePrescription copyWith({
     String? name,
+    String? exerciseId,
+    bool setExerciseId = false,
     int? sets,
     int? reps,
     String? weight,
@@ -55,7 +57,7 @@ class ExercisePrescription {
       ExercisePrescription(
         id: id,
         name: name ?? this.name,
-        exerciseId: exerciseId,
+        exerciseId: setExerciseId ? exerciseId : this.exerciseId,
         group: group,
         sets: sets ?? this.sets,
         reps: reps ?? this.reps,

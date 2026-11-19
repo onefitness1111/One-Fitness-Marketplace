@@ -1,7 +1,6 @@
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/widgets/widgets.dart";
@@ -33,6 +32,7 @@ class BookingPickingScreen extends StatelessWidget {
     required this.onConfirm,
     this.busy = false,
     this.error,
+    this.pitch = "",
   });
 
   final PendingPick pick;
@@ -45,6 +45,9 @@ class BookingPickingScreen extends StatelessWidget {
   final VoidCallback onConfirm;
   final bool busy;
   final String? error;
+
+  /// The plan and the cancel rules, in one paragraph. Empty hides it.
+  final String pitch;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +65,7 @@ class BookingPickingScreen extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Avatar(src: t.photo, name: t.name, size: 40, active: true),
+                    Avatar(src: t.photo, name: t.displayTitle, size: 40, active: true),
                     const SizedBox(width: 12),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,17 +118,11 @@ class BookingPickingScreen extends StatelessWidget {
               ),
             ),
           ],
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              switch (pick.sessionType) {
-                "semi-private" => "Semi-private — up to 4 share the floor.",
-                "large-group" => "Large Group — up to ${capFor("large-group")} share the class.",
-                _ => "One-on-one — just you.",
-              },
-              style: TextStyle(fontSize: 12, color: AppColors.mute),
+          if (pitch.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(pitch, style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.45)),
             ),
-          ),
           if (error != null) ...[
             Container(
               padding: const EdgeInsets.all(10),

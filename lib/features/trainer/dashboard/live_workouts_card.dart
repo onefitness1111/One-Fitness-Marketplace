@@ -7,6 +7,7 @@ import "../../../core/live_log/live_log_sync.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
@@ -109,12 +110,19 @@ class LiveWorkoutPage extends ConsumerWidget {
     final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final trainerAuth = ref.watch(trainerAuthProvider);
     final me = ref.watch(trainersProvider).where((t) => t.id == trainerAuth);
-    final myName = isOwner ? "Owner" : (me.isNotEmpty ? me.first.name : "Coach");
+    final myName = isOwner ? "Owner" : (me.isNotEmpty ? me.first.displayTitle : "Coach");
 
     Future<void> save(WorkoutLogEntry entry) async {
       final rec = ref.read(trainerClientRecordsProvider)[clientId];
       final logs = [...?rec?.workoutLogs.where((l) => l.id != entry.id), entry];
-      await SupabaseService.updateClientWorkoutLogs(clientId, logs);
+      await SupabaseService.appendWorkoutLog(clientId, entry);
+      final roster = ref.read(trainerRosterProvider);
+      final matches = roster.where((c) => c.id == clientId);
+      flagSessionSwaps(
+        entry: entry,
+        clientName: clientName,
+        coachId: matches.isEmpty ? null : matches.first.primaryTrainerId,
+      );
       ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(workoutLogs: logs));
     }
 
@@ -127,6 +135,8 @@ class LiveWorkoutPage extends ConsumerWidget {
               key: ValueKey(clientId),
               client: record,
               loggedBy: "coach",
+              loggedByName: myName,
+              sessionId: "live|$clientId",
               authorName: myName,
               authorRole: isOwner ? "owner" : "coach",
               initialDayId: dayId,

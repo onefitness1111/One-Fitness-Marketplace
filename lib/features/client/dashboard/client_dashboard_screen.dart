@@ -15,6 +15,8 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
 import "../../../data/models/earned_badge.dart";
 import "../../../data/models/membership_plan.dart";
+import "../booking/balance_due_sheet.dart";
+import "package_renewal_card.dart";
 import "sessions_remaining_badge.dart";
 import "workout_calendar.dart";
 
@@ -178,7 +180,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
             child: const Padding(
               padding: EdgeInsets.only(bottom: 14),
-              child: Text("See all Merit Badges →", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+              child: Text("See all Merit Badges →", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
             ),
           )),
 
@@ -202,7 +204,9 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               onSkip: intakeFormsDone ? () => setState(() => _skipOnboarding = true) : null,
             )),
 
+          stag(BalanceDueBanner(clientId: info.id)),
           stag(SessionsRemainingBadge(info: info, bookings: bookings)),
+          stag(const PackageRenewalCard()),
 
           if (showHabitTile)
             stag(AppCard(
@@ -221,7 +225,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                         const SizedBox(height: 1),
                         Text(
                           "${habitStreak(client)} day streak · ${((done / habits.length) * 100).round()}% today",
-                          style: TextStyle(fontSize: 11, color: AppColors.mute),
+                          style: TextStyle(fontSize: 12, color: AppColors.mute),
                         ),
                       ],
                     ),
@@ -244,7 +248,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               children: [
                 Text(
                   "NEXT SESSION",
-                  style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+                  style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
                 ),
                 const SizedBox(height: 8),
                 if (_next != null) ...[
@@ -264,8 +268,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                   ],
                   // Turning up early is normal: the gym is open, the client
                   // is here, and their slot is later tonight. This starts
-                  // that same booking now rather than making them wait or
-                  // rebook.
+                  // that same booking now rather than making them wait.
                   if (_canStartEarly) ...[
                     const SizedBox(height: 10),
                     BtnGold(
@@ -279,7 +282,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                     const SizedBox(height: 4),
                     Text(
                       "Starts now against tonight's booking.",
-                      style: TextStyle(fontSize: 11, color: AppColors.mute),
+                      style: TextStyle(fontSize: 12, color: AppColors.mute),
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -387,7 +390,7 @@ class _OnboardingSection extends StatelessWidget {
                   Expanded(
                     child: Text(
                       "Fill these in now — your answers are what your coach builds your plan from. You'll choose a membership or package once they're done.",
-                      style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w600),
+                      style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ],
@@ -404,7 +407,7 @@ class _OnboardingSection extends StatelessWidget {
               child: Text(
                 "Or fill out your intake forms below to complete on your own.",
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.5, fontStyle: FontStyle.italic),
+                style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.5, fontStyle: FontStyle.italic),
               ),
             ),
           ],
@@ -453,7 +456,7 @@ class _IntakeButton extends StatelessWidget {
           Flexible(
             child: Text(
               label,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -484,7 +487,7 @@ class _OnboardingStepCard extends StatelessWidget {
               children: [
                 Text(step.label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.txt)),
                 const SizedBox(height: 1),
-                Text(step.sub, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                Text(step.sub, style: TextStyle(fontSize: 12, color: AppColors.mute)),
               ],
             ),
           ),

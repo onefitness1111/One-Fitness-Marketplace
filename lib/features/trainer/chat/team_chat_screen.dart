@@ -11,11 +11,18 @@ import "../../../core/widgets/widgets.dart";
 /// Team Chat: owner <-> coaches, coach <-> coach, and anyone on staff to the
 /// business contact (ONE Fitness Marketplace). Marketplace messages reach the
 /// owner and go by In app or Email only, never SMS.
-/// A teammate as people see them: coaches are "Coach {first name}" everywhere.
+/// Staff talking to each other may see a legal name when no coach name is set.
+/// A client never uses this. Client screens use [coachPublicName] only.
 String staffLabel(Map<String, dynamic>? p) {
+  if (p?["role"] == "coach") {
+    final chosen = ((p?["coach_name"] as String?) ?? "").trim();
+    if (chosen.isNotEmpty) return chosen;
+    final legal = ((p?["name"] as String?) ?? "").trim();
+    if (legal.isNotEmpty) return legal;
+    return "Coach";
+  }
   final name = ((p?["name"] as String?) ?? "").trim();
   if (name.isEmpty) return "Teammate";
-  if (p?["role"] == "coach") return "Coach ${name.split(RegExp(r"\s+")).first}";
   return name;
 }
 
@@ -50,6 +57,10 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
 
   String get _me => SupabaseService.currentUser?.id ?? "";
 
+  void _markRead(String key) {
+    SupabaseService.markChatRead(key == "market" ? "staff:market" : "staff:$key");
+  }
+
   void _close() {
     if (widget.initialKey != null) {
       Navigator.of(context).maybePop();
@@ -62,24 +73,34 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
   void initState() {
     super.initState();
     _open = widget.initialKey;
+    final initial = widget.initialKey;
+    if (initial != null) _markRead(initial);
     final ch = widget.initialChannels;
     if (ch != null && ch.isNotEmpty) _channels = {...ch, ChatChannel.inapp};
     _load();
-    _channel = SupabaseService.client
-        .channel("staff_messages_live")
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: "public",
-          table: "staff_messages",
-          callback: (_) => _load(quiet: true),
-        )
-        .subscribe();
+    try {
+      _channel = SupabaseService.client
+          .channel("staff_messages_live")
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: "public",
+            table: "staff_messages",
+            callback: (_) => _load(quiet: true),
+          )
+          .subscribe();
+    } catch (_) {
+      _channel = null;
+    }
   }
 
   @override
   void dispose() {
     final c = _channel;
-    if (c != null) SupabaseService.client.removeChannel(c);
+    if (c != null) {
+      try {
+        SupabaseService.client.removeChannel(c);
+      } catch (_) {}
+    }
     _text.dispose();
     _scroll.dispose();
     super.dispose();
@@ -150,14 +171,15 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
             ];
       for (final t in targets) {
         notifyPush(profileId: t["id"] as String, title: "Message from $myName", body: body);
-        final email = (t["email"] as String?) ?? "";
-        if (chosen.contains(ChatChannel.email) && email.isNotEmpty) {
-          SupabaseService.sendEmail(to: email, subject: "Message from $myName — ONE Fitness", text: body)
-              .catchError((Object e) {});
+        if (chosen.contains(ChatChannel.email)) {
+          SupabaseService.sendEmail(
+            profileId: t["id"] as String,
+            subject: "Message from $myName — ONE Fitness",
+            text: body,
+          ).catchError((Object e) {});
         }
-        final phone = ((t["phone"] as String?) ?? "").trim();
-        if (!toMarket && chosen.contains(ChatChannel.sms) && phone.isNotEmpty) {
-          SupabaseService.sendSms(to: phone, text: "$myName: $body").catchError((Object e) {});
+        if (!toMarket && chosen.contains(ChatChannel.sms)) {
+          SupabaseService.sendSms(profileId: t["id"] as String, text: "$myName: $body").catchError((Object e) {});
         }
       }
       await _load(quiet: true);
@@ -226,6 +248,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
         const SectionLabel("Kind of message"),
         Wrap(
           spacing: 8,
+          runSpacing: 8,
           children: [
             for (final ch in chatChannelOrder)
               if (_pick != "market" || ch != ChatChannel.sms)
@@ -247,10 +270,14 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
         FilledButton(
           onPressed: _pick == null
               ? null
-              : () => setState(() {
-                    _open = _pick;
-                    _toBottom();
-                  }),
+              : () {
+                    final key = _pick!;
+                    _markRead(key);
+                    setState(() {
+                      _open = key;
+                      _toBottom();
+                    });
+                  },
           child: const Text("Start chat"),
         ),
       ],
@@ -316,8 +343,10 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const ChatSavedNotice(),
                 Wrap(
                   spacing: 8,
+                  runSpacing: 8,
                   children: [
                     for (final ch in chatChannelOrder)
                       if (available.contains(ch))

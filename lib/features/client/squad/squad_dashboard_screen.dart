@@ -4,6 +4,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/roster_client.dart";
 import "../../../data/models/squad.dart";
@@ -409,7 +410,7 @@ class _SquadDashboardScreenState extends ConsumerState<SquadDashboardScreen> {
               children: tabs
                   .map(
                     (t) => Expanded(
-                      child: InkWell(
+                      child: TapHighlight(
                         onTap: () => setState(() {
                           if (_sub == t.$1) return;
                           _subHistory.add(_sub);
@@ -623,10 +624,10 @@ class _MembersTab extends ConsumerWidget {
                           });
                           if (!ok && context.mounted) _showMutateError(context);
                         },
-                        icon: const Icon(
+                        icon: Icon(
                           LucideIcons.userMinus,
                           size: 14,
-                          color: Color(0xFF6B3B3B),
+                          color: AppColors.danger,
                         ),
                       ),
                   ],
@@ -689,7 +690,7 @@ class _MembersTab extends ConsumerWidget {
                           ),
                         ),
                         Text(
-                          "Awaiting response — invited ${inv.sentAt}",
+                          "Awaiting response — invited ${friendlyStamp(inv.sentAt)}",
                           style: TextStyle(
                             fontSize: 11,
                             color: AppColors.mute,
@@ -798,7 +799,7 @@ class _MembersTab extends ConsumerWidget {
               if (!ok && context.mounted) _showMutateError(context);
             },
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF6B3B3B),
+              foregroundColor: AppColors.danger,
               padding: EdgeInsets.zero,
             ),
             child: const Text("Dissolve Squad", style: TextStyle(fontSize: 12)),

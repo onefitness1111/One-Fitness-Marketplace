@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "../chat/unread_dot.dart";
 import "../theme/app_colors.dart";
 
 /// Icon + label pair for a bottom nav tab, with color and a gentle scale pop
@@ -11,12 +12,14 @@ class AnimatedTabIcon extends StatelessWidget {
     required this.label,
     required this.selected,
     this.size = 21,
+    this.showDot = false,
   });
 
   final IconData icon;
   final String label;
   final bool selected;
   final double size;
+  final bool showDot;
 
   @override
   Widget build(BuildContext context) {
@@ -33,18 +36,30 @@ class AnimatedTabIcon extends StatelessWidget {
           child: TweenAnimationBuilder<Color?>(
             tween: ColorTween(end: color),
             duration: const Duration(milliseconds: 200),
-            builder: (context, c, _) => Icon(icon, size: size, color: c),
+            builder: (context, c, _) => Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(icon, size: size, color: c),
+              if (showDot)
+                const Positioned(right: -3, top: -2, child: UnreadDot()),
+            ],
+          ),
           ),
         ),
         const SizedBox(height: 3),
         AnimatedDefaultTextStyle(
           duration: const Duration(milliseconds: 200),
           style: TextStyle(
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
             color: color,
           ),
-          child: Text(label),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
         ),
       ],
     );

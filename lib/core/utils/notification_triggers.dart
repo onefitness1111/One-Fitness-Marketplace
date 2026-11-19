@@ -15,10 +15,12 @@ Future<void> notifyPlanAssigned({
   final label = kind == "workout" ? "workout" : "nutrition";
   if (profileId != null) {
     notifyPush(profileId: profileId, title: "New $label plan", body: "Your coach just assigned you a new $label plan. Open the app to check it out.", sms: true);
+    notifyOwnerInternal(title: "Program updated", body: "$toName has a new $label plan.");
   }
   if (toEmail.isEmpty) return;
   try {
     await SupabaseService.sendEmail(
+      profileId: profileId,
       to: toEmail,
       subject: "Your new $label plan is ready",
       text: "Hi $toName,\n\nYour coach just assigned you a new $label plan. Open the ONE Fitness app to check it out.\n\n— ONE Fitness",
@@ -63,6 +65,37 @@ const kSessionMilestones = [10, 25, 50, 100];
 /// [sms] also texts a client who opted in to texts — set for alerts about
 /// their bookings, plans and progress; left off for chat, which has its own
 /// SMS channel choice.
+/// A confirmation for the client, and the same news for the one coach it
+/// affects. Other coaches are not included.
+Future<void> notifyClientAndCoach({
+  required String clientId,
+  required String? coachId,
+  required String clientTitle,
+  required String clientBody,
+  required String coachTitle,
+  required String coachBody,
+}) async {
+  if (clientId.isNotEmpty) {
+    await notifyPush(profileId: clientId, title: clientTitle, body: clientBody, sms: true);
+  }
+  if (coachId != null && coachId.isNotEmpty && coachId != clientId) {
+    await notifyPush(profileId: coachId, title: coachTitle, body: coachBody);
+  }
+}
+
+/// Photos, measurements, programs and intake go to the business, not to
+/// every coach. Fails quietly if the directory is not available yet.
+Future<void> notifyOwnerInternal({required String title, required String body}) async {
+  try {
+    final people = await SupabaseService.loadProfileDirectory();
+    for (final person in people) {
+      if (person["role"] == "owner" && person["id"] is String) {
+        await notifyPush(profileId: person["id"] as String, title: title, body: body);
+      }
+    }
+  } catch (_) {}
+}
+
 Future<void> notifyPush({
   required String profileId,
   required String title,
@@ -124,6 +157,7 @@ Future<void> notifySessionMilestoneIfCrossed({
   if (toEmail.isNotEmpty) {
     try {
       await SupabaseService.sendEmail(
+        profileId: profileId,
         to: toEmail,
         subject: "You just hit $totalCheckedIn sessions!",
         text: "Hi $toName,\n\nCongratulations — you've completed $totalCheckedIn sessions at ONE Fitness. Keep up the great work!\n\n— ONE Fitness",
@@ -151,6 +185,7 @@ Future<void> notifyCoachComment({
   if (toEmail.isEmpty) return;
   try {
     await SupabaseService.sendEmail(
+      profileId: profileId,
       to: toEmail,
       subject: "Your coach left you a comment",
       text: "Hi $toName,\n\nYour coach just left a comment on one of your $kind entries. Open the ONE Fitness app to see it.\n\n— ONE Fitness",
@@ -188,15 +223,7 @@ Future<void> notifyGoalReachedIfCrossed({
       .whereType<double>()
       .any((w) => (w - goalWeight).abs() <= 0.5);
   if (alreadyThereBefore) return;
-  if (profileId != null) {
-    notifyPush(profileId: profileId, title: "Goal reached! 🎉", body: "Your latest measurement shows you've reached your goal weight. Amazing work!", sms: true);
-  }
-  if (toEmail.isEmpty) return;
-  try {
-    await SupabaseService.sendEmail(
-      to: toEmail,
-      subject: "You reached your goal weight!",
-      text: "Hi $toName,\n\nCongratulations — your latest measurement shows you've reached your goal weight. Amazing work!\n\n— ONE Fitness",
-    );
-  } catch (_) {}
+  // The client is the one logging the measurement. The server writes the
+  // notice and sends it only to that client.
+  await SupabaseService.clientNotify("goal-reached", {});
 }

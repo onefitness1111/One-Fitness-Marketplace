@@ -1,7 +1,10 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
+import "../../../core/widgets/schedule_day_dot.dart";
 
 const _monthNames = [
   "January", "February", "March", "April", "May", "June",
@@ -9,9 +12,8 @@ const _monthNames = [
 ];
 const _dowLabels = ["S", "M", "T", "W", "T", "F", "S"];
 
-/// Days the coach is available. Yellow rather than the app's gold/green so
-/// it can't be confused with "today" or a booked session.
-const _availableYellow = Color(0xFFF2C94C);
+/// Open days use the gray accent, the same highlight as the rest of the app.
+/// Today keeps a solid border so an open day and today don't look identical.
 
 /// Mirrors MonthCalendar.jsx's month grid, extended with a per-day session
 /// time readout — a coach can see when their day's sessions start without
@@ -24,6 +26,7 @@ class MonthCalendar extends StatelessWidget {
     required this.slotsByDate,
     required this.blockedDates,
     this.availableDates = const {},
+    this.dayFills = const {},
     required this.onSelectDay,
     required this.onChangeMonth,
   });
@@ -37,9 +40,13 @@ class MonthCalendar extends StatelessWidget {
   final Map<String, List<int>> slotsByDate;
   final Set<String> blockedDates;
 
-  /// Future days the coach is working — tinted yellow. Computed by
+  /// Future days the coach is working — tinted with the gray accent. Computed by
   /// ScheduleScreen; empty for the owner, whose calendar covers every coach.
   final Set<String> availableDates;
+
+  /// Open, booked, or full. When this is set, it replaces the old gold wash
+  /// that painted every working day the same color.
+  final Map<String, ScheduleDayFill> dayFills;
   final ValueChanged<String> onSelectDay;
   final void Function(int direction) onChangeMonth;
 
@@ -57,22 +64,23 @@ class MonthCalendar extends StatelessWidget {
       final slots = slotsByDate[date] ?? const <int>[];
       final blocked = blockedDates.contains(date);
       final isToday = date == today;
-      final available = availableDates.contains(date);
+      final available = dayFills.isEmpty && availableDates.contains(date);
+      final fill = dayFills[date];
       // Four times fit the cell at this aspect ratio; beyond that a "+N"
       // says there's more without the cell growing into the next row.
       final shown = slots.take(4).toList();
       final overflow = slots.length - shown.length;
-      cells.add(InkWell(
+      cells.add(TapHighlight(
         onTap: () => onSelectDay(date),
         borderRadius: BorderRadius.circular(9),
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(9),
-            color: available ? _availableYellow.withValues(alpha: 0.16) : null,
+            color: available ? AppColors.gold.withValues(alpha: 0.16) : null,
             border: isToday
-                ? Border.all(color: AppColors.gold)
+                ? Border.all(color: AppColors.gold, width: 2)
                 : available
-                    ? Border.all(color: _availableYellow.withValues(alpha: 0.55))
+                    ? Border.all(color: AppColors.gold.withValues(alpha: 0.55))
                     : null,
           ),
           padding: const EdgeInsets.symmetric(vertical: 6),
@@ -82,7 +90,9 @@ class MonthCalendar extends StatelessWidget {
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text("$d", style: TextStyle(fontSize: 13, fontWeight: isToday || available ? FontWeight.w800 : FontWeight.w500, color: isToday ? AppColors.gold : available ? _availableYellow : AppColors.txt)),
+                  Text("$d", style: TextStyle(fontSize: 13, fontWeight: isToday || available || fill != null ? FontWeight.w800 : FontWeight.w500, color: isToday || available ? AppColors.gold : AppColors.txt)),
+                  const SizedBox(height: 2),
+                  ScheduleDayDot(fill: fill),
                   const SizedBox(height: 2),
                   for (final s in shown)
                     Text(fmtSlotCompactAmPm(s), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: AppColors.gold), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -119,6 +129,7 @@ class MonthCalendar extends StatelessWidget {
           childAspectRatio: 0.55,
           children: cells,
         ),
+        if (dayFills.isNotEmpty) const ScheduleDayLegend(),
       ],
     );
   }

@@ -48,6 +48,73 @@ class LiveSessionsNotifier extends Notifier<List<LiveSession>> {
 final liveSessionsProvider =
     NotifierProvider<LiveSessionsNotifier, List<LiveSession>>(LiveSessionsNotifier.new);
 
+/// A program day a coach started for a client. Beep Your Coach follows this,
+/// not the booked clock by itself.
+class CoachLedDay {
+  const CoachLedDay({required this.clientId, required this.dayId, this.trainerId});
+  final String clientId;
+  final String dayId;
+  final String? trainerId;
+
+  /// Used only when there is no booked session_run to attach the beep to.
+  String get fallbackRunId => "day-$clientId-$dayId";
+}
+
+class CoachLedDaysNotifier extends Notifier<List<CoachLedDay>> {
+  @override
+  List<CoachLedDay> build() => const [];
+
+  void setAll(List<CoachLedDay> next) => state = next;
+
+  CoachLedDay? forClient(String clientId) {
+    for (final day in state) {
+      if (day.clientId == clientId) return day;
+    }
+    return null;
+  }
+}
+
+final coachLedDaysProvider =
+    NotifierProvider<CoachLedDaysNotifier, List<CoachLedDay>>(CoachLedDaysNotifier.new);
+
+Future<List<CoachLedDay>> loadCoachLedDays() async {
+  final found = <String, CoachLedDay>{};
+  try {
+    final runs = await SupabaseService.client
+        .from("live_day_runs")
+        .select("client_id, day_id, started_role, trainer_id, ended_at")
+        .isFilter("ended_at", null);
+    for (final raw in runs as List) {
+      final row = (raw as Map).cast<String, dynamic>();
+      final role = row["started_role"]?.toString();
+      if (role != "coach" && role != "owner") continue;
+      final clientId = row["client_id"]?.toString() ?? "";
+      final dayId = row["day_id"]?.toString() ?? "";
+      if (clientId.isEmpty || dayId.isEmpty) continue;
+      found[clientId] = CoachLedDay(
+        clientId: clientId,
+        dayId: dayId,
+        trainerId: row["trainer_id"]?.toString(),
+      );
+    }
+  } catch (_) {}
+  try {
+    final rows = await SupabaseService.client
+        .from("live_set_logs")
+        .select("client_id, day_id, exercise_name, ended_at")
+        .eq("exercise_name", "__day_started_coach__")
+        .isFilter("ended_at", null);
+    for (final raw in rows as List) {
+      final row = (raw as Map).cast<String, dynamic>();
+      final clientId = row["client_id"]?.toString() ?? "";
+      final dayId = row["day_id"]?.toString() ?? "";
+      if (clientId.isEmpty || dayId.isEmpty || found.containsKey(clientId)) continue;
+      found[clientId] = CoachLedDay(clientId: clientId, dayId: dayId);
+    }
+  } catch (_) {}
+  return found.values.toList();
+}
+
 /// Beeps for whichever session is currently on screen.
 ///
 /// Scoped to one run rather than held globally: a coach only ever looks at
@@ -99,11 +166,13 @@ class BeepRealtime {
 
   RealtimeChannel? _runsChannel;
   RealtimeChannel? _beepsChannel;
+  RealtimeChannel? _daysChannel;
 
   Future<void> start() async {
     await stop();
     try {
       _ref.read(liveSessionsProvider.notifier).setAll(await SupabaseService.loadLiveSessions());
+      _ref.read(coachLedDaysProvider.notifier).setAll(await loadCoachLedDays());
     } catch (_) {
       // A failed first load is not fatal — the subscriptions below still
       // deliver anything that changes from here on.
@@ -129,6 +198,18 @@ class BeepRealtime {
         )
         .subscribe();
 
+    _daysChannel = SupabaseService.client
+        .channel("live_days_${DateTime.now().microsecondsSinceEpoch}")
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: "public",
+          table: "live_set_logs",
+          callback: (_) async {
+            _ref.read(coachLedDaysProvider.notifier).setAll(await loadCoachLedDays());
+          },
+        )
+        .subscribe();
+
     _beepsChannel = SupabaseService.client
         .channel("beeps_live")
         .onPostgresChanges(
@@ -149,10 +230,13 @@ class BeepRealtime {
   Future<void> stop() async {
     final runs = _runsChannel;
     final beeps = _beepsChannel;
+    final days = _daysChannel;
     _runsChannel = null;
     _beepsChannel = null;
+    _daysChannel = null;
     if (runs != null) await SupabaseService.client.removeChannel(runs);
     if (beeps != null) await SupabaseService.client.removeChannel(beeps);
+    if (days != null) await SupabaseService.client.removeChannel(days);
   }
 }
 

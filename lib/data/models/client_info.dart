@@ -38,6 +38,10 @@ class ClientInfo {
     this.pushOptIn = true,
     this.billingAnchorDay,
     this.bookingLocation,
+    this.emergencyContactName,
+    this.emergencyContactPhone,
+    this.bookingRestricted = false,
+    this.bookingRestrictedReason,
   });
 
   final String id;
@@ -166,6 +170,14 @@ class ClientInfo {
   /// default); [kAnyLocation] means "Any location".
   final String? bookingLocation;
 
+  /// Visible to coaches and the owner. This is not the client's own phone.
+  final String? emergencyContactName;
+  final String? emergencyContactPhone;
+
+  /// The owner (or an approved coach request) has stopped this client booking.
+  final bool bookingRestricted;
+  final String? bookingRestrictedReason;
+
   ClientInfo copyWith({
     String? name,
     String? email,
@@ -200,6 +212,11 @@ class ClientInfo {
     bool? pushOptIn,
     int? billingAnchorDay,
     String? bookingLocation,
+    String? emergencyContactName,
+    String? emergencyContactPhone,
+    bool? bookingRestricted,
+    String? bookingRestrictedReason,
+    bool clearBookingRestrictedReason = false,
     List<ClientPlanEnrollment>? plans,
   }) =>
       ClientInfo(
@@ -234,6 +251,12 @@ class ClientInfo {
         pushOptIn: pushOptIn ?? this.pushOptIn,
         billingAnchorDay: billingAnchorDay ?? this.billingAnchorDay,
         bookingLocation: bookingLocation ?? this.bookingLocation,
+        emergencyContactName: emergencyContactName ?? this.emergencyContactName,
+        emergencyContactPhone: emergencyContactPhone ?? this.emergencyContactPhone,
+        bookingRestricted: bookingRestricted ?? this.bookingRestricted,
+        bookingRestrictedReason: clearBookingRestrictedReason
+            ? null
+            : (bookingRestrictedReason ?? this.bookingRestrictedReason),
       );
 }
 

@@ -266,15 +266,27 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                 if (_tab == "scheduling") ...[
                   _NumberRow(
                     label: "Late cancellation window (hours)",
-                    hint: "Cancelling or rescheduling outside this many hours before a session is free. Inside it, the late cancellation fee below applies.",
+                    hint: "Cancelling further out than this is free. Inside it, the late fee below is charged. The session still goes back on the plan.",
                     suffix: "hours before session",
                     value: s.lateCancellationHours,
                     onChange: (v) => _set((d) => d.copyWith(lateCancellationHours: v)),
                   ),
-                  _MoneyRow(label: "Late cancellation fee", cents: s.lateCancellationFeeCents, onChange: (v) => _set((d) => d.copyWith(lateCancellationFeeCents: v))),
                   _MoneyRow(
-                    label: "No-show fee",
-                    hint: "Charged when a coach marks a booking No-Show — unlike a late cancellation, a no-show does not give the session back.",
+                    label: "Late cancellation fee",
+                    hint: "Charged when a cancel is inside the window above, and still further out than the shorter window below.",
+                    cents: s.lateCancellationFeeCents,
+                    onChange: (v) => _set((d) => d.copyWith(lateCancellationFeeCents: v)),
+                  ),
+                  _NumberRow(
+                    label: "Short-notice window (hours)",
+                    hint: "A cancel inside this many hours is the higher fee. It is still a cancel: the session goes back. A no-show your coaches mark is the only one that uses the session.",
+                    suffix: "hours before session",
+                    value: s.noShowCancelHours,
+                    onChange: (v) => _set((d) => d.copyWith(noShowCancelHours: v)),
+                  ),
+                  _MoneyRow(
+                    label: "Short-notice and no-show fee",
+                    hint: "Charged for a cancel inside the short window, and when a coach marks a real no-show. The cancel gives the session back. The no-show uses it.",
                     cents: s.noShowFeeCents,
                     onChange: (v) => _set((d) => d.copyWith(noShowFeeCents: v)),
                   ),
@@ -336,22 +348,13 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   ),
                   _ChoiceRow(
                     label: "Coach client list",
-                    hint: "Scopes a coach's Clients tab and Chat inbox. Owner always sees everyone.",
+                    hint: "The Clients tab always lists every client. This only narrows a coach's Chat inbox. The owner always sees everyone.",
                     value: s.coachClientScope,
                     options: const [("own", "Own clients only"), ("all", "All clients")],
                     onChange: (v) => _set((d) => d.copyWith(coachClientScope: v)),
                   ),
-                  _ToggleRow(
-                    label: "Coach can view revenue / pay data",
-                    hint: "Unlocks a coach's own My Pay screen — their sessions and commission only, never gym-wide financials.",
-                    value: s.coachCanViewRevenue,
-                    onChange: (v) => _set((d) => d.copyWith(coachCanViewRevenue: v)),
-                  ),
-                  _ToggleRow(
-                    label: "Coach can see other coaches' scheduled sessions",
-                    hint: "Off keeps a coach's Scheduling tab locked to their own sessions, like today.",
-                    value: s.coachCanSeeOtherSchedules,
-                    onChange: (v) => _set((d) => d.copyWith(coachCanSeeOtherSchedules: v)),
+                  const HintBox(
+                    text: "Coaches always see their own My Pay (their sessions, commission, and payouts only). That cannot be turned off, and it never shows another coach's pay. A coach's schedule shows only their own sessions. They can still add a client to any session from Book session.",
                   ),
                   _ChoiceRow(
                     label: "Coaches reply in messages as",
@@ -649,13 +652,6 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   const SectionLabel("Merit Badges"),
                   const SizedBox(height: 8),
                   _NumberRow(
-                    label: "Progress Tracker — consecutive weeks required",
-                    hint: "A client needs a photo, measurement, or workout log at least once a week for this many weeks in a row to earn the badge.",
-                    suffix: "weeks",
-                    value: s.meritBadgeProgressWeeks,
-                    onChange: (v) => _set((d) => d.copyWith(meritBadgeProgressWeeks: v)),
-                  ),
-                  _NumberRow(
                     label: "Habit — consistency percent required",
                     hint: "The minimum weekly habit-completion percentage a client must sustain to earn the badge.",
                     suffix: "%",
@@ -679,6 +675,9 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   _MoneyRow(label: "Habit Coach", badgeKey: "habit_coach", cents: s.badgeHabitCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeHabitCoachCents: v))),
                   _MoneyRow(label: "Challenge Coach", badgeKey: "challenge_coach", cents: s.badgeChallengeCoachCents, onChange: (v) => _set((d) => d.copyWith(badgeChallengeCoachCents: v))),
                   _MoneyRow(label: "Coach of the Month", badgeKey: "coach_of_month", cents: s.badgeCoachOfMonthCents, onChange: (v) => _set((d) => d.copyWith(badgeCoachOfMonthCents: v))),
+                  _MoneyRow(label: "Sessions Coached", badgeKey: "sessions_coached", cents: s.badgeSessionsCoachedCents, onChange: (v) => _set((d) => d.copyWith(badgeSessionsCoachedCents: v))),
+                  _MoneyRow(label: "Client Milestone", badgeKey: "client_milestone", cents: s.badgeClientMilestoneCents, onChange: (v) => _set((d) => d.copyWith(badgeClientMilestoneCents: v))),
+                  _MoneyRow(label: "Retention Streak", badgeKey: "retention_streak", cents: s.badgeRetentionCents, onChange: (v) => _set((d) => d.copyWith(badgeRetentionCents: v))),
 
                   const SizedBox(height: 10),
                   const SectionLabel("Beep Your Coach — alert sounds"),
@@ -767,7 +766,7 @@ class _ToggleRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => onChange(!value),
             child: Row(
               children: [
@@ -929,7 +928,7 @@ class _ChoiceRow extends StatelessWidget {
             runSpacing: 6,
             children: options.map((o) {
               final selected = value == o.$1;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => onChange(o.$1),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -980,7 +979,7 @@ class _MultiChoiceRow extends StatelessWidget {
             runSpacing: 6,
             children: options.map((o) {
               final selected = value.contains(o.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => onChange(selected ? value.where((k) => k != o.$1).toList() : [...value, o.$1]),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -1036,15 +1035,23 @@ class _CatalogEditor extends StatelessWidget {
 
   Future<void> _add(BuildContext context) async {
     final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: Text("Add a $noun"),
-        content: AppField(kind: FieldKind.name, controller: controller, placeholder: noun == "discipline" ? "e.g. Pilates" : "e.g. Small Group"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Add")),
+    final name = await showKeyboardSheet<String>(
+      context,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text("Add a $noun", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          AppField(kind: FieldKind.name, controller: controller, placeholder: noun == "discipline" ? "e.g. Pilates" : "e.g. Small Group"),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: BtnGhost(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel"))),
+              const SizedBox(width: 8),
+              Expanded(child: BtnGold(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Add"))),
+            ],
+          ),
         ],
       ),
     );
@@ -1128,7 +1135,7 @@ class _CatalogEditor extends StatelessWidget {
                   ),
                 // Add one of the gym's own — it then behaves exactly like a
                 // built-in everywhere in the app.
-                InkWell(
+                TapHighlight(
                   onTap: () => _add(context),
                   borderRadius: BorderRadius.circular(7),
                   child: Container(
@@ -1158,7 +1165,7 @@ class _CatalogEditor extends StatelessWidget {
               runSpacing: 6,
               children: [
                 for (final o in deleted)
-                  InkWell(
+                  TapHighlight(
                     onTap: () => onChange([...value, o.$1]),
                     borderRadius: BorderRadius.circular(7),
                     child: Container(
@@ -1217,7 +1224,7 @@ class _DefaultLocationPicker extends StatelessWidget {
             )
           else
             for (final l in all)
-              InkWell(
+              TapHighlight(
                 onTap: () => onChange(l.name),
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
@@ -1752,8 +1759,8 @@ class _CustomFieldsEditorState extends State<_CustomFieldsEditor> {
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      InkWell(onTap: i == 0 ? null : () => _move(i, -1), child: Icon(LucideIcons.chevronUp, size: 14, color: i == 0 ? AppColors.line : AppColors.mute)),
-                      InkWell(onTap: i == widget.fields.length - 1 ? null : () => _move(i, 1), child: Icon(LucideIcons.chevronDown, size: 14, color: i == widget.fields.length - 1 ? AppColors.line : AppColors.mute)),
+                      TapHighlight(onTap: i == 0 ? null : () => _move(i, -1), child: Icon(LucideIcons.chevronUp, size: 14, color: i == 0 ? AppColors.line : AppColors.mute)),
+                      TapHighlight(onTap: i == widget.fields.length - 1 ? null : () => _move(i, 1), child: Icon(LucideIcons.chevronDown, size: 14, color: i == widget.fields.length - 1 ? AppColors.line : AppColors.mute)),
                     ],
                   ),
                   const SizedBox(width: 6),
@@ -1810,7 +1817,7 @@ class _FeeProfileEditor extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => onChange(FeeProfile(enabled: !profile.enabled, label: profile.label, structure: profile.structure, percent: profile.percent, flatCents: profile.flatCents)),
             child: Row(
               children: [
@@ -2020,7 +2027,7 @@ class _SoundChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

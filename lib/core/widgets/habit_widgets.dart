@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "../theme/app_colors.dart";
 
@@ -37,7 +38,7 @@ class HabitDateTabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         borderRadius: BorderRadius.circular(6),
         child: Container(
@@ -75,7 +76,7 @@ class HabitRatingRow extends StatelessWidget {
             return Expanded(
               child: Padding(
                 padding: EdgeInsets.only(right: i < 9 ? 5 : 0),
-                child: InkWell(
+                child: TapHighlight(
                   onTap: disabled ? null : () => onChange(n),
                   borderRadius: BorderRadius.circular(6),
                   child: Container(

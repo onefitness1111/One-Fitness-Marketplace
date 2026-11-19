@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
@@ -177,7 +178,7 @@ class _LocationPickerState extends ConsumerState<LocationPicker>
             Text("My Location:", style: TextStyle(fontSize: 13, color: AppColors.mute)),
             Text(widget.selected ?? "Any location",
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
-            GestureDetector(
+            TapHighlight(
               onTap: () => setState(() => _expanded = true),
               child: Text("Change Location",
                   style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
@@ -189,7 +190,7 @@ class _LocationPickerState extends ConsumerState<LocationPicker>
 
     Widget option(String? value, String label, {String address = "", LocationDistance? distance}) {
       final on = widget.selected == value;
-      return InkWell(
+      return TapHighlight(
         onTap: () => _choose(value),
         borderRadius: BorderRadius.circular(8),
         child: Padding(
@@ -247,7 +248,7 @@ class _LocationPickerState extends ConsumerState<LocationPicker>
                 child: Text("Change Location", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
               ),
               // Close without changing anything.
-              GestureDetector(
+              TapHighlight(
                 onTap: () => setState(() => _expanded = false),
                 child: Icon(LucideIcons.x, size: 16, color: AppColors.mute),
               ),

@@ -58,7 +58,9 @@ class AppPalette {
   static const dark = AppPalette(
     isDark: true,
     gold: Color(0xFFD9D9D9),
-    goldDim: Color(0xFF5A5A5C),
+    // Light enough to read as an edge on a near-black card. The old
+    // #5A5A5C disappeared into #161617.
+    goldDim: Color(0xFF8E8E93),
     onGold: Colors.black,
     danger: Color(0xFFE05555),
     warning: Color(0xFFD68A4F),
@@ -96,7 +98,9 @@ class AppPalette {
   static const light = AppPalette(
     isDark: false,
     gold: Color(0xFF1C1C1E),
-    goldDim: Color(0xFFB9B9BD),
+    // Dark enough to read as an edge on white. The old #B9B9BD was about
+    // 2 to 1 on white, under the 3 to 1 a border needs.
+    goldDim: Color(0xFF6E6E76),
     onGold: Colors.white,
     danger: Color(0xFFC0392B),
     warning: Color(0xFFB4701F),
@@ -180,6 +184,18 @@ class AppColors {
   static Color get statusRed => _active.statusRed;
   static Color get statusYellow => _active.statusYellow;
   static Color get statusGreen => _active.statusGreen;
+
+  /// A wash shown while a finger is down. White on a dark page, near-black
+  /// on a light page, so the tap is visible and stays in the black, gray,
+  /// and white palette.
+  static Color get pressOverlay =>
+      _active.isDark ? const Color(0x29FFFFFF) : const Color(0x1F111113);
+
+  /// The same wash, held on a chosen chip, tab, meal, exercise, or menu row
+  /// until it is unchosen. A little stronger than [pressOverlay] so a press
+  /// still reads on top of it.
+  static Color get selectedOverlay =>
+      _active.isDark ? const Color(0x33FFFFFF) : const Color(0x29111113);
 }
 
 /// The web app's single-column layout is centered and capped at this width

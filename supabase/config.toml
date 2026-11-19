@@ -1,0 +1,8 @@
+# Gateway checks for functions in this repo. Anything not listed keeps the
+# Supabase default, which requires a signed-in caller.
+
+[functions.calendar-feed]
+verify_jwt = false
+
+[functions.get-calendar-link]
+verify_jwt = true

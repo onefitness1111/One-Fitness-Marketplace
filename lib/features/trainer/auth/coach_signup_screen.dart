@@ -7,13 +7,13 @@ import "../../../data/providers/trainer_providers.dart";
 import "../../../core/legal/terms_screen.dart";
 import "../../../core/legal/terms_text.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/photo_picker_utils.dart";
 import "../../../core/widgets/address_fields.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/availability_block.dart";
 import "../staff/availability_block_editor.dart";
+import "coach_apply_screen.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
@@ -58,7 +58,8 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
   final _lastName = TextEditingController();
   // Defaulted rather than left blank: nearly every coach is a
   // "Coach", and a blank title would show clients a bare first name.
-  final _title = TextEditingController(text: "Coach");
+  final _coachName = TextEditingController();
+  final _secondaryCoachName = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _password2 = TextEditingController();
@@ -112,12 +113,14 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
   late bool _codeVerified = widget.debugSkipCodeGate;
   String? _codeError;
   bool _verifyingCode = false;
+  bool _applying = false;
 
   @override
   void dispose() {
     _firstName.dispose();
     _lastName.dispose();
-    _title.dispose();
+    _coachName.dispose();
+    _secondaryCoachName.dispose();
     _email.dispose();
     _password.dispose();
     _password2.dispose();
@@ -137,7 +140,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
     required bool on,
     required VoidCallback onTap,
   }) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
@@ -170,22 +173,20 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
       _verifyingCode = true;
     });
     try {
-      final approval = await SupabaseService.loadCoachApprovalCode();
-      final realCode = approval?["code"] as String?;
-      final expiresAt = approval?["expires_at"] as String?;
-      final usedAt = approval?["used_at"] as String?;
-      if (realCode == null || code != realCode) {
-        throw Exception(
-          "That code is invalid or has expired. Contact ONE Fitness for a current code.",
-        );
-      }
-      if (usedAt != null) {
-        throw Exception("That approval code has already been used.");
-      }
-      if (expiresAt != null && isoToday().compareTo(expiresAt) > 0) {
-        throw Exception(
-          "That approval code has expired — ask the owner for a new one.",
-        );
+      final status = await SupabaseService.coachCodeStatus(code);
+      switch (status) {
+        case "ok":
+          break;
+        case "used":
+          throw Exception("That approval code has already been used.");
+        case "expired":
+          throw Exception("That approval code has expired — ask the owner for a new one.");
+        case "limited":
+          throw Exception("Too many tries. Wait an hour, or ask the owner for a new code.");
+        default:
+          throw Exception(
+            "That code is invalid or has expired. Contact ONE Fitness for a current code.",
+          );
       }
       if (!mounted) return;
       setState(() {
@@ -279,7 +280,8 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
         name: name,
         firstName: firstName,
         lastName: lastName,
-        title: _title.text.trim(),
+        coachName: _coachName.text.trim(),
+        secondaryCoachName: _secondaryCoachName.text.trim(),
         phone: phone,
         approvalCode: _code.text.trim(),
         photo: _photoDataUrl,
@@ -359,6 +361,9 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
     if (_readingTerms) {
       return TermsScreen(onBack: () => setState(() => _readingTerms = false));
     }
+    if (_applying) {
+      return CoachApplyScreen(onBack: () => setState(() => _applying = false));
+    }
     if (!_codeVerified) {
       return PopScope(
         canPop: false,
@@ -424,6 +429,18 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 18),
+                const Text(
+                  "Don't have a code?",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                BtnGhost(
+                  full: true,
+                  onPressed: () => setState(() => _applying = true),
+                  child: const Text("Apply now"),
+                ),
               ],
             ),
           ),
@@ -454,8 +471,9 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
               Center(
                 child: Column(
                   children: [
-                    GestureDetector(
+                    TapHighlight(
                       onTap: _pickingPhoto ? null : _pickPhoto,
+                      shape: BoxShape.circle,
                       child: Container(
                         width: 72,
                         height: 72,
@@ -533,18 +551,28 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
               ),
               const SizedBox(height: 10),
               FieldLabeled(
-                label: "Title",
+                label: "Coach name",
                 child: AppField(kind: FieldKind.name,
-                  controller: _title,
-                  placeholder: "Coach",
+                  controller: _coachName,
+                  placeholder: "Coach Chris",
                   onChanged: (_) => setState(() => _error = null),
                 ),
               ),
               Padding(
-                padding: EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  "How clients see you — e.g. \"Coach Sooraj\".",
+                  "This is the only name clients see. If you leave it blank, they see \"Coach\" plus your first name.",
                   style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
+              ),
+              const SizedBox(height: 10),
+              FieldLabeled(
+                label: "Secondary coach name (optional)",
+                child: AppField(
+                  kind: FieldKind.name,
+                  controller: _secondaryCoachName,
+                  placeholder: "Only the owner can see this",
+                  onChanged: (_) => setState(() => _error = null),
                 ),
               ),
               const SizedBox(height: 10),
@@ -965,7 +993,7 @@ class _CoachSignupScreenState extends ConsumerState<CoachSignupScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     const Text("I agree to the ", style: TextStyle(fontSize: 13, height: 1.4)),
-                    GestureDetector(
+                    TapHighlight(
                       onTap: () => setState(() => _readingTerms = true),
                       child: Text(
                         "Terms of Use",

@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:video_player/video_player.dart";
@@ -74,7 +75,7 @@ class WatchDemoButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: () => showExerciseVideo(context, title: title, videoPath: videoPath),
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -258,13 +259,14 @@ class _ExerciseVideoPlayerState extends State<ExerciseVideoPlayer> {
                   // Tap anywhere to pause, so a client can hold the frame at
                   // the bottom of a squat and look at it.
                   Positioned.fill(
-                    child: GestureDetector(
+                    child: TapHighlight(
                       behavior: HitTestBehavior.opaque,
                       onTap: () => setState(() {
                         controller.value.isPlaying
                             ? controller.pause()
                             : controller.play();
                       }),
+                      child: const SizedBox.expand(),
                     ),
                   ),
                   ValueListenableBuilder(

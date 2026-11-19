@@ -33,14 +33,19 @@ class _NotesTabState extends ConsumerState<NotesTab> {
   Widget build(BuildContext context) {
     final records = ref.watch(trainerClientRecordsProvider);
     final record = records[widget.clientId];
-    if (record == null) return const SizedBox.shrink();
+    if (record == null) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(text: "This client's record hasn't loaded yet."),
+      );
+    }
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
     final trainers = ref.watch(trainersProvider);
     final myName = isOwner
         ? "Owner"
         : (trainers.where((t) => t.id == trainerAuth).isNotEmpty
-              ? trainers.firstWhere((t) => t.id == trainerAuth).name
+              ? trainers.firstWhere((t) => t.id == trainerAuth).displayTitle
               : "Coach");
 
     void mutateNotes(List<TrainerNote> Function(List<TrainerNote>) f) {
@@ -296,10 +301,10 @@ class _NotesTabState extends ConsumerState<NotesTab> {
                                   (notes) =>
                                       notes.where((x) => x.id != n.id).toList(),
                                 ),
-                                icon: const Icon(
+                                icon: Icon(
                                   LucideIcons.trash2,
                                   size: 14,
-                                  color: Color(0xFF6B3B3B),
+                                  color: AppColors.danger,
                                 ),
                               ),
                             ],
@@ -464,7 +469,7 @@ class _NoteCard extends StatelessWidget {
                   onPressed: onDelete,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.errorText,
-                    side: const BorderSide(color: Color(0xFF8B3B3B)),
+                    side: BorderSide(color: AppColors.danger),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 6,
@@ -551,7 +556,7 @@ class _NoteFormState extends State<_NoteForm> {
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: () => setState(() => _flag = f),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
@@ -625,7 +630,7 @@ class _NoteFormState extends State<_NoteForm> {
             runSpacing: 6,
             children: kBodyAreas.map((a) {
               final selected = _bodyArea == a;
-              return InkWell(
+              return TapHighlight(
                 onTap: () => setState(() => _bodyArea = selected ? null : a),
                 borderRadius: BorderRadius.circular(6),
                 child: Container(
@@ -659,7 +664,7 @@ class _NoteFormState extends State<_NoteForm> {
             child: AppField(kind: FieldKind.date, controller: _resolveBy),
           ),
           const SizedBox(height: 10),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _followUp = !_followUp),
             child: Row(
               children: [

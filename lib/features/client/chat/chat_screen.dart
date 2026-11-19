@@ -2,15 +2,19 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
+import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
+import "../../../core/chat/chat_entry.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/widgets/chat_gate.dart";
+import "../../../core/widgets/message_reactions.dart";
+import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
-import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
@@ -71,7 +75,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      if (mounted) setState(() => _prefsLoaded = true);
+      return;
+    }
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // A value saved by an older build decodes through the legacy spellings
     // — "inappSms" becomes In app + SMS, so nobody's remembered choice
@@ -84,41 +94,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _channels = saved.isEmpty ? defaultChatChannels : saved;
       _prefsLoaded = true;
     });
-    if (_isSetUp) {
+    if (_isSetUp && _view == _ChatView.thread && _recipientId != null) {
+      _markOpen(_recipientId!);
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animate: false));
     }
   }
 
+  void _markOpen(String recipientId) {
+    SupabaseService.markChatRead(recipientId);
+    ref.read(unreadChatKeysProvider.notifier).clear(recipientId);
+  }
+
   Future<void> _confirmSetup(String recipientId, Set<ChatChannel> channels) async {
-    var chosen = channels;
-    // SMS is the one channel that needs a number. Signup no longer collects
-    // one (Apple guideline 5.1.1 — don't demand what isn't essential), so
-    // it's asked for here, at the moment it becomes essential, and saved
-    // straight onto the profile.
-    if (channelsNeedPhone(chosen) && clientNeedsPhone(ref)) {
-      final saved = await promptForPhoneDialog(
-        context,
-        ref,
-        reason: "To get messages by text we need a number to send them to. "
-            "It's saved to your profile so you only enter it once.",
-      );
-      if (!saved) {
-        // Backing out used to abandon the whole setup, which is what left
-        // a client with no phone number unable to open a chat at all. Now
-        // it just drops SMS and opens the thread on what's left — and In
-        // app is always left, because the picker can't be emptied.
-        chosen = toggleChannel(chosen, ChatChannel.sms);
-        if (chosen.contains(ChatChannel.sms)) chosen = defaultChatChannels;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("SMS is off — your messages still go through the app. Turn SMS on any time by adding a number."),
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
-      }
-    }
+    final chosen = channels;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefRecipientKey, recipientId);
     await prefs.setString(_prefChannelKey, encodeChannels(chosen));
@@ -128,6 +116,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _channels = chosen;
       _view = _ChatView.thread;
     });
+    _markOpen(recipientId);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
 
@@ -182,15 +171,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send({
     required Trainer selectedCoach,
     required ClientInfo info,
-    required PlatformSettings settings,
-    required Set<ChatChannel> inputChannels,
   }) async {
-    var channels = inputChannels;
-    final text = _msgController.text.trim();
-    if (text.isEmpty) return;
-    final toBusiness = selectedCoach.id == "business";
-    if (toBusiness) channels = {...channels}..remove(ChatChannel.sms);
+    var channels = channelsSavedOnTheMessage(_channels);
+    if (channels.contains(ChatChannel.sms)) {
+      final agreed = await ensureSmsConsent(context);
+      if (!agreed) channels = {...channels}..remove(ChatChannel.sms);
+    }
     if (channels.isEmpty) channels = {ChatChannel.inapp};
+    final typed = _msgController.text.trim();
+    if (typed.isEmpty) return;
+    final text = prefixMessage(info.name.trim().isEmpty ? "Client" : info.name.trim(), typed);
     // Optimistic bubble, with a temporary local id. The real row — and its
     // real id — comes back from the server, which is also where the content
     // filter and the block rules are applied.
@@ -233,9 +223,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // to reword it.
         _msgController.text = text;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceFirst("Exception: ", "")),
-            duration: const Duration(seconds: 5),
+          const SnackBar(
+            content: Text("That message didn't send. Check your connection and try again."),
+            duration: Duration(seconds: 5),
           ),
         );
       }
@@ -251,68 +241,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // not a profile id — there's no single device to push to, and the
     // message is in the thread for whoever reads it. (sendMessage already
     // drops the same sentinel rather than writing it as a trainer_id.)
-    if (channels.contains(ChatChannel.inapp) && selectedCoach.id != "business") {
-      notifyPush(
-        profileId: selectedCoach.id,
-        title: "New message from ${info.name}",
-        body: text,
-      );
-    }
-    String? emailTo = selectedCoach.email;
-    if (toBusiness && channels.contains(ChatChannel.email)) {
-      // The business contact is the owner's inbox.
-      try {
-        final staff = await SupabaseService.loadStaffDirectory();
-        for (final p in staff) {
-          if (p["role"] == "owner" && ((p["email"] as String?) ?? "").isNotEmpty) {
-            emailTo = p["email"] as String;
-            break;
-          }
-        }
-      } catch (_) {}
-    }
-    if (channels.contains(ChatChannel.email) && emailTo != null) {
-      SupabaseService.sendEmail(
-        to: emailTo,
-        subject: "New message from ${info.name} — ${settings.businessName}",
-        text: text,
-      ).catchError((Object e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't send the email: ${e.toString().replaceFirst("Exception: ", "")}")),
-          );
-        }
+    // The text to the other person is sent by the server, from the business
+    // number, when SMS is saved on the message. Email is not saved here.
+    if (selectedCoach.id != "business") {
+      SupabaseService.clientNotify("chat-to-staff", {
+        "profileId": selectedCoach.id,
+        "body": text,
       });
-    }
-    if (channels.contains(ChatChannel.sms) && !toBusiness) {
-      final phone = (selectedCoach.phone ?? "").trim();
-      if (phone.isEmpty) {
-        // The recipient's missing number, not the sender's. The message is
-        // already in their thread, so this is a note, not a failure.
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("${selectedCoach.name} has no phone number on file — sent in the app instead.")),
-          );
-        }
-      } else {
-        SupabaseService.sendSms(to: phone, text: "${info.name}: $text").catchError((Object e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Couldn't send the SMS: ${e.toString().replaceFirst("Exception: ", "")}")),
-            );
-          }
-        });
-      }
     }
   }
 
   /// Coaches this client has actually exchanged messages with, newest
   /// first. Messages with no trainerId are legacy/business-wide ones, which
   /// belong to whichever coach the thread view would show them under.
-  List<ChatConversation> _recentConversations(ClientRecord client, List<Trainer> candidates) {
+  List<ChatConversation> _recentConversations(ClientRecord client, List<Trainer> candidates, Set<String> unreadKeys) {
     final byCoach = <String, List<CommMessage>>{};
     for (final m in client.comms) {
-      final key = m.trainerId ?? (candidates.isEmpty ? "business" : candidates.first.id);
+      final key = m.trainerId == null || m.trainerId!.isEmpty ? "business" : m.trainerId!;
       byCoach.putIfAbsent(key, () => []).add(m);
     }
     final out = <ChatConversation>[];
@@ -328,6 +273,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         preview: last.text,
         at: last.sentAt,
         outgoing: last.who == "client",
+        unread: unreadKeys.contains(coach.id),
       ));
     });
     out.sort((a, b) => b.at.compareTo(a.at));
@@ -336,7 +282,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_prefsLoaded) return const SizedBox.shrink();
+    return ChatEntryGate(child: _buildChat(context));
+  }
+
+  Widget _buildChat(BuildContext context) {
+    if (!_prefsLoaded) {
+      return Center(child: Text("Loading your chats…", style: TextStyle(fontSize: 14, color: AppColors.txt)));
+    }
 
     final info = ref.watch(clientInfoProvider);
     final client = ref.watch(clientRecordProvider);
@@ -376,13 +328,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           Expanded(
             child: ConversationList(
-              conversations: _recentConversations(client, candidates),
+              conversations: _recentConversations(client, candidates, ref.watch(unreadChatKeysProvider)),
               emptyText: "No conversations yet. Message your coach below — they'll see it right away.",
               newChatLabel: "New message",
-              onOpen: (coachId) => setState(() {
-                _recipientId = coachId;
-                _view = _ChatView.thread;
-              }),
+              onOpen: (coachId) {
+                setState(() {
+                  _recipientId = coachId;
+                  _view = _ChatView.thread;
+                });
+                _markOpen(coachId);
+              },
               onNewChat: () => setState(() => _view = _ChatView.picker),
             ),
           ),
@@ -424,20 +379,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               : ListView(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  children: _buildBubbleList(thread, selectedCoach),
+                  children: _buildBubbleList(thread, selectedCoach, info.id),
                 ),
         ),
         _Composer(
           controller: _msgController,
           recipientName: selectedCoach.displayTitle,
-          onSend: () => _send(selectedCoach: selectedCoach, info: info, settings: settings, inputChannels: _channels),
+          onSend: () => _send(selectedCoach: selectedCoach, info: info),
         ),
       ],
       ),
     );
   }
 
-  List<Widget> _buildBubbleList(List<CommMessage> thread, Trainer coach) {
+  Future<void> _react({
+    required String infoId,
+    required CommMessage message,
+    required String reaction,
+  }) async {
+    final me = SupabaseService.currentUser?.id;
+    if (me == null) return;
+    final next = MessageReaction(userId: me, reaction: reaction);
+    final reactions = [
+      ...message.reactions.where((r) => r.userId != me),
+      next,
+    ];
+    ref.read(clientRecordProvider.notifier).update(
+          (r) => r.copyWith(
+            comms: r.comms.map((c) => c.id == message.id ? c.copyWith(reactions: reactions) : c).toList(),
+          ),
+        );
+    try {
+      await SupabaseService.setMessageReaction(
+        messageId: message.id,
+        clientId: infoId,
+        reaction: reaction,
+        routedTo: message.trainerId == null ? "business" : "conversation",
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("That like didn't save. The message is still there.")),
+      );
+    }
+  }
+
+  List<Widget> _buildBubbleList(List<CommMessage> thread, Trainer coach, String infoId) {
     final items = <Widget>[];
     DateTime? lastDay;
     for (final c in thread) {
@@ -449,6 +436,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       items.add(_Bubble(
         message: c,
         isPending: _pendingIds.contains(c.id),
+        onReact: _pendingIds.contains(c.id)
+            ? null
+            : (reaction) => _react(infoId: infoId, message: c, reaction: reaction),
         // Only the coach's own messages can be reported — reporting your
         // own is meaningless, and a pending message has no stored id yet.
         onReport: (c.who == "client" || _pendingIds.contains(c.id))
@@ -586,30 +576,16 @@ class _RecipientSetupState extends State<_RecipientSetup> {
           ],
           _businessCard(),
           const SizedBox(height: 20),
-          Text("Send via — pick any", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+          Text("Send via", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              for (final ch in chatChannelOrder.where((c) => !(_recipientId == "business" && c == ChatChannel.sms))) ...[
-                if (ch != chatChannelOrder.first) const SizedBox(width: 8),
-                _SegOption(
-                  label: chatChannelLabels[ch]!,
-                  selected: _channels.contains(ch),
-                  multi: true,
-                  onTap: () => setState(() => _channels = toggleChannel(_channels, ch)),
-                ),
-              ],
-            ],
+          _SegOption(
+            label: "In app",
+            selected: true,
+            onTap: () {},
           ),
           const SizedBox(height: 8),
           Text(
-            _recipientId == "business"
-                ? "SMS isn't available for $kMarketplaceName — in app or email only."
-                : !_channels.contains(ChatChannel.sms)
-                ? "No phone number needed."
-                : widget.needsPhone
-                    ? "SMS needs a phone number — we'll ask for yours once."
-                    : "Texts go to the number on your profile.",
+            "Your message stays in the app and alerts your coach. Email and texts are sent by ONE Fitness, not from a client account.",
             style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
           ),
           const SizedBox(height: 20),
@@ -648,7 +624,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                 Text("Your coach", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
                 const SizedBox(height: 4),
                 if (widget.realCandidates.length > 1)
-                  InkWell(
+                  TapHighlight(
                     onTap: () async {
                       final picked = await showModalBottomSheet<Trainer>(
                         context: context,
@@ -733,7 +709,7 @@ class _SelectableCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
@@ -825,7 +801,7 @@ class _CoachSearchSheetState extends State<_CoachSearchSheet> {
                           onTap: () => Navigator.of(context).pop(t),
                           child: Row(
                             children: [
-                              Avatar(src: t.photo, name: t.name, size: 40),
+                              Avatar(src: t.photo, name: t.displayTitle, size: 40),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -877,7 +853,7 @@ class _SegOption extends StatelessWidget {
       child: Semantics(
         checked: multi ? selected : null,
         selected: multi ? null : selected,
-        child: InkWell(
+        child: TapHighlight(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
           child: Container(
@@ -931,7 +907,7 @@ class _ContextBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Avatar(src: coach.photo, name: coach.name, size: 34),
+          Avatar(src: coach.photo, name: coach.displayTitle, size: 34),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -984,6 +960,7 @@ class _Bubble extends StatelessWidget {
     required this.message,
     required this.isPending,
     this.onReport,
+    this.onReact,
   });
   final CommMessage message;
   final bool isPending;
@@ -991,6 +968,7 @@ class _Bubble extends StatelessWidget {
   /// Long-press to report or block — offered on every message the client
   /// didn't write themselves (Apple guideline 1.2).
   final VoidCallback? onReport;
+  final void Function(String reaction)? onReact;
 
   @override
   Widget build(BuildContext context) {
@@ -1009,8 +987,14 @@ class _Bubble extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
-            child: GestureDetector(
-              onLongPress: onReport,
+            child: TapHighlight(
+              onTap: onReact == null ? null : () => onReact!("heart"),
+              onLongPress: () async {
+                final action = await showMessageActions(context, canReport: onReport != null);
+                if (!context.mounted || action == null) return;
+                if (action == "heart" || action == "thumb") onReact?.call(action);
+                if (action == "report") onReport?.call();
+              },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
                 decoration: BoxDecoration(
@@ -1025,6 +1009,7 @@ class _Bubble extends StatelessWidget {
               ),
             ),
           ),
+          ReactionMarks(reactions: message.reactions),
           const SizedBox(height: 3),
           isPending
               ? Text("Sending…", style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic))
@@ -1110,7 +1095,11 @@ class _ComposerState extends State<_Composer> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ChatSavedNotice(),
+            Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
@@ -1146,7 +1135,7 @@ class _ComposerState extends State<_Composer> {
               ),
             ),
             const SizedBox(width: 8),
-            InkWell(
+            TapHighlight(
               onTap: hasText ? widget.onSend : null,
               borderRadius: BorderRadius.circular(22),
               child: Container(
@@ -1161,6 +1150,8 @@ class _ComposerState extends State<_Composer> {
                 child: Icon(LucideIcons.send, size: 17, color: hasText ? AppColors.onGold : AppColors.mute),
               ),
             ),
+          ],
+        ),
           ],
         ),
       ),

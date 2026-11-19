@@ -4,8 +4,10 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
@@ -96,6 +98,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
               roster: roster,
               exclude: active.map((b) => b.clientId).toList(),
               onSelect: (c) async {
+                if (!await confirmStaffBalanceAdd(context, clientId: c.id, isOwner: isOwner) || !mounted) return;
                 // Adding past the class limit is allowed — staff know the
                 // room — but never silently. The count is what it will be
                 // once this client is in.
@@ -146,10 +149,19 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                     slot: widget.slot,
                     discipline: first.discipline,
                     priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(first.sessionType),
+                    isOwner: isOwner,
                   );
                   if (out == null || !mounted) return;
+                  if (out.status == "requested") {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message ?? "Sent to the owner.")));
+                    return;
+                  }
                   if (!out.booked) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
+                    if (out.full && out.refunded) {
+                      await showFilledRefundDialog(context, singleSessionFailureMessage(out));
+                    } else if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
+                    }
                     return;
                   }
                   final made = await SupabaseService.loadBookingById(out.bookingId!);
@@ -194,6 +206,11 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                     ));
                   }
                 } catch (e) {
+                  final text = e.toString();
+                  if (text.contains("This client has an outstanding balance") && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(staffBalanceWarningFromError(text))));
+                    return;
+                  }
                   _showError();
                 }
               },
@@ -242,7 +259,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                       Avatar(src: client?.photo, name: client?.name ?? "Removed", size: 34),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: client != null
                               ? () {
                                   Navigator.of(context).pop();
@@ -284,7 +301,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                                     if (mounted) setState(() => _busy = false);
                                   }
                                 },
-                          icon: const Icon(LucideIcons.userMinus, size: 15, color: Color(0xFF6B3B3B)),
+                          icon: Icon(LucideIcons.userMinus, size: 15, color: AppColors.danger),
                         ),
                     ],
                   ),
@@ -297,15 +314,44 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                         spacing: 5,
                         runSpacing: 5,
                         children: kAttendanceOptions.map((opt) {
-                          return InkWell(
+                          return TapHighlight(
                             onTap: () {
                               ref.read(allBookingsProvider.notifier).updateAttendance(b.id, opt.key);
-                              SupabaseService.updateBookingAttendance(b.id, opt.key).catchError((Object _) {
+                              final marked = SupabaseService.updateBookingAttendance(b.id, opt.key).catchError((Object _) {
                                 ref.read(allBookingsProvider.notifier).updateAttendance(b.id, null);
+                                return null;
                               });
                               if (opt.key == "checked-in") {
                                 final total = ref.read(allBookingsProvider).where((x) => x.clientId == client.id && x.attendanceStatus == "checked-in").length;
                                 notifySessionMilestoneIfCrossed(toEmail: client.email ?? "", toName: client.name, totalCheckedIn: total, profileId: client.id);
+                              }
+                              if (opt.key == "early-cancel" || opt.key == "late-cancel" || opt.key == "no-show") {
+                                final settings = ref.read(platformSettingsProvider);
+                                final coaches = ref.read(trainersProvider).where((t) => t.id == b.trainerId);
+                                final coachName = coaches.isEmpty ? "Your coach" : coaches.first.displayTitle;
+                                final window = cancelWindow(
+                                  b,
+                                  lateCancellationHours: settings.lateCancellationHours,
+                                  noShowCancelHours: settings.noShowCancelHours,
+                                );
+                                final cents = opt.key == "no-show"
+                                    ? settings.noShowFeeCents
+                                    : opt.key == "late-cancel"
+                                        ? cancelFeeCentsFor(
+                                            window,
+                                            lateCents: settings.lateCancellationFeeCents,
+                                            closeCents: settings.noShowFeeCents,
+                                          )
+                                        : 0;
+                                marked.then((fee) {
+                                  if (fee?["balanceRecorded"] == true) return;
+                                  notifyPush(
+                                    profileId: b.clientId,
+                                    title: opt.key == "no-show" ? "No-show fee" : "Session updated",
+                                    body: attendanceMarkedNotice(coachName: coachName, status: opt.key, cents: cents),
+                                    sms: true,
+                                  );
+                                });
                               }
                             },
                             borderRadius: BorderRadius.circular(7),
@@ -346,7 +392,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
                         if (mounted) setState(() => _busy = false);
                       }
                     },
-              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: const BorderSide(color: Color(0xFF8B3B3B)), minimumSize: const Size.fromHeight(44)),
+              style: OutlinedButton.styleFrom(foregroundColor: AppColors.errorText, side: BorderSide(color: AppColors.danger), minimumSize: Size.fromHeight(44)),
               child: Text(_busy ? "Cancelling…" : "Cancel session"),
             ),
           ],

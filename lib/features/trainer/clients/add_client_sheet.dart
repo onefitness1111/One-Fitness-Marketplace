@@ -194,8 +194,9 @@ class _AddClientPageState extends ConsumerState<_AddClientPage> {
         Center(
           child: Column(
             children: [
-              GestureDetector(
+              TapHighlight(
                 onTap: _pickingPhoto ? null : _pickPhoto,
+                shape: BoxShape.circle,
                 child: Container(
                   width: 80,
                   height: 80,
@@ -293,7 +294,7 @@ class _AddClientPageState extends ConsumerState<_AddClientPage> {
         const SizedBox(height: 10),
         FieldLabeled(
           label: "Birthday (optional)",
-          child: InkWell(
+          child: TapHighlight(
             onTap: _pickBirthday,
             child: InputDecorator(
               decoration: InputDecoration(

@@ -78,7 +78,7 @@ class _BlockTimeBodyState extends ConsumerState<_BlockTimeBody> {
               runSpacing: 6,
               children: trainers.map((t) {
                 final selected = _trainerId == t.id;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(() => _trainerId = t.id),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
@@ -95,7 +95,7 @@ class _BlockTimeBodyState extends ConsumerState<_BlockTimeBody> {
             ),
             const SizedBox(height: 12),
           ],
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _allDay = !_allDay),
             child: Row(
               children: [

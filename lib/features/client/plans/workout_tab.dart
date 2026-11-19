@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/utils/workout_logging.dart";
 import "../../../core/legal/health_sources.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/source_citations.dart";
@@ -47,7 +48,12 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     final client = ref.read(clientRecordProvider);
     // Same id = the same live session: replace, never log it twice.
     final updatedLogs = [...client.workoutLogs.where((l) => l.id != entry.id), entry];
-    await SupabaseService.updateClientWorkoutLogs(client.id, updatedLogs);
+    await SupabaseService.appendWorkoutLog(client.id, entry);
+    final info = ref.read(clientInfoProvider);
+    flagSessionSwaps(entry: entry, clientName: info.name, coachId: info.primaryTrainerId);
+    await SupabaseService.awardAutomaticPoints(client.id, "workout_streak", "scan");
+    final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+    ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
     ref
         .read(clientRecordProvider.notifier)
         .update(
@@ -238,7 +244,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: AppColors.danger.withValues(alpha: 0.06),
-              border: Border.all(color: const Color(0xFF6B3B3B)),
+              border: Border.all(color: AppColors.danger),
               borderRadius: BorderRadius.circular(7),
             ),
             child: Text(
@@ -297,7 +303,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: AppColors.danger.withValues(alpha: 0.07),
-              border: Border.all(color: const Color(0xFF6B3B3B)),
+              border: Border.all(color: AppColors.danger),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(

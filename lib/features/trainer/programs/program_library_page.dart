@@ -4,6 +4,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/ai_visibility.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/nutrition_library_entry.dart";
 import "../../../data/models/saved_program.dart";
@@ -67,6 +68,7 @@ class _ProgramLibraryPageState extends ConsumerState<ProgramLibraryPage> {
   Widget build(BuildContext context) {
     final edit = _edit;
     final isWorkout = widget.kind == LibraryKind.workout;
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
 
     if (edit != null) {
       return LocalBackScope(
@@ -132,7 +134,7 @@ class _ProgramLibraryPageState extends ConsumerState<ProgramLibraryPage> {
               _Row(
                 title: p.name,
                 subtitle: "${p.programDays.length} day${p.programDays.length == 1 ? '' : 's'}"
-                    "${p.coachName != null ? ' · by ${p.coachName}' : ''}"
+                    "${() { final who = attributionForRole(p.coachName, isOwner: isOwner); return who.isEmpty ? "" : " · by $who"; }()}"
                     "${p.modifiedAt != null ? ' · ${p.modifiedAt}' : ''}",
                 icon: LucideIcons.dumbbell,
                 onTap: () => setState(() => _edit = _Edit.workout(p)),

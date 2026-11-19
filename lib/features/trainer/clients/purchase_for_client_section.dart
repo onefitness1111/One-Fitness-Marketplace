@@ -10,6 +10,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/billing_address_form.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
+import "../../../data/models/coupon.dart";
 import "../../../data/models/membership_plan.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
@@ -37,6 +38,7 @@ class PurchaseForClientSection extends ConsumerStatefulWidget {
 class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSection> {
   String? _planId;
   String? _couponId;
+  final _couponTyped = TextEditingController();
   bool _busy = false;
   String? _error;
 
@@ -58,6 +60,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
   @override
   void dispose() {
     _price.dispose();
+    _couponTyped.dispose();
     super.dispose();
   }
 
@@ -118,7 +121,8 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
     // Access Hub — a coach picking a plan for someone should be looking at
     // the same catalogue the client would.
     final grouped = _groupPlans(plans, ref.watch(packageCategoriesProvider));
-    final coupons = ref.watch(couponsProvider).where((c) => !c.archived).toList();
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
+    final coupons = isOwner ? ref.watch(couponsProvider).where((c) => !c.archived).toList() : const <Coupon>[];
     final plan = plans.where((p) => p.id == _planId).firstOrNull;
     final coupon = coupons.where((c) => c.id == _couponId).firstOrNull;
 
@@ -133,7 +137,9 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
           Padding(
             padding: EdgeInsets.only(top: 4, bottom: 14),
             child: Text(
-              "Pick a plan and, if you'd like, a coupon code. For a paid plan you'll take payment right here — hand the client your phone to enter their card. Set the price to 0 to give a plan away without charging for it.",
+              isOwner
+                  ? "Pick a plan and, if you'd like, a coupon code. For a paid plan you'll take payment right here — hand the client your phone to enter their card. Set the price to 0 to give a plan away without charging for it."
+                  : "Pick a plan and, if you'd like, a coupon code. The price is the one set on the plan. For a paid plan you'll take payment right here — hand the client your phone to enter their card.",
               style: TextStyle(fontSize: 12, color: AppColors.mute),
             ),
           ),
@@ -186,8 +192,19 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
           ],
           if (plan != null) ...[
             const SizedBox(height: 14),
+            if (ref.watch(trainerAuthProvider) != "owner")
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  plan.priceCents > 0
+                      ? "Price: \$${(plan.priceCents / 100).toStringAsFixed(2)}${plan.kind == PlanKind.membership ? " / month" : ""}"
+                      : "This plan is free.",
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+              ),
             Row(
               children: [
+                if (ref.watch(trainerAuthProvider) == "owner")
                 Expanded(
                   child: FieldLabeled(
                     label: plan.kind == PlanKind.membership ? "Price (\$ / month)" : "Price (\$)",
@@ -198,11 +215,12 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                     ),
                   ),
                 ),
+                if (ref.watch(trainerAuthProvider) == "owner")
                 const SizedBox(width: 10),
                 Expanded(
                   child: FieldLabeled(
                     label: "Access expires",
-                    child: InkWell(
+                    child: TapHighlight(
                       onTap: _pickExpiry,
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
@@ -258,27 +276,34 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
               ],
             ),
           ],
-          if (plan != null && (_priceOverrideCents ?? plan.priceCents) > 0) ...[
+          if (plan != null && (isOwner ? (_priceOverrideCents ?? plan.priceCents) : plan.priceCents) > 0) ...[
             const SizedBox(height: 10),
             Text("COUPON (OPTIONAL)", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
             const SizedBox(height: 8),
-            AppCard(
-              child: DropdownButton<String?>(
-                value: _couponId,
-                isExpanded: true,
-                underline: const SizedBox(),
-                dropdownColor: AppColors.card,
-                hint: Text("No coupon", style: TextStyle(color: AppColors.mute, fontSize: 13)),
-                style: TextStyle(color: AppColors.txt, fontSize: 13),
-                items: [
-                  const DropdownMenuItem<String?>(value: null, child: Text("No coupon")),
-                  ...coupons.map((c) => DropdownMenuItem<String?>(value: c.id, child: Text("${c.code} — ${c.valueLabel}"))),
-                ],
-                onChanged: (v) => setState(() {
-                  _couponId = v;
-                            }),
+            if (isOwner)
+              AppCard(
+                child: DropdownButton<String?>(
+                  value: _couponId,
+                  isExpanded: true,
+                  underline: const SizedBox(),
+                  dropdownColor: AppColors.card,
+                  hint: Text("No coupon", style: TextStyle(color: AppColors.mute, fontSize: 13)),
+                  style: TextStyle(color: AppColors.txt, fontSize: 13),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text("No coupon")),
+                    ...coupons.map((c) => DropdownMenuItem<String?>(value: c.id, child: Text("${c.code} — ${c.valueLabel}"))),
+                  ],
+                  onChanged: (v) => setState(() {
+                    _couponId = v;
+                  }),
+                ),
+              )
+            else
+              AppField(
+                controller: _couponTyped,
+                placeholder: "Type a code if the client has one",
+                textCapitalization: TextCapitalization.characters,
               ),
-            ),
           ],
           const SizedBox(height: 16),
           if (_error != null)
@@ -288,7 +313,9 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
             ),
           BtnGold(
             full: true,
-            onPressed: plan == null || _busy ? null : () => _submit(plan, coupon?.code),
+            onPressed: plan == null || _busy
+                ? null
+                : () => _submit(plan, isOwner ? coupon?.code : _couponTyped.text.trim()),
             child: Text(
               _busy
                   ? "Working…"
@@ -311,7 +338,8 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
       // The typed price decides this, not the plan's own: a coach can sell a
       // normally-paid plan for nothing (a comp, a make-good) and a free plan
       // for a price, and either should do the right thing.
-      final chargeCents = _priceOverrideCents ?? plan.priceCents;
+      final isOwner = ref.read(trainerAuthProvider) == "owner";
+      final chargeCents = isOwner ? (_priceOverrideCents ?? plan.priceCents) : plan.priceCents;
 
       // Giving away a plan that normally costs money is worth a second
       // look — it's one keystroke away from taking payment for it, and
@@ -390,7 +418,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         // Only sent when it differs from the plan, so an ordinary sale is
         // still priced entirely server-side. Either way the server re-checks
         // that whoever asked for it is staff.
-        priceOverrideCents: chargeCents == plan.priceCents ? null : chargeCents,
+        priceOverrideCents: isOwner && chargeCents != plan.priceCents ? chargeCents : null,
         accessExpiresAt: _expiryIso,
       );
       if (result.cancelled) return;
@@ -404,6 +432,19 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         );
         widget.onBack();
       }
+      // The client is told every time they are charged. Best-effort: a
+      // missed notice must not look like the payment failed.
+      SupabaseService.sendPushNotification(
+        profileId: widget.info.id,
+        title: "Payment received",
+        body: "Your card was charged for ${plan.name}.",
+        sms: true,
+      ).catchError((_) {});
+      SupabaseService.sendEmail(
+        profileId: widget.info.id,
+        subject: "Payment received — ${plan.name}",
+        text: "Hi ${widget.info.name},\n\nYour card was charged for ${plan.name} at ONE Fitness.\n\n— ONE Fitness",
+      ).catchError((_) {});
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceFirst("Exception: ", ""));
     } finally {

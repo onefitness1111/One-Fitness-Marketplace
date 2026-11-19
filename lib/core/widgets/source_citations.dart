@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:url_launcher/url_launcher.dart";
@@ -78,7 +79,7 @@ class SourceCitations extends StatelessWidget {
           for (final s in sources)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: InkWell(
+              child: TapHighlight(
                 onTap: () => _open(context, s),
                 borderRadius: BorderRadius.circular(6),
                 child: Padding(

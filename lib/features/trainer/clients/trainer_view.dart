@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "visits_tab.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
@@ -279,7 +280,7 @@ class _TabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = active ? AppColors.gold : AppColors.mute;
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),

@@ -9,7 +9,6 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/onboarding_utils.dart";
-import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/merge_token_utils.dart";
@@ -24,6 +23,7 @@ import "../drawer_screens/waiver_signing_screen.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "balance_due_sheet.dart";
 
 const _kWeekdayOptions = [
   (1, "Mon"),
@@ -163,7 +163,7 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     var total = 0;
     for (final plan in plans) {
       if (type != null && type != "large-group" && !plan.allowedTypes.contains(type)) continue;
-      total += (effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, bookings)).clamp(0, 1 << 30);
+      total += sessionsLeftToBook(info, plan, bookings);
     }
     return total;
   }
@@ -322,13 +322,8 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     required ClientInfo info,
     required List<Trainer> trainers,
   }) async {
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(blocked), duration: const Duration(seconds: 8)));
-      }
-      return;
-    }
+    if (!mounted) return;
+    if (await stopForOutstandingBalance(context, info.id)) return;
     setState(() => _busy = true);
     final seriesId = const Uuid().v4();
     var booked = 0, waitlisted = 0;
@@ -358,7 +353,12 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           firstBooked ??= saved;
           bookedIds.add(saved.id);
           booked++;
-        } catch (_) {
+        } catch (e) {
+          if (e.toString().contains("BALANCE_DUE")) {
+            final owed = await unpaidBalanceCents(info.id);
+            if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
+            break;
+          }
           skipped++;
         }
       } else if (o.status == "full" && o.decision == "waitlist") {
@@ -401,7 +401,12 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           );
           ref.read(waitlistProvider.notifier).add(entry);
           waitlisted++;
-        } catch (_) {
+        } catch (e) {
+          if (e.toString().contains("BALANCE_DUE")) {
+            final owed = await unpaidBalanceCents(info.id);
+            if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
+            break;
+          }
           skipped++;
         }
       } else if (o.status == "full") {
@@ -414,12 +419,11 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
     if (first != null && info.heldPlanIds.isNotEmpty) {
       final missing = incompleteIntakeTitles(ref.read(clientRecordProvider));
       if (missing.isNotEmpty) {
-        notifyCoachIncompleteIntake(
-          trainerId: first.trainerId,
-          clientName: info.name,
-          missingTitles: missing,
-          sessionDate: niceDate(first.date),
-        );
+        SupabaseService.clientNotify("intake-gap", {
+          "trainerId": first.trainerId,
+          "missingTitles": missing,
+          "sessionDate": niceDate(first.date),
+        });
       }
     }
     if (!mounted) return;
@@ -972,7 +976,7 @@ class _DecisionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1045,7 +1049,7 @@ class _BracketEditor extends StatelessWidget {
                 ),
               ),
               if (canRemove)
-                InkWell(
+                TapHighlight(
                   onTap: onRemove,
                   child: Text(
                     "Remove",
@@ -1069,7 +1073,7 @@ class _BracketEditor extends StatelessWidget {
             runSpacing: 6,
             children: _kWeekdayOptions.map((opt) {
               final on = bracket.days.contains(opt.$1);
-              return InkWell(
+              return TapHighlight(
                 onTap: () => toggleDay(opt.$1),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -1106,7 +1110,7 @@ class _BracketEditor extends StatelessWidget {
           const SizedBox(height: 8),
           Builder(
             builder: (context) {
-              return InkWell(
+              return TapHighlight(
                 onTap: () async {
                   final picked = await showTimePicker(
                     context: context,

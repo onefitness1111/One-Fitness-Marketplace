@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../theme/app_colors.dart";
@@ -32,7 +33,7 @@ class _CollapsibleSectionState extends State<CollapsibleSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _open = !_open),
             borderRadius: BorderRadius.circular(10),
             child: Container(
@@ -51,9 +52,22 @@ class _CollapsibleSectionState extends State<CollapsibleSection> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(widget.title, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.txt)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.txt),
+                        ),
+                        if (widget.meta != null) ...[
+                          const SizedBox(height: 2),
+                          widget.meta!,
+                        ],
+                      ],
+                    ),
                   ),
-                  if (widget.meta != null) widget.meta!,
                 ],
               ),
             ),

@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "dart:convert";
 import "package:flutter/material.dart";
 import "package:image_picker/image_picker.dart";
@@ -238,7 +239,7 @@ class _Half extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (image == null) {
-      return InkWell(
+      return TapHighlight(
         onTap: busy ? null : onTap,
         child: Container(
           color: AppColors.bg,
@@ -327,9 +328,9 @@ class _RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
-      customBorder: const CircleBorder(),
+      shape: BoxShape.circle,
       child: Container(
         width: 28,
         height: 28,

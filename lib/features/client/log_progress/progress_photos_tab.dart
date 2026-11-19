@@ -5,6 +5,9 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/photo_picker_utils.dart";
+import "../../../core/utils/progress_summary.dart";
+import "../../../core/widgets/progress_photo_view.dart";
+import "before_after_slider.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/progress_photo.dart";
 import "../../../data/models/squad_chat_message.dart";
@@ -22,6 +25,7 @@ class ProgressPhotosTab extends ConsumerStatefulWidget {
 
 class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
   bool _busy = false;
+  bool _movedOld = false;
   String? _removingId;
   String? _sharingId;
   String? _error;
@@ -37,7 +41,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
       at: stamp(),
       type: "shared_progress",
       shareKind: "photo",
-      payload: {"img": p.img, "date": p.date},
+      payload: {"date": p.date},
     );
     setState(() => _sharingId = p.id);
     final ok = await mutateSquad(ref, squad, (s) => s.copyWith(chat: [entry, ...s.chat]));
@@ -55,15 +59,22 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
       _error = null;
     });
     try {
-      final img = await pickProgressPhotoDataUrl();
-      if (img == null) {
+      final bytes = await pickProgressPhotoBytes();
+      if (bytes == null) {
         if (mounted) setState(() => _busy = false);
         return;
       }
       final client = ref.read(clientRecordProvider);
-      final next = [ProgressPhoto(id: DateTime.now().microsecondsSinceEpoch.toString(), date: isoToday(), img: img), ...client.photos];
+      final id = DateTime.now().microsecondsSinceEpoch.toString();
+      final path = await SupabaseService.uploadProgressPhoto(clientId: client.id, bytes: bytes, id: id);
+      final next = [ProgressPhoto(id: id, date: isoToday(), img: path), ...client.photos];
       await SupabaseService.updateClientPhotos(client.id, next);
       ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(photos: next));
+      final month = isoToday().substring(0, 7);
+      await SupabaseService.awardAutomaticPoints(client.id, "progress_photo", month);
+      await SupabaseService.checkMeritBadges(client.id, "after_photo");
+      final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
       if (mounted) setState(() => _busy = false);
     } catch (e) {
       if (mounted) {
@@ -95,7 +106,18 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
 
   @override
   Widget build(BuildContext context) {
-    final photos = ref.watch(clientRecordProvider).photos;
+    final record = ref.watch(clientRecordProvider);
+    final photos = record.photos;
+    if (!_movedOld && photos.any((p) => p.img.startsWith("data:"))) {
+      _movedOld = true;
+      final clientId = record.id;
+      Future.microtask(() async {
+        final moved = await SupabaseService.moveInlineProgressPhotos(clientId, photos);
+        if (moved != null && mounted) {
+          ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(photos: moved));
+        }
+      });
+    }
     final info = ref.watch(clientInfoProvider);
     final squad = ref.watch(squadsProvider.notifier).squadFor(info.id);
 
@@ -127,6 +149,16 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
               child: Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
             ),
           const SizedBox(height: 12),
+          if (photos.length >= 2) ...[
+            Builder(builder: (context) {
+              final pair = beforeAfterPhotos(photos);
+              if (pair.length < 2) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: BeforeAfterSlider(before: pair.first, after: pair.last),
+              );
+            }),
+          ],
           if (photos.isEmpty)
             const HintBox(text: "No photos yet. Add progress photos to track visual change over time.")
           else
@@ -144,12 +176,12 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Container(color: AppColors.card, child: Image.memory(p.bytes, fit: BoxFit.cover)),
+                      Container(color: AppColors.card, child: ProgressPhotoView(photo: p)),
                       if (hasComment)
                         Positioned(
                           top: 6,
                           left: 6,
-                          child: InkWell(
+                          child: TapHighlight(
                             onTap: () => showDialog(
                               context: context,
                               builder: (ctx) => AlertDialog(
@@ -177,7 +209,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                                   height: 22,
                                   child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
                                 )
-                              : InkWell(
+                              : TapHighlight(
                                   onTap: _sharingId == null ? () => _shareWithSquad(p) : null,
                                   borderRadius: BorderRadius.circular(14),
                                   child: Container(
@@ -214,7 +246,7 @@ class _ProgressPhotosTabState extends ConsumerState<ProgressPhotosTab> {
                                       height: 12,
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFE0A0A0)),
                                     )
-                                  : InkWell(
+                                  : TapHighlight(
                                       onTap: _removingId == null ? () => _remove(p.id) : null,
                                       child: const Icon(LucideIcons.trash2, size: 13, color: Color(0xFFE0A0A0)),
                                     ),

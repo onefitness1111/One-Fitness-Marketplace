@@ -165,7 +165,7 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
       // most real clients already have a coach-built plan on file, and
       // that shouldn't block their first AI target draft from generating).
       final isOwner = ref.read(trainerAuthProvider) == "owner";
-      final allowedToGenerate = widget.who == "client" || isOwner;
+      final allowedToGenerate = isOwner;
       if (widget.assessmentKey == "nutritional" && allowedToGenerate && !widget.client.savedNutritionPrograms.any((p) => p.source == "ai")) {
         SupabaseService.generateAiNutritionProgram(widget.profileId).catchError((_) => <String, dynamic>{});
       }
@@ -191,7 +191,12 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
           Text(widget.schema.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
           Padding(
             padding: EdgeInsets.only(top: 4, bottom: 16),
-            child: Text("Fill what you can — it saves to the client's profile.", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+            child: Text(
+              widget.who == "client"
+                  ? "Fill what you can — it saves to your profile."
+                  : "Fill what you can — it saves to the client's profile.",
+              style: TextStyle(fontSize: 13, color: AppColors.txt),
+            ),
           ),
           ...widget.schema.sections.map((sec) => Padding(
                 padding: const EdgeInsets.only(bottom: 22),
@@ -347,7 +352,7 @@ class _QuestionInput extends StatelessWidget {
           runSpacing: 6,
           children: List.generate(max - min + 1, (i) => min + i).map((n) {
             final selected = value == n;
-            return InkWell(
+            return TapHighlight(
               onTap: () => onText(n),
               borderRadius: BorderRadius.circular(8),
               child: Container(
@@ -395,7 +400,7 @@ class _OptionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(

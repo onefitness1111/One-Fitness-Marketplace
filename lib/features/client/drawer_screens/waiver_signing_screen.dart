@@ -256,22 +256,28 @@ class _WaiverSigningScreenState extends ConsumerState<WaiverSigningScreen> {
           AppCard(
             child: Column(
               children: [
-                CheckboxListTile(
-                  value: _photoRelease,
-                  onChanged: (v) => setState(() => _photoRelease = v ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text("Photo/Video Release", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                  subtitle: Text("I allow ONE Fitness to use photos or video of me in its marketing. Leave unticked to opt out.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                Material(
+                  type: MaterialType.transparency,
+                  child: CheckboxListTile(
+                    value: _photoRelease,
+                    onChanged: (v) => setState(() => _photoRelease = v ?? false),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("Photo/Video Release", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    subtitle: Text("I allow ONE Fitness to use photos or video of me in its marketing. Leave unticked to opt out.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  ),
                 ),
                 Divider(color: AppColors.line, height: 12),
-                CheckboxListTile(
-                  value: _consentAt != null,
-                  onChanged: (v) => setState(() => _consentAt = v == true ? _now() : null),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text("I agree to sign this document electronically", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                  subtitle: Text("My electronic signature has the same legal effect as a handwritten one.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                Material(
+                  type: MaterialType.transparency,
+                  child: CheckboxListTile(
+                    value: _consentAt != null,
+                    onChanged: (v) => setState(() => _consentAt = v == true ? _now() : null),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("I agree to sign this document electronically", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    subtitle: Text("My electronic signature has the same legal effect as a handwritten one.", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  ),
                 ),
               ],
             ),

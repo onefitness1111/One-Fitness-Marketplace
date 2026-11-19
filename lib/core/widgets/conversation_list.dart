@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../chat/unread_dot.dart";
 import "../theme/app_colors.dart";
 import "widgets.dart";
 
@@ -42,6 +43,7 @@ class ConversationList extends StatelessWidget {
     required this.conversations,
     required this.onOpen,
     required this.onNewChat,
+    this.onNewBroadcast,
     this.newChatLabel = "New message",
     this.emptyText = "No conversations yet.",
   });
@@ -49,6 +51,7 @@ class ConversationList extends StatelessWidget {
   final List<ChatConversation> conversations;
   final ValueChanged<String> onOpen;
   final VoidCallback onNewChat;
+  final VoidCallback? onNewBroadcast;
   final String newChatLabel;
   final String emptyText;
 
@@ -74,7 +77,7 @@ class ConversationList extends StatelessWidget {
                   separatorBuilder: (context, i) => Divider(height: 1, color: AppColors.line, indent: 70),
                   itemBuilder: (context, i) {
                     final c = conversations[i];
-                    return InkWell(
+                    return TapHighlight(
                       onTap: () => onOpen(c.id),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
@@ -128,11 +131,7 @@ class ConversationList extends StatelessWidget {
                                       ),
                                       if (c.unread) ...[
                                         const SizedBox(width: 8),
-                                        Container(
-                                          width: 8,
-                                          height: 8,
-                                          decoration: BoxDecoration(color: AppColors.gold, shape: BoxShape.circle),
-                                        ),
+                                        const UnreadDot(),
                                       ],
                                     ],
                                   ),
@@ -148,18 +147,31 @@ class ConversationList extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: BtnGold(
-            full: true,
-            onPressed: onNewChat,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(LucideIcons.penSquare, size: 15),
-                const SizedBox(width: 8),
-                Text(newChatLabel),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              BtnGold(
+                full: true,
+                onPressed: onNewChat,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.penSquare, size: 15),
+                    const SizedBox(width: 8),
+                    Text(newChatLabel),
+                  ],
+                ),
+              ),
+              if (onNewBroadcast != null) ...[
+                const SizedBox(height: 8),
+                BtnGhost(
+                  full: true,
+                  onPressed: onNewBroadcast,
+                  child: const Text("New broadcast"),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ],

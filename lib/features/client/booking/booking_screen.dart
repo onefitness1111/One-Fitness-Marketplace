@@ -7,12 +7,14 @@ import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_location.dart";
 import "../../../core/utils/session_places.dart";
+import "../../../core/utils/booking_pitch.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/schedule_day_fill.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
-import "../../../core/utils/merge_token_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
+import "../../../core/utils/merge_token_utils.dart";
 import "../../../core/utils/onboarding_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/blocked_time.dart";
@@ -21,6 +23,7 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
 import "../../../data/models/membership_plan.dart";
 import "../../../data/models/single_session_credit.dart";
+import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/models/waitlist_entry.dart";
@@ -30,6 +33,7 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../drawer_screens/waiver_signing_screen.dart";
 import "../shell/client_shell_state.dart";
+import "balance_due_sheet.dart";
 import "booking_cancel_screen.dart";
 import "booking_picking_screen.dart";
 import "date_strip.dart";
@@ -130,6 +134,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
 
   /// "Pay for this session" or "View Memberships & Packages".
   Future<void> _askSingle(Trainer t, String sessionType, String discipline, int slot, int priceCents) async {
+    var account = 0;
+    try {
+      account = await SupabaseService.loadBalanceCents(ref.read(clientInfoProvider).id);
+    } catch (_) {}
+    if (!mounted) return;
+    final bill = singleSessionBill(sessionCents: priceCents, accountBalanceCents: account);
     final choice = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppColors.card,
@@ -145,11 +155,15 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               const SizedBox(height: 6),
               Text(
                 "You don't have a membership or package that covers this ${sessionTypeLabel(sessionType)} session. "
-                "Pay for just this one, or pick a plan.",
+                "${bill.includesBalance ? bill.breakdown : "Pay for just this one, or pick a plan."}",
                 style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.45),
               ),
               const SizedBox(height: 14),
-              BtnGold(full: true, onPressed: () => Navigator.pop(ctx, "pay"), child: Text("Pay for this session (${_price(priceCents)})")),
+              BtnGold(
+                full: true,
+                onPressed: () => Navigator.pop(ctx, "pay"),
+                child: Text(bill.includesBalance ? "Pay ${formatSignedMoney(bill.totalCents)}" : "Pay for this session (${_price(priceCents)})"),
+              ),
               const SizedBox(height: 8),
               BtnGhost(full: true, onPressed: () => Navigator.pop(ctx, "plans"), child: const Text("View Memberships & Packages")),
             ],
@@ -178,12 +192,6 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   /// payment has succeeded.
   Future<void> _payForSingle(Trainer t, String sessionType, String discipline, int slot) async {
     if (_singleBusy) return;
-    final info = ref.read(clientInfoProvider);
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      _showError(blocked);
-      return;
-    }
     final settings = ref.read(platformSettingsProvider);
     final offering = trainerOfferingsOn(t, _date)
         .where((o) => o.slot == slot && o.sessionType == sessionType && o.discipline == discipline)
@@ -228,13 +236,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         ref.read(clientBookingsProvider.notifier).addBooking(saved);
         SupabaseService.sendBookingConfirmation([saved.id]);
       }
-      final info = ref.read(clientInfoProvider);
-      notifyPush(
-        profileId: info.id,
-        title: "Booking confirmed",
-        body: "You're booked for ${niceDate(_date)} at ${fmtSlot(slot)}.",
-        sms: true,
-      );
+      SupabaseService.clientNotify("booking-confirmed", {
+        "when": "${niceDate(_date)} at ${fmtSlot(slot)}",
+      });
       _showError("You're booked — ${niceDate(_date)} at ${fmtSlot(slot)}. A receipt is on its way to your email.");
       _loadCredits();
       return;
@@ -248,7 +252,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           title: const Text("Session full"),
           content: Text(
             out.refunded
-                ? "Someone took the last spot while you were paying, so your payment was refunded in full. Join the waitlist?"
+                ? "${out.message ?? "This session filled before your booking went through. Your charge has been refunded."} Join the waitlist?"
                 : "Someone took the last spot while you were paying. Join the waitlist?",
           ),
           actions: [
@@ -453,6 +457,19 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
   }
 
+  String _coverageLine(ClientInfo info, List<MembershipPlan> held, List<Booking> bookings, PendingPick pick) {
+    if (_freeAssessment) return "This is your free first session. It does not come off a plan.";
+    if (_pickPlanId != null && _pickPlanId!.startsWith("single:")) {
+      return "This uses a single session you already paid for.";
+    }
+    final match = held.where((p) => p.id == _pickPlanId);
+    if (match.isEmpty) return "This uses the plan that covers ${sessionTypeLabel(pick.sessionType)}.";
+    final plan = match.first;
+    final left = sessionsLeftToBook(info, plan, bookings);
+    final kind = plan.kind == PlanKind.membership ? "membership" : "package";
+    return "This comes off your $kind, ${plan.name} ($left left to book).";
+  }
+
   void _showError(String msg) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
@@ -474,8 +491,17 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     if (_busy) return;
     final b = _cancelTarget!;
     final settingsNow = ref.read(platformSettingsProvider);
-    final isLate = cancelWindow(b, lateCancellationHours: settingsNow.lateCancellationHours) != "free";
-    final feeCents = settingsNow.lateCancellationFeeCents;
+    final window = cancelWindow(
+      b,
+      lateCancellationHours: settingsNow.lateCancellationHours,
+      noShowCancelHours: settingsNow.noShowCancelHours,
+    );
+    final isLate = window != "free";
+    final feeCents = cancelFeeCentsFor(
+      window,
+      lateCents: settingsNow.lateCancellationFeeCents,
+      closeCents: settingsNow.noShowFeeCents,
+    );
 
     // The fee is taken from the card now rather than left as a debt the gym
     // has to chase, so the last word before that happens says the amount
@@ -489,9 +515,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           title: const Text("Cancel and pay the fee?",
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           content: Text(
-            "This is a late cancellation, so ${lateCancellationFeeLabel(feeCents: feeCents)} "
-            "will be charged to your card on file now. "
-            "Your session will be cancelled either way.",
+            cancelFeeExplanation(
+              window,
+              lateHours: settingsNow.lateCancellationHours,
+              closeHours: settingsNow.noShowCancelHours,
+              lateCents: settingsNow.lateCancellationFeeCents,
+              closeCents: settingsNow.noShowFeeCents,
+            ),
             style: const TextStyle(fontSize: 13, height: 1.5),
           ),
           actions: [
@@ -520,27 +550,26 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // Always asked: the server decides early vs late and sends the right email.
       final feeRes = await takeLateCancelFee(b.id);
       await SupabaseService.deleteBooking(b.id, archive: true);
+      final coaches = ref.read(trainersProvider).where((t) => t.id == b.trainerId);
+      final coachName = coaches.isEmpty ? "your coach" : coaches.first.displayTitle;
+      notifyClientAndCoach(
+        clientId: ref.read(clientInfoProvider).id,
+        coachId: b.trainerId,
+        clientTitle: isLate ? "Late cancel confirmed" : "Cancellation confirmed",
+        clientBody: "Your session on ${niceDate(b.date)} at ${fmtSlot(b.slot)} with $coachName is cancelled.",
+        coachTitle: isLate ? "Late cancel" : "Early cancel",
+        coachBody: "A client cancelled ${niceDate(b.date)} at ${fmtSlot(b.slot)}.",
+      );
       ref.read(clientBookingsProvider.notifier).cancelBooking(b.id);
       // The slot list reads the gym-wide list, so it has to drop the booking
       // too, otherwise the cancelled session keeps showing as "Booked".
       ref.read(allBookingsProvider.notifier).cancelBooking(b.id);
-      final res = feeRes;
-      if (res != null && mounted) {
-        if (res["charged"] == true) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text("${lateCancellationFeeLabel(feeCents: feeCents)} charged for the late cancellation."),
-          ));
-        } else if ((res["feeCents"] as num? ?? 0) > 0 && res["alreadyCharged"] != true) {
-          // Declined or no card: the session is cancelled and the whole fee
-          // now sits on the account as a negative balance.
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-              "Cancelled. We couldn't charge the ${lateCancellationFeeLabel(feeCents: feeCents)} late cancellation fee, "
-              "so it's been added to your balance. You'll need to pay it before booking again.",
-            ),
-            duration: const Duration(seconds: 8),
-          ));
-        }
+      final notice = lateFeeNotice(feeRes);
+      if (notice != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(notice),
+          duration: const Duration(seconds: 8),
+        ));
       }
       setState(() {
         _busy = false;
@@ -743,11 +772,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // of every session count (see sessionsUsedThisPeriod).
       isPhysicalAssessment: _freeAssessment,
     );
-    final blocked = await bookingBlockMessage(info.id);
-    if (blocked != null) {
-      if (mounted) setState(() => _bookingError = blocked);
-      return;
-    }
+    if (!mounted) return;
+    if (await stopForOutstandingBalance(context, info.id)) return;
     setState(() {
       _busy = true;
       _bookingError = null;
@@ -777,21 +803,23 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           ref.read(clientBookingsProvider.notifier).reschedule(saved, rescheduling.id);
           allBookings.cancelBooking(rescheduling.id);
         }
-        notifyPush(
-          profileId: info.id,
-          title: "Session rescheduled",
-          body: "Your session is now ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
-          sms: true,
-        );
+        SupabaseService.clientNotify("rescheduled", {
+          "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
+        });
       } else {
         ref.read(clientBookingsProvider.notifier).addBooking(saved);
         // One confirmation email for this booking.
         SupabaseService.sendBookingConfirmation([saved.id]);
-        notifyPush(
-          profileId: info.id,
-          title: "Booking confirmed",
-          body: "You're booked for ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
-          sms: true,
+        SupabaseService.clientNotify("booking-confirmed", {
+          "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
+        });
+        notifyClientAndCoach(
+          clientId: info.id,
+          coachId: pick.trainer.id,
+          clientTitle: "Booking confirmed",
+          clientBody: "You're booked for ${niceDate(_date)} at ${fmtSlot(pick.slot)} with ${pick.trainer.displayTitle}.",
+          coachTitle: "New booking",
+          coachBody: "${info.name} booked ${niceDate(_date)} at ${fmtSlot(pick.slot)}.",
         );
       }
       // The coach is told now, while there's still time to chase the forms
@@ -800,12 +828,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (info.heldPlanIds.isNotEmpty) {
         final missing = incompleteIntakeTitles(ref.read(clientRecordProvider));
         if (missing.isNotEmpty) {
-          notifyCoachIncompleteIntake(
-            trainerId: saved.trainerId,
-            clientName: info.name,
-            missingTitles: missing,
-            sessionDate: niceDate(_date),
-          );
+          SupabaseService.clientNotify("intake-gap", {
+            "trainerId": saved.trainerId,
+            "missingTitles": missing,
+            "sessionDate": niceDate(_date),
+          });
         }
       }
       // Notifications spec — "Low session balance": fires once, right at
@@ -814,14 +841,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       // it can't spam.
       final plan = ref.read(membershipPlansProvider.notifier).byId(_pickPlanId);
       if (plan != null) {
-        final remaining = effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, ref.read(clientBookingsProvider));
+        final remaining = sessionsLeftToBook(info, plan, ref.read(clientBookingsProvider));
         if (remaining == 1 || remaining == 2) {
-          notifyPush(
-            profileId: info.id,
-            title: "Low session balance",
-            body: "You have $remaining session${remaining == 1 ? '' : 's'} left this period.",
-            sms: true,
-          );
+          SupabaseService.clientNotify("low-sessions", {"remaining": remaining});
         }
       }
       setState(() {
@@ -841,6 +863,18 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (!mounted) return;
       // The server found a waiver this device didn't know about yet — open
       // it right here, then come back to this same confirm screen.
+      if (e.toString().contains("BALANCE_DUE")) {
+        final owed = await unpaidBalanceCents(info.id);
+        if (mounted && owed != null) {
+          await showOutstandingBalanceSheet(context, balanceCents: owed);
+        }
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _bookingError = owed == null ? _bookingErrorMessage(e) : null;
+        });
+        return;
+      }
       if (e.toString().contains("waiver-required") && _outstandingDocs().isNotEmpty) {
         setState(() {
           _busy = false;
@@ -868,7 +902,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   String _bookingErrorMessage(Object e) {
     final text = e.toString();
     if (text.contains("BALANCE_DUE")) {
-      return "You have an unpaid balance. Please pay it from your Profile before booking another session.";
+      final start = text.indexOf("You have an outstanding balance");
+      if (start >= 0) {
+        final end = text.indexOf("book sessions.");
+        if (end > start) return text.substring(start, end + "book sessions.".length);
+      }
+      return "You have an outstanding balance. Please pay your balance to book sessions.";
     }
     if (text.contains("waiver-required")) {
       return "Please sign the waiver under Signatures (in the menu) before booking.";
@@ -939,6 +978,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
 
     if (_picking != null) {
+      final pick = _picking!;
+      final settingsNow = ref.watch(platformSettingsProvider);
+      final heldNow = heldAccessPlans(info, ref.watch(membershipPlansProvider));
       return LocalBackScope(
         isOpen: true,
         onBack: () => setState(() {
@@ -946,9 +988,14 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           _bookingError = null;
         }),
         child: BookingPickingScreen(
-          pick: _picking!,
-          location: _pickLocation(_picking!),
+          pick: pick,
+          location: _pickLocation(pick),
           date: _date,
+          pitch: bookingConfirmPitch(
+            sessionLabel: sessionTypeLabel(pick.sessionType),
+            cap: capFor(pick.sessionType, semiPrivateCap: settingsNow.semiPrivateCap),
+            coverage: _coverageLine(info, heldNow, bookings, pick),
+          ),
           onBack: () => setState(() {
             _picking = null;
             _bookingError = null;
@@ -1156,6 +1203,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                     trainers: trainers,
                     offeredTypes: ref.watch(platformSettingsProvider).offeredSessionTypes,
                     singleTypes: _singleTypes(ref.watch(platformSettingsProvider)),
+                    // The free first session is Semi-Private or One-on-One even
+                    // with no plan. The parent already worked that list out.
+                    presetTypes: types,
                     onPick: _pickType,
                   )
                 : chosenDisc == null
@@ -1228,8 +1278,7 @@ class _MembershipBanner extends StatelessWidget {
       for (final plan in plans)
         (
           plan: plan,
-          remaining: (effectiveMaxSessions(info, plan) - sessionsUsedThisPeriod(info, plan, bookings))
-              .clamp(0, effectiveMaxSessions(info, plan)),
+          remaining: sessionsLeftToBook(info, plan, bookings),
         ),
     ];
     final lowest = lines.map((l) => l.remaining).reduce((a, b) => a < b ? a : b);
@@ -1253,11 +1302,12 @@ class _MembershipBanner extends StatelessWidget {
                 text: TextSpan(
                   children: [
                     TextSpan(
-                      text: "${l.remaining} session${l.remaining != 1 ? 's' : ''} remaining  ",
+                      text: "${l.remaining} session${l.remaining != 1 ? 's' : ''} left to book  ",
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: l.remaining > 0 ? AppColors.txt : AppColors.errorText),
                     ),
                     TextSpan(
-                      text: "— ${l.plan.name}${l.plan.kind == PlanKind.membership ? " this month" : ""}",
+                      text: "— ${l.plan.name}${l.plan.kind == PlanKind.membership ? " this month" : ""}. "
+                          "A session is used when you check in or are a no-show. Cancelling gives it back.",
                       style: TextStyle(fontSize: 12, color: AppColors.mute),
                     ),
                   ],
@@ -1288,7 +1338,7 @@ List<String> _bookableTypes({
       : plans.expand((p) => p.allowedTypes).toSet().toList();
   final covered = {...base, ...singleTypes}.where(offeredTypes.contains).toList();
   final anyLargeGroupOffered = offeredTypes.contains("large-group") &&
-      (plans.isNotEmpty || isStaff || singleTypes.contains("large-group")) &&
+      (isStaff || singleTypes.contains("large-group") || plans.any(planCoversLargeGroup)) &&
       trainers.any(
         (t) => t.offeredAvailability.any((b) => b.sessionType == "large-group" && b.byDay.values.any((s) => s.isNotEmpty)),
       );
@@ -1309,6 +1359,7 @@ class _StepOne extends StatelessWidget {
     required this.offeredTypes,
     this.singleTypes = const {},
     this.isStaff = false,
+    this.presetTypes,
   });
 
   /// Types sold as one-off sessions, so they show even without a covering plan.
@@ -1325,9 +1376,13 @@ class _StepOne extends StatelessWidget {
   final List<Trainer> trainers;
   final bool isStaff;
 
+  /// When set, these are the types to show. The free first session uses this
+  /// so a client with no plan still sees Semi-Private and One-on-One.
+  final List<String>? presetTypes;
+
   @override
   Widget build(BuildContext context) {
-    final types = _bookableTypes(plans: plans, trainers: trainers, offeredTypes: offeredTypes, isStaff: isStaff, singleTypes: singleTypes);
+    final types = presetTypes ?? _bookableTypes(plans: plans, trainers: trainers, offeredTypes: offeredTypes, isStaff: isStaff, singleTypes: singleTypes);
     final allowedTypes = types;
     final anyLargeGroupOffered = types.contains("large-group");
     return Column(
@@ -1380,8 +1435,7 @@ class _StepOne extends StatelessWidget {
                 const Text("Large Group", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 const SizedBox(height: 3),
                 Text(
-                  "Hike and Outdoor HIIT classes — 1 hour, capacity ${capFor("large-group")}, starting on the "
-                  "hour every hour. Included with any active membership.",
+                  largeGroupBlurb(plans, cap: capFor("large-group")),
                   style: TextStyle(fontSize: 13, color: AppColors.mute, height: 1.5),
                 ),
               ],
@@ -1567,7 +1621,7 @@ class _StepTwo extends StatelessWidget {
               const SizedBox(width: 8),
               Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
               const SizedBox(width: 8),
-              GestureDetector(
+              TapHighlight(
                 onTap: onChangeType,
                 child: Text("Change", style: TextStyle(fontSize: 12, color: AppColors.mute, decoration: TextDecoration.underline)),
               ),
@@ -1609,7 +1663,7 @@ class _JumpToChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -1789,13 +1843,13 @@ class _StepThreeState extends State<_StepThree> {
             Text("›", style: TextStyle(fontSize: 13, color: AppColors.mute)),
             Text(disciplineLabel(chosenDisc), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.gold)),
             if (onChangeType != null)
-              GestureDetector(
+              TapHighlight(
                 onTap: onChangeType,
-                child: Text("Change type", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+                child: Text("Change type", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
               ),
-            GestureDetector(
+            TapHighlight(
               onTap: onChangeDisc,
-              child: Text("Change discipline", style: TextStyle(fontSize: 11, color: AppColors.mute, decoration: TextDecoration.underline)),
+              child: Text("Change discipline", style: TextStyle(fontSize: 12, color: AppColors.txt, decoration: TextDecoration.underline)),
             ),
           ],
         ),
@@ -1803,7 +1857,23 @@ class _StepThreeState extends State<_StepThree> {
         // Collapsed to one line like the discipline row above; only appears
         // when the gym actually runs more than one site.
         LocationPicker(selected: widget.locationFilter, onSelect: widget.onLocationChange),
-        DateStrip(date: date, onSelect: onDateChange, disablePast: true),
+        DateStrip(
+          date: date,
+          onSelect: onDateChange,
+          disablePast: true,
+          dayFill: (d) => scheduleDayFill(
+            trainers: trainers,
+            bookings: bookings,
+            blocked: widget.blockedTimes,
+            date: d,
+            sessionType: chosenType,
+            discipline: chosenDisc,
+            locationName: widget.locationFilter,
+            gymLocationName: widget.gymLocationName,
+            semiPrivateCap: widget.semiPrivateCap,
+            skipStarted: true,
+          ),
+        ),
         if (slots.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),
@@ -1811,7 +1881,7 @@ class _StepThreeState extends State<_StepThree> {
               children: [
                 Padding(
                   padding: EdgeInsets.only(right: 8),
-                  child: Text("Jump to:", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                  child: Text("Jump to:", style: TextStyle(fontSize: 12, color: AppColors.txt)),
                 ),
                 Expanded(
                   child: SingleChildScrollView(
@@ -1857,7 +1927,7 @@ class _StepThreeState extends State<_StepThree> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Column(
                         children: [
-                          InkWell(
+                          TapHighlight(
                             onTap: (a.mine || isFull) ? null : () => onSlotTap(a.trainer, chosenType, chosenDisc, slot, a.mine, isFull),
                             borderRadius: BorderRadius.circular(10),
                             child: Opacity(
@@ -1881,7 +1951,7 @@ class _StepThreeState extends State<_StepThree> {
                                 ),
                                 child: Row(
                                   children: [
-                                    Avatar(src: a.trainer.photo, name: a.trainer.name, size: 38, active: a.mine),
+                                    Avatar(src: a.trainer.photo, name: a.trainer.displayTitle, size: 38, active: a.mine),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Column(
@@ -1902,7 +1972,7 @@ class _StepThreeState extends State<_StepThree> {
                                           ),
                                           Padding(
                                             padding: const EdgeInsets.only(top: 3),
-                                            child: GestureDetector(
+                                            child: TapHighlight(
                                               onTap: () => CoachProfileCard.show(context, a.trainer),
                                               child: Row(
                                                 mainAxisSize: MainAxisSize.min,
@@ -1978,7 +2048,7 @@ class _StepThreeState extends State<_StepThree> {
                                         ],
                                       )
                                     else
-                                      const Text("Full", style: TextStyle(fontSize: 12, color: Color(0xFF8A5A5A), fontWeight: FontWeight.w600)),
+                                      Text("Full", style: TextStyle(fontSize: 12, color: AppColors.danger, fontWeight: FontWeight.w600)),
                                   ],
                                 ),
                               ),
@@ -1994,7 +2064,7 @@ class _StepThreeState extends State<_StepThree> {
                                         onPressed: waitlistBusy ? null : () => widget.onLeaveWaitlist(onWaitlist),
                                         style: OutlinedButton.styleFrom(
                                           foregroundColor: AppColors.errorText,
-                                          side: const BorderSide(color: Color(0xFF6B3B3B)),
+                                          side: BorderSide(color: AppColors.danger),
                                           padding: const EdgeInsets.symmetric(vertical: 7),
                                         ),
                                         child: Text(

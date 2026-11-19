@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "../navigation/local_back_stack.dart";
@@ -135,7 +136,7 @@ class _TabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkWell(
+      child: TapHighlight(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 13),

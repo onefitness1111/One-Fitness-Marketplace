@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/widgets/owner_password_dialog.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/report_utils.dart";
 import "../../../core/widgets/widgets.dart";
@@ -117,6 +118,8 @@ class _RealTimeChargesReportState extends ConsumerState<RealTimeChargesReport> {
                         onPressed: _busyId != null
                             ? null
                             : () async {
+                                final ok = await confirmOwnerPassword(context);
+                                if (!ok || !mounted) return;
                                 setState(() => _busyId = c.id);
                                 try {
                                   await SupabaseService.refundCharge(c.id);

@@ -1,3 +1,4 @@
+import "../../core/utils/coach_names.dart";
 import "../../core/utils/offered_catalog.dart";
 import "availability_block.dart";
 
@@ -108,9 +109,17 @@ class Trainer {
     this.referralCommissionPercent = 0,
     this.coachCode,
     this.unavailability = const [],
+    this.coachName,
+    this.secondaryCoachName,
+    this.firstName,
+    this.lastName,
   });
 
   final String id;
+
+  /// Legal name. Clients and other coaches never receive this — the server
+  /// replaces it with [coachName] before it leaves the database. The owner
+  /// still sees it.
   final String name;
 
   /// [availability] minus anything the owner deleted from the catalogue
@@ -152,23 +161,45 @@ class Trainer {
         referralCommissionPercent: referralCommissionPercent,
         coachCode: coachCode,
         unavailability: unavailability,
+        coachName: coachName,
+        secondaryCoachName: secondaryCoachName,
+        firstName: firstName,
+        lastName: lastName,
       );
 
-  /// Honorific shown before the name to clients — "Coach", "Head Coach",
-  /// "Trainer". Separate from the name itself so it can be changed without
-  /// rewriting what the coach is called everywhere.
+  /// What the coach typed as their coach name, for example "Coach Chris".
+  final String? coachName;
+
+  /// Only the owner (and the coach, on their own profile) can see this.
+  final String? secondaryCoachName;
+
+  /// Legal first and last name. Null on any phone that is not the owner's
+  /// or this coach's own.
+  final String? firstName;
+  final String? lastName;
+
+  /// Kept for older rows. Clients do not see it; [displayTitle] is the
+  /// coach name.
   final String? title;
   final String? photo;
   final String? phone;
   final String? email;
   final String? locationName;
 
-  /// "Coach Chris" — the only way a coach is named to clients: "Coach" plus
-  /// the first name, never the legal name. (The Title field is no longer part
-  /// of it.) Staff-only screens that need the real name use [name].
-  String get displayTitle {
-    final first = name.trim().split(RegExp(r"\s+")).first;
-    return first.isEmpty ? "Your coach" : "Coach $first";
+  /// The only name a client or another coach should see.
+  String get displayTitle => coachPublicName(coachName: coachName);
+
+  /// Legal name plus the public coach name, for the owner only.
+  String get ownerNameLine {
+    final legal = name.trim();
+    final coach = displayTitle;
+    final second = (secondaryCoachName ?? "").trim();
+    final parts = <String>[
+      if (legal.isNotEmpty) legal,
+      if (coach.isNotEmpty && coach != legal) coach,
+      if (second.isNotEmpty) second,
+    ];
+    return parts.join(" · ");
   }
   final String? locationAddress;
 

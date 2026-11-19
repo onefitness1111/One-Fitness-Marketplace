@@ -132,8 +132,10 @@ class SessionsRemainingBadge extends ConsumerWidget {
     }
 
     final used = sessionsUsedThisPeriod(info, plan, bookings);
+    final booked = sessionsTowardBookingLimit(info, plan, bookings);
     final max = effectiveMaxSessions(info, plan);
     final remaining = (max - used).clamp(0, max);
+    final bookedNotUsed = (booked - used).clamp(0, booked);
     final pct = max > 0 ? remaining / max : 0.0;
     final color = pct > 0.5 ? AppColors.grn : (pct > 0.2 ? AppColors.gold : AppColors.danger);
 
@@ -190,6 +192,14 @@ class SessionsRemainingBadge extends ConsumerWidget {
           // Sessions carried in from last month under the plan's roll-over
           // rule — part of the total above, called out so it's clear where
           // the extra sessions came from and that they expire this month.
+          if (bookedNotUsed > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                "$bookedNotUsed booked, not used yet. A session is used when you check in or are marked a no-show. Cancelling gives it back right away.",
+                style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.35),
+              ),
+            ),
           if (rolloverSessionsFor(info, plan) > 0)
             Padding(
               padding: const EdgeInsets.only(top: 2),
@@ -222,7 +232,7 @@ class SessionsRemainingBadge extends ConsumerWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Builder(builder: (context) {
               final m = effectiveMaxSessions(info, p);
-              final left = (m - sessionsUsedThisPeriod(info, p, bookings)).clamp(0, m);
+              final left = sessionsRemainingBalance(info, p, bookings);
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(

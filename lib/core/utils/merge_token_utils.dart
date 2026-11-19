@@ -246,7 +246,7 @@ const kWaiverClauses = [
   WaiverClause("no_refund", "No Refund Policy",
       "I understand that memberships, packages and sessions are non-refundable once purchased."),
   WaiverClause("late_cancellation", "Late Cancellation / No-Show Policy",
-      "I understand that late cancellations and no-shows may be charged a fee and that a no-show forfeits the session."),
+      "I understand that cancelling within 12 hours is a \$15 fee, cancelling within 4 hours is a \$25 fee, and that a no-show marked by my coach uses the session."),
 ];
 
 /// The waiver text as the client reads it: merge tokens filled in, and the

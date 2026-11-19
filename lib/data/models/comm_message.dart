@@ -1,5 +1,16 @@
 /// Mirrors one entry in client.comms (Comms.jsx) — a logged message, not a
 /// live chat bubble; the whole feature is a timestamped communication log.
+class MessageReaction {
+  const MessageReaction({required this.userId, required this.reaction});
+
+  final String userId;
+
+  /// "heart" or "thumb".
+  final String reaction;
+
+  String get glyph => reaction == "thumb" ? "👍" : "❤️";
+}
+
 class CommMessage {
   const CommMessage({
     required this.id,
@@ -10,6 +21,7 @@ class CommMessage {
     this.readByCoach = false,
     this.channel,
     this.createdAt,
+    this.reactions = const [],
   });
 
   final String id;
@@ -29,6 +41,9 @@ class CommMessage {
   /// `client_records.data->'comms'`, whose time is recovered from [id].
   final DateTime? createdAt;
 
+  /// Hearts and thumbs-ups. Likes are not a separate message.
+  final List<MessageReaction> reactions;
+
   /// Real chronological timestamp for day-grouping/sort order in the chat
   /// UI. [id] is always a microsecond-epoch stamp for a message this app
   /// created (see chat_screen.dart/coach_chat_screen.dart's `send()`), so
@@ -47,7 +62,7 @@ class CommMessage {
         : DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  CommMessage copyWith({bool? readByCoach}) => CommMessage(
+  CommMessage copyWith({bool? readByCoach, List<MessageReaction>? reactions}) => CommMessage(
         id: id,
         who: who,
         text: text,
@@ -56,5 +71,6 @@ class CommMessage {
         readByCoach: readByCoach ?? this.readByCoach,
         channel: channel,
         createdAt: createdAt,
+        reactions: reactions ?? this.reactions,
       );
 }

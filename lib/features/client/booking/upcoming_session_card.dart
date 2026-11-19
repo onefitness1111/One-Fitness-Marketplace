@@ -1,3 +1,4 @@
+import "../../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/theme/app_colors.dart";
@@ -40,9 +41,18 @@ class _UpcomingSessionCardState extends ConsumerState<UpcomingSessionCard> {
     final trainerMatches = widget.trainers.where((t) => t.id == b.trainerId);
     final trainer = trainerMatches.isNotEmpty ? trainerMatches.first : null;
     final settings = ref.watch(platformSettingsProvider);
-    final w = cancelWindow(b, lateCancellationHours: settings.lateCancellationHours);
+    final w = cancelWindow(
+      b,
+      lateCancellationHours: settings.lateCancellationHours,
+      noShowCancelHours: settings.noShowCancelHours,
+    );
     final charged = w != "free";
-    final reschedulable = canReschedule(b, blockRescheduleInWindow: settings.blockRescheduleInWindow, lateCancellationHours: settings.lateCancellationHours);
+    final reschedulable = canReschedule(
+      b,
+      blockRescheduleInWindow: settings.blockRescheduleInWindow,
+      lateCancellationHours: settings.lateCancellationHours,
+      noShowCancelHours: settings.noShowCancelHours,
+    );
     final d = DateTime.parse(b.date);
     final shortDate = "${_weekdayAbbr(d.weekday)} ${d.day}";
 
@@ -59,7 +69,7 @@ class _UpcomingSessionCardState extends ConsumerState<UpcomingSessionCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            InkWell(
+            TapHighlight(
               onTap: () => setState(() => _expanded = !_expanded),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -103,7 +113,9 @@ class _UpcomingSessionCardState extends ConsumerState<UpcomingSessionCard> {
                               Padding(
                                 padding: const EdgeInsets.only(top: 5),
                                 child: Text(
-                                  "Within ${settings.lateCancellationHours} hrs — late window.${!reschedulable ? " Rescheduling is blocked this close to your session." : ""}",
+                                  w == "close"
+                                      ? "Within ${settings.noShowCancelHours} hrs — \$${(settings.noShowFeeCents / 100).toStringAsFixed(0)} fee if you cancel. The session comes back.${!reschedulable ? " Rescheduling is blocked this close." : ""}"
+                                      : "Within ${settings.lateCancellationHours} hrs — \$${(settings.lateCancellationFeeCents / 100).toStringAsFixed(0)} fee if you cancel. The session comes back.${!reschedulable ? " Rescheduling is blocked this close." : ""}",
                                   style: TextStyle(fontSize: 10, color: AppColors.mute, height: 1.35),
                                 ),
                               ),

@@ -94,7 +94,9 @@ List<TrainerRangeStats> perTrainerInRange(List<Trainer> trainers, List<Booking> 
     // Coach pay counts ONLY clients who were checked in. A booking that is
     // unmarked, an early/late cancel or a no-show earns the coach nothing —
     // signing up for a session is not enough, they have to attend it.
-    final sessions = booked.where((b) => b.attendanceStatus == "checked-in").toList();
+    // A free add stays on the schedule and still shows the client as checked
+    // in, but the owner said it does not count toward that coach's pay.
+    final sessions = booked.where((b) => b.attendanceStatus == "checked-in" && b.countsTowardPay).toList();
     // Revenue is the gym's, not the coach's: a no-show or late cancel still
     // keeps the session/fee, so it stays measured over every booking.
     var revenue = 0.0;

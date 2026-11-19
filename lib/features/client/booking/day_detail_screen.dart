@@ -85,6 +85,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
           b,
           blockRescheduleInWindow: settings.blockRescheduleInWindow,
           lateCancellationHours: settings.lateCancellationHours,
+          noShowCancelHours: settings.noShowCancelHours,
         );
 
     if (_cancelTarget != null) {
@@ -213,7 +214,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "${trainer?.displayTitle ?? "Coach"} · ${disciplineLabel(b.discipline)}",
+                      "${trainer?.displayTitle ?? "your coach"} · ${disciplineLabel(b.discipline)}",
                       style: TextStyle(fontSize: 13, color: AppColors.mute),
                     ),
                     if (b.locationName != null) ...[
@@ -233,7 +234,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
                         style: TextStyle(fontSize: 12, color: AppColors.mute, fontStyle: FontStyle.italic),
                       ),
                     ] else ...[
-                      InkWell(
+                      TapHighlight(
                         onTap: widget.onGoPlans,
                         child: Container(
                           margin: const EdgeInsets.only(top: 14),

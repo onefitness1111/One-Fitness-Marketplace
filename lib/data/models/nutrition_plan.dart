@@ -82,7 +82,7 @@ class Ingredient {
 
   static Ingredient fromJson(Map<String, dynamic> j) => Ingredient(
         item: j["item"] as String? ?? "",
-        qty: j["qty"] as num?,
+        qty: j["qty"] is num ? j["qty"] as num : num.tryParse("${j["qty"] ?? ""}"),
         unit: j["unit"] as String?,
         category: j["category"] as String?,
         macros: IngredientMacros.fromJson(j["macros"]),
@@ -144,6 +144,7 @@ class NutritionMeal {
     this.scaledIngredients,
     this.scaledMacros,
     this.overrides = const {},
+    this.photoDataUrl,
   });
 
   final String id;
@@ -169,10 +170,14 @@ class NutritionMeal {
   /// as typed rather than parsed so "" mid-edit doesn't snap back).
   final Map<int, String> overrides;
 
+  /// Optional photo on a meal the client or a coach added.
+  final String? photoDataUrl;
+
   NutritionMeal copyWith({
     String? time,
     Map<int, String>? overrides,
     bool clearOverrides = false,
+    String? photoDataUrl,
   }) =>
       NutritionMeal(
         id: id,
@@ -191,6 +196,7 @@ class NutritionMeal {
         scaledIngredients: scaledIngredients,
         scaledMacros: scaledMacros,
         overrides: clearOverrides ? const {} : (overrides ?? this.overrides),
+        photoDataUrl: photoDataUrl ?? this.photoDataUrl,
       );
 }
 

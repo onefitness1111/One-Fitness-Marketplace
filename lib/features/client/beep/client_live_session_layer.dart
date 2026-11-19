@@ -6,6 +6,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
 import "../../../data/providers/beep_providers.dart";
+import "../../../data/providers/client_providers.dart";
 import "beep_bar.dart";
 
 /// What a client sees on every screen while their coach has a session running:
@@ -23,6 +24,7 @@ class ClientLiveSessionLayer extends ConsumerStatefulWidget {
     super.key,
     required this.screen,
     required this.onOpenChat,
+    this.onOpenWorkout,
   });
 
   /// The client shell's current screen, so the pinned bar can step aside
@@ -30,6 +32,7 @@ class ClientLiveSessionLayer extends ConsumerStatefulWidget {
   /// or collide with another pinned button.
   final String screen;
   final VoidCallback onOpenChat;
+  final VoidCallback? onOpenWorkout;
 
   @override
   ConsumerState<ClientLiveSessionLayer> createState() => _ClientLiveSessionLayerState();
@@ -43,20 +46,24 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _announceNew(ref.read(liveSessionsProvider));
+      if (!mounted) return;
+      final clientId = ref.read(clientInfoProvider).id;
+      final led = ref.read(coachLedDaysProvider.notifier).forClient(clientId);
+      if (led != null && !_announced.contains(led.dayId)) {
+        _announced.add(led.dayId);
+        LiveSession? run;
+        for (final r in ref.read(liveSessionsProvider)) {
+          if (r.isLive) {
+            run = r;
+            break;
+          }
+        }
+        _showStartedDialog(run);
+      }
     });
   }
 
-  void _announceNew(List<LiveSession> runs) {
-    for (final run in runs) {
-      if (!run.supportsBeep || _announced.contains(run.id)) continue;
-      _announced.add(run.id);
-      _showStartedDialog(run);
-      break;
-    }
-  }
-
-  Future<void> _showStartedDialog(LiveSession run) {
+  Future<void> _showStartedDialog(LiveSession? run) {
     return showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
@@ -86,8 +93,10 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
                 "or message them from here at any time.",
                 style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.4),
               ),
-              const SizedBox(height: 12),
-              SessionTimer(run: run, label: "SESSION LIVE"),
+              if (run != null) ...[
+                const SizedBox(height: 12),
+                SessionTimer(run: run, label: "SESSION LIVE"),
+              ],
               const SizedBox(height: 14),
               const BeepBar(exerciseNames: [], focusIndex: 0),
               const SizedBox(height: 8),
@@ -112,12 +121,34 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<List<LiveSession>>(liveSessionsProvider, (_, next) => _announceNew(next));
+    ref.listen<List<CoachLedDay>>(coachLedDaysProvider, (prev, next) {
+      final clientId = ref.read(clientInfoProvider).id;
+      CoachLedDay? led;
+      for (final day in next) {
+        if (day.clientId == clientId) {
+          led = day;
+          break;
+        }
+      }
+      if (led == null || _announced.contains(led.dayId)) return;
+      _announced.add(led.dayId);
+      LiveSession? run;
+      for (final r in ref.read(liveSessionsProvider)) {
+        if (r.isLive) {
+          run = r;
+          break;
+        }
+      }
+      _showStartedDialog(run);
+      widget.onOpenWorkout?.call();
+    });
 
-    final runs = ref.watch(liveSessionsProvider);
-    final live = runs.where((r) => r.supportsBeep);
+    final clientId = ref.watch(clientInfoProvider).id;
+    final coachLed = ref.watch(coachLedDaysProvider.notifier).forClient(clientId);
+    ref.watch(coachLedDaysProvider);
     // The workout tab renders its own BeepBar next to the exercise being done.
-    if (live.isEmpty || widget.screen == "plans") return const SizedBox.shrink();
+    // A booked session with no coach-started program day does not show it.
+    if (coachLed == null || widget.screen == "plans") return const SizedBox.shrink();
 
     return Positioned(
       left: 12,

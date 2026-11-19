@@ -8,6 +8,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "package:url_launcher/url_launcher.dart";
 import "../supabase/supabase_service.dart";
 import "../theme/app_colors.dart";
+import "../../data/providers/trainer_providers.dart";
 import "widgets.dart";
 
 /// "Sync to Google Calendar" — one button that hands the client's own
@@ -185,6 +186,7 @@ class _CalendarSyncSectionState extends ConsumerState<CalendarSyncSection> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(trainerAuthProvider) == "owner") return const SizedBox.shrink();
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,7 +301,7 @@ class _CalendarChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(

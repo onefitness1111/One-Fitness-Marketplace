@@ -3,7 +3,9 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/payments/billing_address_rules.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../data/models/billing_address.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/write_failure.dart";
@@ -13,7 +15,6 @@ import "../../../core/legal/terms_screen.dart";
 import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/blocked_users_screen.dart";
 import "../../../core/widgets/delete_account_screen.dart";
-import "../../../core/widgets/city_state_fields.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
@@ -212,8 +213,8 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
           ),
           _SettingRow(
             icon: LucideIcons.mapPin,
-            label: "Your City",
-            detail: info.city ?? "Not set",
+            label: "Billing address",
+            detail: (info.city ?? "").trim().isEmpty ? "Not set" : "${info.city}${info.state == null || info.state!.trim().isEmpty ? "" : ", ${info.state}"}",
             onTap: () => setState(() => _section = "profile"),
           ),
           _SettingRow(
@@ -289,9 +290,7 @@ String membershipStatusLabel(
   MembershipPlan plan,
   List<Booking> bookings,
 ) {
-  final used = sessionsUsedThisPeriod(info, plan, bookings);
-  final max = effectiveMaxSessions(info, plan);
-  return "${(max - used).clamp(0, max)}";
+  return "${sessionsRemainingBalance(info, plan, bookings)}";
 }
 
 class _SettingRow extends StatelessWidget {
@@ -556,6 +555,11 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
   late final _state = TextEditingController(
     text: ref.read(clientInfoProvider).state ?? "",
   );
+  final _billName = TextEditingController();
+  final _line1 = TextEditingController();
+  final _line2 = TextEditingController();
+  final _zip = TextEditingController();
+  final _country = TextEditingController(text: "US");
   late final _birthday = TextEditingController(
     text: ref.read(clientInfoProvider).birthday ?? "",
   );
@@ -563,11 +567,35 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
   bool _pickingPhoto = false;
 
   @override
+  void initState() {
+    super.initState();
+    final id = ref.read(clientInfoProvider).id;
+    SupabaseService.loadBillingAddress(id).then((saved) {
+      if (!mounted || saved == null) return;
+      setState(() {
+        if (saved.name.trim().isNotEmpty) _billName.text = saved.name;
+        _line1.text = saved.line1;
+        _line2.text = saved.line2;
+        if (saved.city.trim().isNotEmpty) _city.text = saved.city;
+        if (saved.state.trim().isNotEmpty) _state.text = saved.state;
+        _zip.text = saved.postalCode;
+        if (saved.country.trim().isNotEmpty) _country.text = saved.country;
+      });
+    });
+  }
+
+  @override
   void dispose() {
     _name.dispose();
     _email.dispose();
     _phone.dispose();
     _city.dispose();
+    _state.dispose();
+    _billName.dispose();
+    _line1.dispose();
+    _line2.dispose();
+    _zip.dispose();
+    _country.dispose();
     _birthday.dispose();
     super.dispose();
   }
@@ -636,6 +664,22 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
     final email = _email.text.trim();
     final phone = _phone.text.trim();
     final city = _city.text.trim();
+    final address = BillingAddress(
+      name: _billName.text,
+      line1: _line1.text,
+      line2: _line2.text,
+      city: city,
+      state: _state.text,
+      postalCode: _zip.text,
+      country: _country.text,
+    );
+    if (_line1.text.trim().isNotEmpty || _zip.text.trim().isNotEmpty) {
+      final problem = billingAddressError(address);
+      if (problem != null) {
+        setState(() => _error = problem);
+        return;
+      }
+    }
     final birthday = _birthday.text.trim();
     final gymErr = gymNumberError(context, phone);
     if (gymErr != null) {
@@ -653,9 +697,13 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
         email: email,
         phone: phone,
         city: city,
+        state: address.state.trim(),
         birthday: birthday.isEmpty ? null : birthday,
         photo: _photoDataUrl,
       );
+      if (_line1.text.trim().isNotEmpty) {
+        await SupabaseService.saveBillingAddress(ref.read(clientInfoProvider).id, address);
+      }
       ref
           .read(clientInfoProvider.notifier)
           .update(
@@ -664,6 +712,7 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
               email: email,
               phone: phone,
               city: city,
+              state: address.state.trim(),
               birthday: birthday.isEmpty ? null : birthday,
               photo: _photoDataUrl,
             ),
@@ -692,8 +741,9 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
           Center(
             child: Column(
               children: [
-                GestureDetector(
+                TapHighlight(
                   onTap: _pickingPhoto ? null : _pickPhoto,
+                  shape: BoxShape.circle,
                   child: Container(
                     width: 80,
                     height: 80,
@@ -760,7 +810,20 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
             ),
           ),
           const SizedBox(height: 10),
-          CityStateFields(city: _city, state: _state),
+          const SectionLabel("Billing address"),
+          FieldLabeled(label: "Name", child: AppField(kind: FieldKind.name, controller: _billName)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "Street address", child: AppField(kind: FieldKind.text, controller: _line1)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "Apt / suite (optional)", child: AppField(kind: FieldKind.text, controller: _line2)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "City", child: AppField(kind: FieldKind.name, controller: _city)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "State", child: AppField(kind: FieldKind.text, controller: _state)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "ZIP code", child: AppField(kind: FieldKind.text, controller: _zip)),
+          const SizedBox(height: 8),
+          FieldLabeled(label: "Country", child: AppField(kind: FieldKind.text, controller: _country)),
           Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
@@ -775,7 +838,7 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
           const SizedBox(height: 10),
           FieldLabeled(
             label: "Birthday",
-            child: InkWell(
+            child: TapHighlight(
               onTap: _pickBirthday,
               child: InputDecorator(
                 decoration: InputDecoration(

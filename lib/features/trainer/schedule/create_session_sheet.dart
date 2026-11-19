@@ -246,7 +246,7 @@ class _CreateSessionBodyState extends ConsumerState<_CreateSessionBody> {
           const SizedBox(height: 12),
           Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
           const SizedBox(height: 6),
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _pickingCoach = true),
             borderRadius: BorderRadius.circular(8),
             child: Container(
@@ -383,7 +383,7 @@ class _Pill extends StatelessWidget {
           Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.gold)),
           if (onRemove != null) ...[
             const SizedBox(width: 4),
-            InkWell(onTap: onRemove, child: Icon(LucideIcons.x, size: 13, color: AppColors.gold)),
+            TapHighlight(onTap: onRemove, child: Icon(LucideIcons.x, size: 13, color: AppColors.gold)),
           ],
         ],
       ),
@@ -404,7 +404,7 @@ class _Chips extends StatelessWidget {
       runSpacing: 6,
       children: options.map((o) {
         final selected = value == o.$1;
-        return InkWell(
+        return TapHighlight(
           onTap: () => onChanged(o.$1),
           borderRadius: BorderRadius.circular(8),
           child: Container(

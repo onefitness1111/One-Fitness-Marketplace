@@ -5,6 +5,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/habit_utils.dart";
+import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/client_providers.dart";
 
@@ -36,8 +37,19 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(habitLogByDate: {...r.habitLogByDate, _dateTab: nextEntry}));
 
     final clientId = ref.read(clientInfoProvider).id;
-    SupabaseService.updateClientHabitLog(clientId, _dateTab, nextEntry).catchError((Object _) {});
-    SupabaseService.awardMeritBadge(clientId, "habit").catchError((Object _) => <String, dynamic>{});
+    SupabaseService.updateClientHabitLog(clientId, _dateTab, nextEntry).then((_) {
+      return SupabaseService.checkMeritBadges(clientId, "after_habit");
+    }).then((_) async {
+      final fresh = await SupabaseService.loadMeritBadgesFor(clientId);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(clientId, fresh);
+    }).catchError((Object _) {});
+    if (nextChecked[habitId] == true) {
+      notifyPush(
+        profileId: clientId,
+        title: "Nice work",
+        body: "You checked off a habit. Keep the streak going.",
+      );
+    }
   }
 
   void _setRating(String field, int value) {
@@ -116,7 +128,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
           SectionLabel("Habits — ${niceHabitDate(_dateTab)}"),
           ...habits.map((h) {
             final done = log.checked[h.id] == true;
-            return InkWell(
+            return TapHighlight(
               onTap: canEdit ? () => _toggle(h.id) : null,
               borderRadius: BorderRadius.circular(10),
               child: Container(

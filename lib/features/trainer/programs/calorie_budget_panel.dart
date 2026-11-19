@@ -30,48 +30,75 @@ class CalorieBudgetPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("CALORIE BUDGET", style: TextStyle(fontSize: 10, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1)),
+          Text("CALORIE BUDGET", style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1)),
           const SizedBox(height: 7),
-          Row(
-            children: _boxes
-                .map((b) => Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2.5),
-                        child: Column(
-                          children: [
-                            Text(b.$2.toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 7.5, color: AppColors.mute, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 3),
-                            TextField(
-                              controller: TextEditingController(text: mealBudgets[b.$1] ?? "")..selection = TextSelection.collapsed(offset: (mealBudgets[b.$1] ?? "").length),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: AppColors.txt, fontSize: 12),
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              decoration: InputDecoration(
-                                hintText: "kcal",
-                                hintStyle: TextStyle(color: AppColors.mute, fontSize: 11),
-                                filled: true,
-                                fillColor: AppColors.bg,
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.line)),
-                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.line)),
-                                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.gold)),
-                              ),
-                              onChanged: (v) => onChange({...mealBudgets, b.$1: v}),
-                            ),
-                          ],
-                        ),
+          LayoutBuilder(builder: (context, constraints) {
+            final stacked = constraints.maxWidth < 520;
+            Widget field(String key) {
+              final current = mealBudgets[key] ?? "";
+              return SizedBox(
+                width: stacked ? 96 : null,
+                child: TextField(
+                  controller: TextEditingController(text: current)..selection = TextSelection.collapsed(offset: current.length),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.txt, fontSize: 14),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    hintText: "kcal",
+                    hintStyle: TextStyle(color: AppColors.mute, fontSize: 13),
+                    filled: true,
+                    fillColor: AppColors.bg,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.line)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.line)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppColors.gold)),
+                  ),
+                  onChanged: (v) => onChange({...mealBudgets, key: v}),
+                ),
+              );
+            }
+            if (stacked) {
+              return Column(
+                children: [
+                  for (final b in _boxes)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(b.$2, style: TextStyle(fontSize: 13, color: AppColors.mute, fontWeight: FontWeight.w600))),
+                          field(b.$1),
+                        ],
                       ),
-                    ))
-                .toList(),
-          ),
+                    ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                for (final b in _boxes)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2.5),
+                      child: Column(
+                        children: [
+                          Text(b.$2, textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: AppColors.mute, fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 3),
+                          field(b.$1),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          }),
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               RichText(
                 text: TextSpan(
-                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                  style: TextStyle(fontSize: 12, color: AppColors.mute),
                   children: [
                     const TextSpan(text: "Total: "),
                     TextSpan(text: "${allocated.round()} kcal", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
@@ -81,7 +108,7 @@ class CalorieBudgetPanel extends StatelessWidget {
               if (dailyCalTarget > 0)
                 Text(
                   allGood ? "✓ On target" : (over ? "${remaining.abs().round()} kcal over" : "${remaining.round()} kcal left"),
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: allGood ? AppColors.grn : (over ? AppColors.errorText : AppColors.gold)),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: allGood ? AppColors.statusGreen : (over ? AppColors.errorText : AppColors.gold)),
                 ),
             ],
           ),
@@ -100,7 +127,7 @@ class CalorieBudgetPanel extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             "Daily target: ${dailyCalTarget > 0 ? "$dailyCalTarget kcal" : "not set"} · Edit ingredients below to adjust meal totals",
-            style: TextStyle(fontSize: 9, color: AppColors.mute),
+            style: TextStyle(fontSize: 12, color: AppColors.mute),
           ),
         ],
       ),

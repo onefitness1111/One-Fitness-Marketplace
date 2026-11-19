@@ -77,7 +77,9 @@ class TrainerEditForm extends StatefulWidget {
 
 class _TrainerEditFormState extends State<TrainerEditForm> {
   late final _name = TextEditingController(text: widget.initial?.name ?? "");
-  late final _title = TextEditingController(text: widget.initial?.title ?? "Coach");
+  late final _title = TextEditingController(text: widget.initial?.title ?? "");
+  late final _coachName = TextEditingController(text: widget.initial?.coachName ?? "");
+  late final _secondaryCoachName = TextEditingController(text: widget.initial?.secondaryCoachName ?? "");
   late final _email = TextEditingController(text: widget.initial?.email ?? "");
   late final _phone = TextEditingController(text: widget.initial?.phone ?? "");
   late final _bio = TextEditingController(text: widget.initial?.bio ?? "");
@@ -123,6 +125,8 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
   void dispose() {
     _name.dispose();
     _title.dispose();
+    _coachName.dispose();
+    _secondaryCoachName.dispose();
     _email.dispose();
     _phone.dispose();
     _bio.dispose();
@@ -228,6 +232,10 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
             "trainer-${DateTime.now().microsecondsSinceEpoch}",
         name: name,
         title: _title.text.trim().isEmpty ? null : _title.text.trim(),
+        coachName: _coachName.text.trim().isEmpty ? null : _coachName.text.trim(),
+        secondaryCoachName: widget.isOwnerEditing
+            ? (_secondaryCoachName.text.trim().isEmpty ? null : _secondaryCoachName.text.trim())
+            : widget.initial?.secondaryCoachName,
         email: email,
         phone: phone,
         photo: _photoDataUrl ?? widget.initial?.photo,
@@ -315,8 +323,9 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           if (_tab == "profile") ...[
           Row(
             children: [
-              GestureDetector(
+              TapHighlight(
                 onTap: _pickingPhoto ? null : _pickPhoto,
+                shape: BoxShape.circle,
                 child: Container(
                   width: 56,
                   height: 56,
@@ -380,18 +389,39 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           ),
           const SizedBox(height: 10),
           FieldLabeled(
-            label: "Title",
+            label: "Coach name",
             child: AppField(kind: FieldKind.name,
-              controller: _title,
-              placeholder: "Coach",
+              controller: _coachName,
+              placeholder: "Coach Chris",
               onChanged: (_) => setState(() => _error = null),
             ),
           ),
           Padding(
-            padding: EdgeInsets.only(top: 4),
+            padding: const EdgeInsets.only(top: 4),
             child: Text(
-              "Shown to clients before the first name — e.g. \"Coach Sooraj\".",
+              "This is the only name clients see. If you leave it blank, clients see \"Coach\" plus the first name.",
               style: TextStyle(fontSize: 11, color: AppColors.mute),
+            ),
+          ),
+          if (widget.isOwnerEditing) ...[
+            const SizedBox(height: 10),
+            FieldLabeled(
+              label: "Secondary coach name",
+              child: AppField(
+                kind: FieldKind.name,
+                controller: _secondaryCoachName,
+                placeholder: "Optional — only you can see this",
+                onChanged: (_) => setState(() => _error = null),
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          FieldLabeled(
+            label: "Title",
+            child: AppField(kind: FieldKind.name,
+              controller: _title,
+              placeholder: "Optional",
+              onChanged: (_) => setState(() => _error = null),
             ),
           ),
           const SizedBox(height: 10),
@@ -772,7 +802,7 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
                 ("perSession", "Per session"),
               ].map((opt) {
                 final selected = _payoutMode == opt.$1;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => setState(() => _payoutMode = opt.$1),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -970,7 +1000,7 @@ class _TabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Container(
@@ -1098,7 +1128,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                   ),
                   IconButton(
                     onPressed: () => _remove(e.id),
-                    icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B)),
+                    icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
@@ -1117,7 +1147,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                     Expanded(
                       child: FieldLabeled(
                         label: "Start date",
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => _pickDate(isStart: true),
                           child: InputDecorator(
                             decoration: InputDecoration(
@@ -1136,7 +1166,7 @@ class _UnavailabilitySectionState extends State<_UnavailabilitySection> {
                     Expanded(
                       child: FieldLabeled(
                         label: "End date",
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: _start == null ? null : () => _pickDate(isStart: false),
                           child: InputDecorator(
                             decoration: InputDecoration(
@@ -1198,7 +1228,7 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return TapHighlight(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
@@ -1324,10 +1354,10 @@ class _BlockRow extends StatelessWidget {
               ),
               IconButton(
                 onPressed: onRemove,
-                icon: const Icon(
+                icon: Icon(
                   LucideIcons.trash2,
                   size: 14,
-                  color: Color(0xFF6B3B3B),
+                  color: AppColors.danger,
                 ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 28, minHeight: 28),

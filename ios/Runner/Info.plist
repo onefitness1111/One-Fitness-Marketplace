@@ -54,6 +54,8 @@
 		     if any linked API lacks its purpose string. -->
 		<key>NSCameraUsageDescription</key>
 		<string>ONE Fitness uses your camera to take profile and progress photos.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>ONE Fitness uses the microphone so a coach applicant can record a 20-second coaching answer. The clip is optional.</string>
 		<!-- Used when the client taps to find their nearest gym on the
 		     booking screen. Only read while the app is open, only on that
 		     tap, and never stored or sent anywhere — the distance is worked
@@ -70,6 +72,13 @@
 		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
 		<key>NSLocationAlwaysUsageDescription</key>
 		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
+		<!-- Apple Health: steps, heart rate, and weight, read only. The
+		     update string is required because the Health connection links
+		     the write APIs too. The app does not write to Apple Health. -->
+		<key>NSHealthShareUsageDescription</key>
+		<string>ONE Fitness reads your steps, heart rate, and weight from Apple Health so they can sit with the progress you log. It only reads those three, and only after you agree. Your Health data stays on your phone and is not shared with other clients.</string>
+		<key>NSHealthUpdateUsageDescription</key>
+		<string>ONE Fitness does not write steps, heart rate, weight, or workouts back to Apple Health. This message is required because the Apple Health connection is part of the app. ONE Fitness only reads steps, heart rate, and weight, and only after you agree.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 		<key>CFBundleURLTypes</key>

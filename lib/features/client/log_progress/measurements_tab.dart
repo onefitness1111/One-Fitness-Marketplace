@@ -70,6 +70,8 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
       await SupabaseService.updateClientMeasurements(client.id, next);
       ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(measurements: next));
       final info = ref.read(clientInfoProvider);
+      notifyPush(profileId: info.id, title: "Measurement saved", body: "Your measurement was saved.");
+      notifyOwnerInternal(title: "Measurement logged", body: "${info.name} logged a measurement.");
       final goalWeight = parseLeadingNum(
         (client.intake["nutritional"]?.answers["goalWeight"] ?? client.intake["personalTraining"]?.answers["goalWeight"])?.toString(),
       );
@@ -81,6 +83,11 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
         goalWeight: goalWeight,
         profileId: info.id,
       );
+      final month = entry.date.length >= 7 ? entry.date.substring(0, 7) : entry.date;
+      await SupabaseService.awardAutomaticPoints(client.id, "measurement", month);
+      await SupabaseService.checkMeritBadges(client.id, "after_measurement");
+      final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
+      ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
       for (final c in _fieldControllers.values) {
         c.clear();
       }
@@ -289,14 +296,14 @@ class _MeasurementsTabState extends ConsumerState<MeasurementsTab> {
                         children: [
                           Text(dayLabel(m.date), style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.gold, fontSize: 13)),
                           _removingId == m.id
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF6B3B3B)),
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.danger),
                                 )
                               : IconButton(
                                   onPressed: _removingId == null ? () => _remove(m.id) : null,
-                                  icon: const Icon(LucideIcons.trash2, size: 14, color: Color(0xFF6B3B3B)),
+                                  icon: Icon(LucideIcons.trash2, size: 14, color: AppColors.danger),
                                   padding: EdgeInsets.zero,
                                   constraints: const BoxConstraints(),
                                 ),

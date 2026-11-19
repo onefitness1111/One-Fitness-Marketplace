@@ -62,7 +62,7 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
+          TapHighlight(
             onTap: () => setState(() => _open = !_open),
             child: Row(
               children: [
@@ -122,7 +122,7 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
                 final status = _statusFor(day);
                 final dateStr = _iso(day);
                 final isToday = dateStr == todayStr;
-                return InkWell(
+                return TapHighlight(
                   onTap: () => widget.onPickDate(dateStr),
                   child: Container(
                     margin: const EdgeInsets.all(1),

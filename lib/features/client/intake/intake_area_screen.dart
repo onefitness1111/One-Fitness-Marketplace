@@ -198,6 +198,7 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
           isOpen: true,
           onBack: _closeAssessment,
           child: PhysicalAssessmentScreen(
+            isOwner: ref.watch(trainerAuthProvider) == "owner",
             existing: client.intake[a.key],
             clientName: info?.name.isNotEmpty == true ? info!.name : "this client",
             onBack: _closeAssessment,

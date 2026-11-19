@@ -170,7 +170,7 @@ class _SquadTabState extends ConsumerState<SquadTab> {
                 ("activity", "Activity"),
               ]
                   .map((t) => Expanded(
-                        child: InkWell(
+                        child: TapHighlight(
                           onTap: () => setState(() {
                             if (_sub == t.$1) return;
                             _subHistory.add(_sub);
@@ -237,7 +237,7 @@ class _SquadTabState extends ConsumerState<SquadTab> {
                           });
                           if (!ok && context.mounted) _showMutateError(context);
                         },
-                        icon: const Icon(LucideIcons.userMinus, size: 14, color: Color(0xFF6B3B3B)),
+                        icon: Icon(LucideIcons.userMinus, size: 14, color: AppColors.danger),
                       ),
                   ],
                 ),
@@ -331,15 +331,21 @@ class _SquadTabState extends ConsumerState<SquadTab> {
 
   void _promptSetMaxSize(BuildContext context, Squad squad) {
     final controller = TextEditingController(text: "${squad.maxSize}");
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: const Text("Set new max Squad size"),
-        content: AppField(controller: controller, keyboardType: TextInputType.number),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel")),
-          TextButton(
+    showKeyboardSheet<void>(
+      context,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text("Set new max Squad size", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          AppField(controller: controller, keyboardType: TextInputType.number),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+          Expanded(child: BtnGhost(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Cancel"))),
+          const SizedBox(width: 8),
+          Expanded(child: BtnGold(
             onPressed: () async {
               final v = int.tryParse(controller.text.trim());
               if (v != null && v > 0) {
@@ -365,6 +371,9 @@ class _SquadTabState extends ConsumerState<SquadTab> {
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text("Save"),
+          ),
+          ),
+        ],
           ),
         ],
       ),

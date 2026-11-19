@@ -1,3 +1,4 @@
+import "tap_highlight.dart";
 import "package:flutter/material.dart";
 import "../theme/app_colors.dart";
 import "../utils/date_utils.dart";
@@ -47,7 +48,7 @@ class TimeField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = minutes;
-    return InkWell(
+    return TapHighlight(
       onTap: () async {
         final picked = await pickTime12h(context, initialMinutes: m ?? initialWhenEmpty);
         if (picked != null) onChanged(picked);
@@ -65,7 +66,7 @@ class TimeField extends StatelessWidget {
               ),
             ),
             if (m != null && onClear != null)
-              InkWell(
+              TapHighlight(
                 onTap: onClear,
                 child: Icon(Icons.close, size: 14, color: AppColors.mute),
               ),

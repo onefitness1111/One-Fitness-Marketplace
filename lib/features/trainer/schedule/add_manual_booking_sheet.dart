@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -211,10 +212,9 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
             ],
           ),
           const SizedBox(height: 14),
-          if (isOwner) ...[
-            Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
+          Text("COACH", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
             const SizedBox(height: 6),
-            InkWell(
+            TapHighlight(
               onTap: () => setState(() => _pickingCoach = true),
               borderRadius: BorderRadius.circular(8),
               child: Container(
@@ -235,7 +235,6 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
               ),
             ),
             const SizedBox(height: 12),
-          ],
           Text("SESSION TYPE", style: TextStyle(fontSize: 10, color: AppColors.mute, letterSpacing: 1)),
           const SizedBox(height: 6),
           _ChoiceRow<String>(value: _sessionType, options: types.map((t) => (t, sessionTypeLabel(t))).toList(), onChanged: (v) => setState(() => _sessionType = v ?? _sessionType)),
@@ -251,7 +250,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
               Expanded(
                 child: FieldLabeled(
                   label: "Date",
-                  child: InkWell(
+                  child: TapHighlight(
                     onTap: _pickDate,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -334,6 +333,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                       if (!mounted || !ok) return;
                       overrideReason = "capacity";
                     }
+                    if (!await confirmStaffBalanceAdd(context, clientId: _client!.id, isOwner: isOwner) || !mounted) return;
                     setState(() {
                       _saving = true;
                       _error = null;
@@ -353,16 +353,26 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                           slot: slot,
                           discipline: effectiveDiscipline,
                           priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(_sessionType),
+                          isOwner: isOwner,
                         );
                         if (out == null) {
                           setState(() => _saving = false);
                           return;
                         }
+                        if (out.status == "requested") {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message!)));
+                            Navigator.of(context).pop();
+                          }
+                          return;
+                        }
                         if (!out.booked) {
-                          setState(() {
-                            _saving = false;
-                            _error = singleSessionFailureMessage(out);
-                          });
+                          setState(() => _saving = false);
+                          if (out.full && out.refunded && context.mounted) {
+                            await showFilledRefundDialog(context, singleSessionFailureMessage(out));
+                          } else if (mounted) {
+                            setState(() => _error = singleSessionFailureMessage(out));
+                          }
                           return;
                         }
                         final made = await SupabaseService.loadBookingById(out.bookingId!);
@@ -391,9 +401,12 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
                       ref.read(allBookingsProvider.notifier).addBooking(saved);
                       if (context.mounted) Navigator.of(context).pop();
                     } catch (e) {
+                      final text = e.toString();
                       setState(() {
                         _saving = false;
-                        _error = "Couldn't book that session — check your connection and try again.";
+                        _error = text.contains("outstanding balance")
+                            ? staffBalanceWarningFromError(text)
+                            : "Couldn't book that session — check your connection and try again.";
                       });
                     }
                   },
@@ -418,7 +431,7 @@ class _ChoiceRow<T> extends StatelessWidget {
       runSpacing: 6,
       children: options.map((o) {
         final selected = value == o.$1;
-        return InkWell(
+        return TapHighlight(
           onTap: () => onChanged(o.$1),
           borderRadius: BorderRadius.circular(8),
           child: Container(
