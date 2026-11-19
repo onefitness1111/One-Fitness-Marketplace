@@ -356,6 +356,10 @@ class SupabaseService {
         if (coachCode != null && coachCode.isNotEmpty) "coach_code": coachCode,
       });
     } on PostgrestException catch (e) {
+      final raw = e.toString();
+      if (raw.contains("coach_name_taken") || raw.contains("trainers_coach_name_key")) {
+        throw Exception("Another coach already uses that coach name. Pick a different one.");
+      }
       if (e.code == "23505")
         throw Exception(
           "That coach code is already taken — pick a different one.",
@@ -396,6 +400,9 @@ class SupabaseService {
     List<AvailabilityBlock>? availability,
     num? commissionRate,
     String? coachCode,
+    String? title,
+    String? coachName,
+    String? secondaryCoachName,
     String? payoutMode,
     int? payoutRateCents,
     num? referralCommissionPercent,
@@ -455,6 +462,10 @@ class SupabaseService {
         if (availability != null && availability.isNotEmpty)
           "availability": availability.map(_availabilityToJson).toList(),
         if (commissionRate != null) "commission_rate": commissionRate,
+        if (title != null && title.trim().isNotEmpty) "title": title.trim(),
+        if (coachName != null && coachName.trim().isNotEmpty) "coach_name": coachName.trim(),
+        if (secondaryCoachName != null && secondaryCoachName.trim().isNotEmpty)
+          "secondary_coach_name": secondaryCoachName.trim(),
         if (coachCode != null && coachCode.isNotEmpty) "coach_code": coachCode,
         if (payoutMode != null) "payout_mode": payoutMode,
         if (payoutRateCents != null) "payout_rate_cents": payoutRateCents,
@@ -464,6 +475,10 @@ class SupabaseService {
           "unavailability": unavailability.map(_unavailabilityToJson).toList(),
       });
     } on PostgrestException catch (e) {
+      final raw = e.toString();
+      if (raw.contains("coach_name_taken") || raw.contains("trainers_coach_name_key")) {
+        throw Exception("Another coach already uses that coach name. Pick a different one.");
+      }
       if (e.code == "23505")
         throw Exception(
           "That coach code is already taken — pick a different one.",
@@ -2036,8 +2051,14 @@ class SupabaseService {
       if (unavailability != null)
         "unavailability": unavailability.map(_unavailabilityToJson).toList(),
     };
-    if (trainerFields.isNotEmpty)
-      await client.from("trainers").update(trainerFields).eq("profile_id", id);
+    if (trainerFields.isNotEmpty) {
+      try {
+        await client.from("trainers").update(trainerFields).eq("profile_id", id);
+      } catch (e) {
+        // A reused coach name is raised by trainers_coach_name_unique.
+        _rethrowContactClash(e);
+      }
+    }
   }
 
   /// Owner-only — Delete/Archive Behavior spec: a deleted coach is "fully

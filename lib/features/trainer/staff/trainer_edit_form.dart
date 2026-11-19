@@ -77,8 +77,15 @@ class TrainerEditForm extends StatefulWidget {
 
 class _TrainerEditFormState extends State<TrainerEditForm> {
   late final _name = TextEditingController(text: widget.initial?.name ?? "");
-  late final _title = TextEditingController(text: widget.initial?.title ?? "");
-  late final _coachName = TextEditingController(text: widget.initial?.coachName ?? "");
+  // One box. Clients only ever see coach_name, so that is what this saves.
+  // Older rows may only have the legacy title filled in.
+  late final _title = TextEditingController(
+    text: () {
+      final coach = (widget.initial?.coachName ?? "").trim();
+      if (coach.isNotEmpty) return coach;
+      return (widget.initial?.title ?? "").trim();
+    }(),
+  );
   late final _secondaryCoachName = TextEditingController(text: widget.initial?.secondaryCoachName ?? "");
   late final _email = TextEditingController(text: widget.initial?.email ?? "");
   late final _phone = TextEditingController(text: widget.initial?.phone ?? "");
@@ -125,7 +132,6 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
   void dispose() {
     _name.dispose();
     _title.dispose();
-    _coachName.dispose();
     _secondaryCoachName.dispose();
     _email.dispose();
     _phone.dispose();
@@ -225,14 +231,17 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
         return setState(() => _error = "Passwords don't match.");
     }
     setState(() => _error = null);
+    final publicName = _title.text.trim();
     widget.onSave(
       Trainer(
         id:
             widget.initial?.id ??
             "trainer-${DateTime.now().microsecondsSinceEpoch}",
         name: name,
-        title: _title.text.trim().isEmpty ? null : _title.text.trim(),
-        coachName: _coachName.text.trim().isEmpty ? null : _coachName.text.trim(),
+        // Leave the legacy title column as it was. The box above writes
+        // coach_name, which is the name clients see.
+        title: widget.initial?.title,
+        coachName: publicName.isEmpty ? null : publicName,
         secondaryCoachName: widget.isOwnerEditing
             ? (_secondaryCoachName.text.trim().isEmpty ? null : _secondaryCoachName.text.trim())
             : widget.initial?.secondaryCoachName,
@@ -389,9 +398,9 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           ),
           const SizedBox(height: 10),
           FieldLabeled(
-            label: "Coach name",
+            label: "Title",
             child: AppField(kind: FieldKind.name,
-              controller: _coachName,
+              controller: _title,
               placeholder: "Coach Chris",
               onChanged: (_) => setState(() => _error = null),
             ),
@@ -399,7 +408,7 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              "This is the only name clients see. If you leave it blank, clients see \"Coach\" plus the first name.",
+              "This is the only name clients see, e.g. Coach Chris.",
               style: TextStyle(fontSize: 11, color: AppColors.mute),
             ),
           ),
@@ -415,15 +424,6 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
               ),
             ),
           ],
-          const SizedBox(height: 10),
-          FieldLabeled(
-            label: "Title",
-            child: AppField(kind: FieldKind.name,
-              controller: _title,
-              placeholder: "Optional",
-              onChanged: (_) => setState(() => _error = null),
-            ),
-          ),
           const SizedBox(height: 10),
           FieldLabeled(
             label: "Email *",
