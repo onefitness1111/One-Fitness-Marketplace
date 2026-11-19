@@ -197,8 +197,15 @@ begin
      and not public.coach_works_with_client(p_client) then
     raise exception 'Not allowed.';
   end if;
+  -- The App Store app calls this with only the client and the date, and that
+  -- finishes every open log for that date. The new app names one day, so a
+  -- different day logged on the same date stays open.
   if p_day is null then
-    raise exception 'Say which day to finish.';
+    update public.live_set_logs set ended_at = now()
+     where client_id = p_client and log_date = p_date and ended_at is null;
+    update public.live_day_runs set ended_at = now()
+     where client_id = p_client and log_date = p_date and ended_at is null;
+    return;
   end if;
   update public.live_set_logs set ended_at = now()
    where client_id = p_client and log_date = p_date and day_id = p_day and ended_at is null;
@@ -273,8 +280,11 @@ grant execute on function public.append_workout_log(uuid, jsonb) to authenticate
 
 alter table public.beeps alter column session_run_id drop not null;
 
-drop policy if exists beeps_insert on public.beeps;
-create policy beeps_insert on public.beeps
+-- The App Store app still beeps against an open session run. That insert
+-- policy stays. This adds the program-day path beside it. An insert is
+-- allowed when either policy accepts it.
+drop policy if exists beeps_insert_live_day on public.beeps;
+create policy beeps_insert_live_day on public.beeps
   for insert
   with check (
     client_id = auth.uid()
