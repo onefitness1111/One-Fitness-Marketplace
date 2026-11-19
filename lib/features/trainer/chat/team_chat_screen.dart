@@ -5,21 +5,21 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/chat_channels.dart";
-import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 
 /// Team Chat: owner <-> coaches, coach <-> coach, and anyone on staff to the
 /// business contact (ONE Fitness Marketplace). Marketplace messages reach the
 /// owner and go by In app or Email only, never SMS.
-/// A teammate as people see them: coaches are "Coach {first name}" everywhere.
+/// Staff talking to each other may see a legal name when no coach name is set.
+/// A client never uses this. Client screens use [coachPublicName] only.
 String staffLabel(Map<String, dynamic>? p) {
   if (p?["role"] == "coach") {
-    return coachPublicName(
-      coachName: p?["coach_name"] as String?,
-      firstName: p?["first_name"] as String?,
-      legalName: p?["name"] as String?,
-    );
+    final chosen = ((p?["coach_name"] as String?) ?? "").trim();
+    if (chosen.isNotEmpty) return chosen;
+    final legal = ((p?["name"] as String?) ?? "").trim();
+    if (legal.isNotEmpty) return legal;
+    return "Coach";
   }
   final name = ((p?["name"] as String?) ?? "").trim();
   if (name.isEmpty) return "Teammate";

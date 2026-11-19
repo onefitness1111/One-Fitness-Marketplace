@@ -1,6 +1,8 @@
 // Names and consent for a text. Coaches and the owner never contribute a
 // legal name. The owner is always "ONE Fitness Marketplace".
 
+import { publicCoachName } from "./coachName.ts";
+
 export const BUSINESS_NAME = "ONE Fitness Marketplace";
 
 const CONSENT_TEXT =
@@ -24,11 +26,7 @@ export async function displayName(admin: Admin, id: string): Promise<string> {
   const { data } = await admin.from("profiles").select("role, name").eq("id", id).maybeSingle();
   if (!data) return "Someone";
   if (data.role === "owner") return BUSINESS_NAME;
-  if (data.role === "coach") {
-    const { data: pub } = await admin.rpc("coach_public_name", { p_id: id });
-    const name = String(pub || "").trim();
-    return name || "Coach";
-  }
+  if (data.role === "coach") return publicCoachName(admin, id);
   const client = String(data.name || "").trim();
   return client || "Client";
 }

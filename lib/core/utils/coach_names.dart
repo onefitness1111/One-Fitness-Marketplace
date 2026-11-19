@@ -1,19 +1,11 @@
-/// The only name a client, or another coach, is allowed to see.
+/// The only name a client is allowed to see.
 ///
 /// Uses the coach name when one was entered ("Coach Chris"). Otherwise
-/// "Coach" plus the first name. Never the legal first and last name, and
-/// never the legal name glued onto the coach name.
-String coachPublicName({
-  String? coachName,
-  String? firstName,
-  String? legalName,
-}) {
+/// "your coach". A legal first or last name is never used, even as a fallback.
+String coachPublicName({String? coachName}) {
   final chosen = (coachName ?? "").trim();
   if (chosen.isNotEmpty) return chosen;
-  final source = (firstName ?? "").trim().isNotEmpty ? firstName!.trim() : (legalName ?? "").trim();
-  final first = source.split(RegExp(r"\s+")).firstWhere((p) => p.isNotEmpty, orElse: () => "");
-  if (first.isEmpty) return "Coach";
-  return "Coach $first";
+  return "your coach";
 }
 
 /// "Coach Chris: message". Leaves a body that already has the prefix alone

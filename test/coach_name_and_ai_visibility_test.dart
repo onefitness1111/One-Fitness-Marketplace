@@ -5,14 +5,10 @@ import "package:onefitness/data/models/trainer.dart";
 
 void main() {
   test("clients see the coach name, never the legal name", () {
-    expect(
-      coachPublicName(coachName: "Coach Chris", firstName: "Chris", legalName: "Chris McCarthy"),
-      "Coach Chris",
-    );
-    expect(
-      coachPublicName(firstName: "Chris", legalName: "Chris McCarthy"),
-      "Coach Chris",
-    );
+    expect(coachPublicName(coachName: "Coach Chris"), "Coach Chris");
+    expect(coachPublicName(), "your coach");
+    final unnamed = Trainer(id: "u", name: "Chris McCarthy", firstName: "Chris", lastName: "McCarthy");
+    expect(unnamed.displayTitle, "your coach");
     final coach = Trainer(
       id: "t",
       name: "Chris McCarthy",

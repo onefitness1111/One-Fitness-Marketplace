@@ -187,11 +187,7 @@ class Trainer {
   final String? locationName;
 
   /// The only name a client or another coach should see.
-  String get displayTitle => coachPublicName(
-        coachName: coachName,
-        firstName: firstName,
-        legalName: name,
-      );
+  String get displayTitle => coachPublicName(coachName: coachName);
 
   /// Legal name plus the public coach name, for the owner only.
   String get ownerNameLine {

@@ -214,7 +214,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "${trainer?.displayTitle ?? "Coach"} · ${disciplineLabel(b.discipline)}",
+                      "${trainer?.displayTitle ?? "your coach"} · ${disciplineLabel(b.discipline)}",
                       style: TextStyle(fontSize: 13, color: AppColors.mute),
                     ),
                     if (b.locationName != null) ...[

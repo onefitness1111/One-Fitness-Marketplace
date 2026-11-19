@@ -21,6 +21,7 @@ import {
   requireStaff,
 } from "../_shared/messagingGuard.ts";
 import { broadcastChannel, smsQuietHours } from "../_shared/broadcastRules.mjs";
+import { publicCoachName } from "../_shared/coachName.ts";
 
 const BATCH = 20;
 
@@ -165,9 +166,7 @@ async function remainingBudget(admin: any, senderId: string): Promise<number> {
 // deno-lint-ignore no-explicit-any
 async function senderLabel(admin: any, userId: string, role: string): Promise<string> {
   if (role === "owner") return "ONE Fitness Marketplace";
-  const { data } = await admin.rpc("coach_public_name", { p_id: userId });
-  const name = String(data ?? "").trim();
-  return name || "Coach";
+  return publicCoachName(admin, userId);
 }
 
 // deno-lint-ignore no-explicit-any

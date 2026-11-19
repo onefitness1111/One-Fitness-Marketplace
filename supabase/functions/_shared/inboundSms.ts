@@ -10,6 +10,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ThreadBook } from "./chatRouting.mjs";
 import { BUSINESS_NAME, markOptIn, markOptOut, toE164 } from "./chatPeople.ts";
+import { publicCoachName } from "./coachName.ts";
 import { sendSms } from "./sendSms.ts";
 import { describeWebhookUrl, twilioSignatureMatches, webhookCandidates } from "./twilioWebhookUrl.ts";
 
@@ -140,8 +141,7 @@ export async function handleInbound(req: Request): Promise<Response> {
       if (role === "owner") {
         displayName = BUSINESS_NAME;
       } else if (role === "coach") {
-        const { data: pub } = await admin.rpc("coach_public_name", { p_id: id });
-        displayName = String(pub || "").trim() || "Coach";
+        displayName = await publicCoachName(admin, id);
         coachName = displayName;
       }
       people.set(id, {

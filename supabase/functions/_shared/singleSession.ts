@@ -7,7 +7,7 @@
 // atomic RPC that locks the credit row, and the refund on a full session uses a
 // fixed idempotency key. No double charge, no double booking.
 import type Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
-import { coachDisplayName } from "./coachName.ts";
+import { publicCoachName } from "./coachName.ts";
 import { sendEmailOrThrow } from "./sendEmail.ts";
 import { businessName, loadTemplate, renderEmail } from "./emailTemplates.ts";
 import { notifyProfile } from "./requestNotify.ts";
@@ -76,7 +76,7 @@ async function recordPurchase(admin: Admin, opts: {
   description: string;
 }) {
   const { data: profile } = await admin.from("profiles").select("name").eq("id", opts.clientId).maybeSingle();
-  const { data: trainer } = await admin.from("profiles").select("name").eq("id", opts.trainerId).maybeSingle();
+  const trainerName = await publicCoachName(admin, opts.trainerId);
   const now = new Date();
   await admin.from("charges").insert({
     client_id: opts.clientId,
@@ -89,7 +89,7 @@ async function recordPurchase(admin: Admin, opts: {
     description: opts.description,
     plan_name: `Single Session — ${sessionTypeLabel(opts.sessionType)}`,
     trainer_id: opts.trainerId,
-    trainer_name: trainer?.name ?? null,
+    trainer_name: trainerName,
     slot: opts.slot,
     stripe_payment_intent_id: opts.paymentIntentId,
   });
@@ -108,7 +108,7 @@ async function sendReceipt(admin: Admin, creditId: string, slot: SlotRequest) {
     if (!claimed || claimed.length === 0) return;
     const { data: client } = await admin.from("profiles").select("name, email").eq("id", credit.client_id).maybeSingle();
     if (!client?.email) return;
-    const { data: coach } = await admin.from("profiles").select("name").eq("id", slot.trainerId).maybeSingle();
+    const coachName = await publicCoachName(admin, slot.trainerId);
     const business = await businessName(admin);
     const { subject, html } = renderEmail({
       template,
@@ -119,7 +119,7 @@ async function sendReceipt(admin: Admin, creditId: string, slot: SlotRequest) {
         session_type: sessionTypeLabel(slot.sessionType),
         session_date: dateLabel(slot.date),
         session_time: timeLabel(slot.slot),
-        coach_name: coachDisplayName(coach?.name as string),
+        coach_name: coachName,
         session_location: slot.locationName || "See the app for the location",
         amount_paid: money(Number(credit.price_cents)),
         purchase_date: dateLabel(String(credit.purchased_at).slice(0, 10)),

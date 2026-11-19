@@ -16,7 +16,6 @@ import {
   businessTimeZone,
   clientLabelForStaff,
   calendarSyncAllowed,
-  coachLabelForClient,
   esc,
   eventRevision,
   fold,
@@ -24,6 +23,7 @@ import {
   sessionMinutes,
   wallTimeToUtc,
 } from "../_shared/calendarFeed.mjs";
+import { publicCoachName } from "../_shared/coachName.ts";
 
 const PAST_DAYS = 30;
 
@@ -71,14 +71,7 @@ serve(async (req) => {
     }
     if (otherIds.length && !isStaff) {
       await Promise.all(otherIds.map(async (id) => {
-        const { data, error } = await admin.rpc("coach_public_name", { p_id: id });
-        if (!error && data) {
-          names.set(id, coachLabelForClient(data));
-          return;
-        }
-        const { data: trainer } = await admin.from("trainers")
-          .select("coach_name").eq("profile_id", id).maybeSingle();
-        names.set(id, coachLabelForClient(trainer?.coach_name));
+        names.set(id, await publicCoachName(admin, id));
       }));
     }
 

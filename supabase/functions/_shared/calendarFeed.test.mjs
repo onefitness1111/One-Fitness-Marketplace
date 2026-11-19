@@ -27,7 +27,7 @@ test("a stored session length is kept, and a missing one is an hour", () => {
 
 test("a client event uses the public coach name, never a legal name", () => {
   assert.equal(coachLabelForClient("Coach Testy"), "Coach Testy");
-  assert.equal(coachLabelForClient(""), "Your coach");
+  assert.equal(coachLabelForClient(""), "your coach");
   assert.equal(coachLabelForClient("Coach Testy").includes("Legal"), false);
 });
 

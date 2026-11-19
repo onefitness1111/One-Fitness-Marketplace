@@ -27,10 +27,11 @@ void main() {
 
   Trainer coach({
     String id = "t1",
-    String name = "Jess",
+    String name = "Jess Legal",
+    String? coachName = "Coach Jess",
     List<TrainerLocation> locations = const [],
   }) =>
-      Trainer(id: id, name: name, locations: locations);
+      Trainer(id: id, name: name, coachName: coachName, locations: locations);
 
   group("gathering every place a session can happen", () {
     test("the gym's own location is included", () {
@@ -48,6 +49,7 @@ void main() {
       final theirs = places.last;
       expect(theirs.setBy, "coach");
       expect(theirs.coachName, "Coach Jess");
+      expect(theirs.coachName, isNot(contains("Legal")));
       expect(theirs.isCoachSet, isTrue);
     });
 

@@ -50,7 +50,7 @@ class BookingCancelScreen extends ConsumerWidget {
               children: [
                 Text("${dayLabel(booking.date)} · ${fmtSlot(booking.slot)}", style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 const SizedBox(height: 2),
-                Text(trainer?.displayTitle ?? "Trainer", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                Text(trainer?.displayTitle ?? "your coach", style: TextStyle(fontSize: 12, color: AppColors.mute)),
               ],
             ),
           ),

@@ -1,5 +1,6 @@
 // Pure pieces of the session calendar feed. The edge function adds the
 // database reads. These stay free of Supabase so the rules can be tested.
+import { coachDisplayName } from "./coachName.mjs";
 
 export const DEFAULT_TIME_ZONE = "America/Los_Angeles";
 export const CACHE_CONTROL = "private, max-age=900";
@@ -21,8 +22,7 @@ export function sessionMinutes(value) {
 
 /// A client sees the public coach name. A legal name is never accepted here.
 export function coachLabelForClient(coachPublicName) {
-  const label = String(coachPublicName ?? "").trim();
-  return label || "Your coach";
+  return coachDisplayName(coachPublicName);
 }
 
 /// Staff see the client's name. The owner feed uses this same path.
