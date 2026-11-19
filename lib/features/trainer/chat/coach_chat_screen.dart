@@ -24,6 +24,21 @@ import "../../../data/providers/trainer_providers.dart";
 import "broadcast_screen.dart";
 import "team_chat_screen.dart";
 
+/// Set from a client's quick action so Chat opens that thread.
+class CoachChatOpenRequest extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void open(String clientId) => state = clientId;
+
+  void clear() {
+    if (state != null) state = null;
+  }
+}
+
+final coachChatOpenRequestProvider =
+    NotifierProvider<CoachChatOpenRequest, String?>(CoachChatOpenRequest.new);
+
 /// The three things the Chat tab can be showing.
 enum _ChatView { list, thread, picker, broadcast }
 
@@ -466,6 +481,16 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<String?>(coachChatOpenRequestProvider, (previous, next) {
+      if (next == null) return;
+      setState(() {
+        _recipientId = next;
+        _view = _ChatView.thread;
+        _prefsLoaded = true;
+      });
+      _markThreadRead(next);
+      ref.read(coachChatOpenRequestProvider.notifier).clear();
+    });
     return ChatEntryGate(child: _buildChat(context));
   }
 

@@ -12,8 +12,11 @@ import "../../../data/providers/trainer_providers.dart";
 /// list plus one comment box per entry (Notifications spec — "Coach
 /// comments on a measurement").
 class CoachMeasurementsTab extends ConsumerStatefulWidget {
-  const CoachMeasurementsTab({super.key, required this.clientId});
+  const CoachMeasurementsTab({super.key, required this.clientId, this.embedded = false});
   final String clientId;
+
+  /// Inside the Progress page, so the parent scrolls instead of this tab.
+  final bool embedded;
 
   @override
   ConsumerState<CoachMeasurementsTab> createState() => _CoachMeasurementsTabState();
@@ -62,13 +65,25 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
     final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
     final entries = (record?.measurements ?? const []).toList()..sort((a, b) => b.date.compareTo(a.date));
 
-    if (entries.isEmpty) {
-      return const Padding(padding: EdgeInsets.all(18), child: HintBox(text: "No measurements logged yet."));
+    Widget frame(Widget column) {
+      if (widget.embedded) {
+        return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: column);
+      }
+      return SingleChildScrollView(padding: const EdgeInsets.all(18), child: column);
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
+    if (entries.isEmpty) {
+      return frame(const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionLabel("Measurements"),
+          SizedBox(height: 8),
+          HintBox(text: "No measurements logged yet."),
+        ],
+      ));
+    }
+
+    return frame(Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionLabel("Measurements"),
@@ -107,7 +122,6 @@ class _CoachMeasurementsTabState extends ConsumerState<CoachMeasurementsTab> {
             );
           }),
         ],
-      ),
-    );
+      ));
   }
 }
