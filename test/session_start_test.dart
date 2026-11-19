@@ -1,30 +1,32 @@
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
+import "package:onefitness/core/utils/session_start.dart";
 import "package:onefitness/data/models/booking.dart";
 import "package:onefitness/data/models/live_session.dart";
 import "package:onefitness/core/widgets/session_timer.dart";
 
-/// A coach could start a 9pm session at 9:52 in the morning, which meant
-/// logging sets against a session that hadn't happened. These pin when a
-/// session may be started, and what the running clock shows.
+/// When a coach may start a session, how many may be live at once, and what
+/// the running clock shows. The dashboard calls these same functions.
 void main() {
   const today = "2026-10-10";
   const ninePm = 21 * 60;
 
-  /// The rule as the coach's dashboard applies it. Kept here in the same
-  /// shape so the conditions can be tested without pumping the whole
-  /// dashboard, which needs a signed-in coach and a loaded roster.
-  bool tooEarly({
+  bool mayStart({
     required String viewDate,
-    required String today,
     required int nowMin,
-    required int slot,
     required bool someoneCheckedIn,
-  }) {
-    if (viewDate.compareTo(today) > 0) return true;
-    return viewDate == today && nowMin < slot && !someoneCheckedIn;
-  }
+    bool alreadyLive = false,
+    int slot = ninePm,
+  }) =>
+      sessionMayStart(
+        viewDate: viewDate,
+        today: today,
+        nowMin: nowMin,
+        slot: slot,
+        someoneCheckedIn: someoneCheckedIn,
+        alreadyLive: alreadyLive,
+      );
 
   Booking booking({String? attendanceStatus, String? clientStartedAt}) => Booking(
         id: "b1",
@@ -42,44 +44,96 @@ void main() {
     test("not in the morning for a session that evening", () {
       // The reported bug, exactly: 9:52am, session at 9:00pm.
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: 9 * 60 + 52, slot: ninePm, someoneCheckedIn: false),
-        isTrue,
+        mayStart(viewDate: today, nowMin: 9 * 60 + 52, someoneCheckedIn: false),
+        isFalse,
       );
     });
 
     test("not a minute before it is due", () {
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: ninePm - 1, slot: ninePm, someoneCheckedIn: false),
-        isTrue,
+        mayStart(viewDate: today, nowMin: ninePm - 1, someoneCheckedIn: false),
+        isFalse,
       );
     });
 
     test("yes, on the minute", () {
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: ninePm, slot: ninePm, someoneCheckedIn: false),
-        isFalse,
+        mayStart(viewDate: today, nowMin: ninePm, someoneCheckedIn: false),
+        isTrue,
       );
     });
 
     test("yes, once it is under way", () {
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: ninePm + 30, slot: ninePm, someoneCheckedIn: false),
-        isFalse,
+        mayStart(viewDate: today, nowMin: ninePm + 30, someoneCheckedIn: false),
+        isTrue,
       );
     });
 
     test("never for a session on a future day", () {
       expect(
-        tooEarly(viewDate: "2026-10-11", today: today, nowMin: 23 * 60, slot: ninePm, someoneCheckedIn: false),
+        mayStart(viewDate: "2026-10-11", nowMin: 23 * 60, someoneCheckedIn: false),
+        isFalse,
+      );
+    });
+
+    test("a future day opens once someone in it is checked in", () {
+      expect(
+        mayStart(viewDate: "2026-10-11", nowMin: 23 * 60, someoneCheckedIn: true),
         isTrue,
       );
     });
 
-    test("a future day stays blocked even if someone checked in", () {
-      // Guards against the early-arrival exception leaking across days.
+    test("a past day stays closed", () {
       expect(
-        tooEarly(viewDate: "2026-10-11", today: today, nowMin: 23 * 60, slot: ninePm, someoneCheckedIn: true),
+        mayStart(viewDate: "2026-10-09", nowMin: ninePm + 30, someoneCheckedIn: true),
+        isFalse,
+      );
+    });
+
+    test("a past day can still be rejoined while it is live", () {
+      expect(
+        mayStart(viewDate: "2026-10-09", nowMin: ninePm, someoneCheckedIn: false, alreadyLive: true),
         isTrue,
+      );
+    });
+
+    test("the wait line names the scheduled time until the gate opens", () {
+      expect(
+        sessionStartHint(
+          viewDate: today,
+          today: today,
+          nowMin: 8 * 60 + 22,
+          slot: 9 * 60,
+          someoneCheckedIn: false,
+        ),
+        "Can be started at 9:00 AM, or as soon as someone checks in",
+      );
+    });
+
+    test("the wait line goes away once someone is checked in", () {
+      expect(
+        sessionStartHint(
+          viewDate: today,
+          today: today,
+          nowMin: 8 * 60 + 22,
+          slot: 9 * 60,
+          someoneCheckedIn: true,
+        ),
+        isNull,
+      );
+    });
+
+    test("the wait line goes away once the scheduled time arrives", () {
+      expect(
+        sessionStartHint(
+          viewDate: today,
+          today: today,
+          nowMin: 9 * 60,
+          slot: 9 * 60,
+          someoneCheckedIn: false,
+        ),
+        isNull,
       );
     });
   });
@@ -90,15 +144,15 @@ void main() {
     // live session — and so no way to beep their coach.
     test("a client checking in early unlocks the coach's start", () {
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: 18 * 60, slot: ninePm, someoneCheckedIn: true),
-        isFalse,
+        mayStart(viewDate: today, nowMin: 18 * 60, someoneCheckedIn: true),
+        isTrue,
       );
     });
 
     test("without an early arrival it stays blocked at the same moment", () {
       expect(
-        tooEarly(viewDate: today, today: today, nowMin: 18 * 60, slot: ninePm, someoneCheckedIn: false),
-        isTrue,
+        mayStart(viewDate: today, nowMin: 18 * 60, someoneCheckedIn: false),
+        isFalse,
       );
     });
   });
@@ -220,51 +274,40 @@ void main() {
     });
   });
 
-  group("what counts as a client arriving early", () {
-    // The reported bug: a coach ticking someone present at 6:16pm unlocked
-    // starting a 9pm session. Attendance and arrival are different facts.
-    test("a coach marking someone checked-in does NOT count", () {
+  group("what counts as checked in", () {
+    test("a coach marking someone checked-in unlocks the slot", () {
       final b = booking(attendanceStatus: "checked-in");
       expect(b.clientStartedEarly, isFalse);
-    });
-
-    test("the client starting their own session does count", () {
-      final b = booking(
-        attendanceStatus: "checked-in",
-        clientStartedAt: "2026-10-10T18:00:00Z",
-      );
-      expect(b.clientStartedEarly, isTrue);
-    });
-
-    test("an untouched booking counts as neither", () {
-      expect(booking().clientStartedEarly, isFalse);
-    });
-
-    test("the gate stays shut for a coach-marked check-in", () {
-      // 6:16pm, session at 9pm, client ticked present by the coach.
+      expect(bookingUnlocksSession(b), isTrue);
       expect(
-        tooEarly(
-          viewDate: today,
-          today: today,
-          nowMin: 18 * 60 + 16,
-          slot: ninePm,
-          someoneCheckedIn: booking(attendanceStatus: "checked-in").clientStartedEarly,
-        ),
+        mayStart(viewDate: today, nowMin: 8 * 60 + 22, someoneCheckedIn: bookingUnlocksSession(b)),
         isTrue,
       );
     });
 
-    test("and opens when the client started it themselves", () {
-      expect(
-        tooEarly(
-          viewDate: today,
-          today: today,
-          nowMin: 18 * 60 + 16,
-          slot: ninePm,
-          someoneCheckedIn: booking(clientStartedAt: "2026-10-10T18:00:00Z").clientStartedEarly,
-        ),
-        isFalse,
-      );
+    test("the client starting their own session unlocks it too", () {
+      final b = booking(clientStartedAt: "2026-10-10T18:00:00Z");
+      expect(bookingUnlocksSession(b), isTrue);
+    });
+
+    test("an untouched booking does not", () {
+      expect(bookingUnlocksSession(booking()), isFalse);
+    });
+  });
+
+  group("three live sessions at once", () {
+    test("a second and a third start are allowed", () {
+      expect(startingAnotherLiveSessionIsBlocked(liveCount: 0, alreadyLive: false), isFalse);
+      expect(startingAnotherLiveSessionIsBlocked(liveCount: 2, alreadyLive: false), isFalse);
+    });
+
+    test("a fourth start is blocked", () {
+      expect(startingAnotherLiveSessionIsBlocked(liveCount: 3, alreadyLive: false), isTrue);
+      expect(kLiveSessionCapMessage, contains("3 sessions"));
+    });
+
+    test("rejoining one of the three is not a new start", () {
+      expect(startingAnotherLiveSessionIsBlocked(liveCount: 3, alreadyLive: true), isFalse);
     });
   });
 

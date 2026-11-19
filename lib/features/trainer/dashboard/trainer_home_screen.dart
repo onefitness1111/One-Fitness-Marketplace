@@ -16,6 +16,7 @@ import "../../../core/utils/late_fee_notice.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/session_start.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/workout_logging.dart";
@@ -74,14 +75,26 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   /// coming back doesn't split the beeps in two.
   Future<void> _beginRun(int slot, List<Booking> group) async {
     if (_startingRun) return;
+    final trainerId = ref.read(trainerAuthProvider);
+    final first = group.isEmpty ? null : group.first;
+    final coachId = first?.trainerId ?? trainerId ?? "";
+    final live = ref
+        .read(liveSessionsProvider)
+        .where((r) => r.isLive && r.trainerId == coachId);
+    final rejoining = live.any((r) => r.date == _viewDate && r.slotMin == slot);
+    if (startingAnotherLiveSessionIsBlocked(liveCount: live.length, alreadyLive: rejoining)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(kLiveSessionCapMessage)),
+      );
+      return;
+    }
     setState(() {
       _startingRun = true;
+      if (_sessionSlot != slot) _openedClientIds.clear();
       _sessionSlot = slot;
       _sessionClientId = null;
     });
     try {
-      final trainerId = ref.read(trainerAuthProvider);
-      final first = group.isEmpty ? null : group.first;
       _runClientIds = [for (final b in group) b.clientId];
       final run = await SupabaseService.startSessionRun(
         // The booking's coach, not the signed-in id: an owner's id is the
@@ -322,6 +335,26 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         if (mounted) closeSession();
       }
 
+      final coachId = group.isNotEmpty
+          ? group.first.trainerId
+          : (_run?.trainerId ?? trainerAuth ?? "");
+      final mineLive = liveRuns.where((r) => r.isLive && r.trainerId == coachId).toList()
+        ..sort((a, b) => a.date == b.date ? a.slotMin.compareTo(b.slotMin) : a.date.compareTo(b.date));
+      void openLive(LiveSession run) {
+        if (run.date == _viewDate && run.slotMin == slot) return;
+        _viewDate = run.date;
+        final next = bookings
+            .where((b) => b.date == run.date && b.slot == run.slotMin && b.trainerId == run.trainerId)
+            .toList();
+        unawaited(_beginRun(run.slotMin, next));
+      }
+
+      final switcher = _LiveSessionSwitcher(
+        runs: mineLive,
+        activeId: _run?.id,
+        onSelect: openLive,
+      );
+
       Widget sessionContent;
       if (loggable.isEmpty) {
         sessionContent = Padding(
@@ -329,6 +362,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              switcher,
               BackBar(onBack: closeSession, title: "Start Session"),
               const SizedBox(height: 10),
               const HintBox(text: "No loggable clients in this session."),
@@ -342,6 +376,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              switcher,
               BackBar(onBack: closeSession, title: "Session"),
               const SizedBox(height: 4),
               Row(
@@ -406,6 +441,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         sessionContent = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+              child: switcher,
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
               child: Row(
@@ -517,7 +556,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                         children: [
                           for (final id in ids)
                             SessionLoggerView(
-                              key: ValueKey(id),
+                              key: ValueKey("${_run?.id ?? slot}|$id"),
                               client: clientRecords[id]!,
                               loggedBy: "coach",
                               loggedByName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
@@ -815,19 +854,34 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               // against a session that already happened (or never did)
               // isn't a real "start", so the button is disabled instead of
               // hidden (still visible for context, just not actionable).
-              final isPastDate = _viewDate.compareTo(isoToday()) < 0;
+              final today = isoToday();
               final group = byTime[slot]!;
-
-              // A session can only be started once at least one client in it
-              // has been checked in — on any day, so a coach who checks a
-              // client in for Saturday can start Saturday's session now.
-              final anyCheckedIn = group.any((b) => b.attendanceStatus == "checked-in");
+              final now = DateTime.now();
+              final nowMin = now.hour * 60 + now.minute;
+              final someoneCheckedIn = group.any(bookingUnlocksSession);
+              final coachId = group.isEmpty ? (trainerAuth ?? "") : group.first.trainerId;
 
               // A session this coach already has running — including one
               // left open on another device. Starting it again reuses the
               // same run rather than opening a second, so this is a rejoin.
               final alreadyLive = liveRuns.any(
-                (r) => r.date == _viewDate && r.slotMin == slot && r.trainerId == trainerAuth,
+                (r) => r.isLive && r.date == _viewDate && r.slotMin == slot && r.trainerId == coachId,
+              );
+              final mayStart = sessionMayStart(
+                viewDate: _viewDate,
+                today: today,
+                nowMin: nowMin,
+                slot: slot,
+                someoneCheckedIn: someoneCheckedIn,
+                alreadyLive: alreadyLive,
+              );
+              final hint = sessionStartHint(
+                viewDate: _viewDate,
+                today: today,
+                nowMin: nowMin,
+                slot: slot,
+                someoneCheckedIn: someoneCheckedIn,
+                alreadyLive: alreadyLive,
               );
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16),
@@ -848,9 +902,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                           ),
                         ),
                         ElevatedButton(
-                          onPressed: (isPastDate || !(anyCheckedIn || alreadyLive))
-                              ? null
-                              : () => _beginRun(slot, group),
+                          onPressed: mayStart ? () => _beginRun(slot, group) : null,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.gold,
                             disabledBackgroundColor: AppColors.gold.withValues(alpha: 0.35),
@@ -877,11 +929,11 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                     ),
                     // A disabled button with no reason beside it reads as a
                     // broken button, so it says what it's waiting for.
-                    if (!anyCheckedIn && !alreadyLive && !isPastDate)
+                    if (hint != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          "Check in at least one client to start this session",
+                          hint,
                           style: TextStyle(fontSize: 12, color: AppColors.mute),
                         ),
                       ),
@@ -1194,8 +1246,76 @@ class _StatBox extends StatelessWidget {
   }
 }
 
+class _LiveSessionSwitcher extends StatelessWidget {
+  const _LiveSessionSwitcher({
+    required this.runs,
+    required this.activeId,
+    required this.onSelect,
+  });
+
+  final List<LiveSession> runs;
+  final String? activeId;
+  final ValueChanged<LiveSession> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (runs.length < 2) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "LIVE SESSIONS",
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: AppColors.mute,
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: runs.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final run = runs[index];
+                final on = run.id == activeId;
+                return TapHighlight(
+                  onTap: on ? null : () => onSelect(run),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: on ? AppColors.gold : AppColors.card,
+                      border: Border.all(color: on ? AppColors.gold : AppColors.line),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      fmtSlot(run.slotMin),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: on ? AppColors.onGold : AppColors.mute,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 const _attendanceLabels = {
-  "checked-in": "Check In",
+  "checked-in": "Checked In",
   "early-cancel": "Early Cancel",
   "late-cancel": "Late Cancel",
   "no-show": "No Show",

@@ -32,12 +32,10 @@ class Booking {
   final String? attendanceStatus; // checked-in | no-show | ...
 
   /// Set only when the CLIENT started this session themselves, early, from
-  /// their own dashboard.
+  /// their own dashboard. A coach marking attendance does not set this.
   ///
-  /// Deliberately separate from [attendanceStatus]: a coach marking someone
-  /// present writes "checked-in" too, and keying anything on that made an
-  /// ordinary attendance tick at 6pm unlock starting a 9pm session. Nothing
-  /// a coach does sets this.
+  /// The coach's own Start Session button is a different gate: a checked-in
+  /// attendance on this booking does unlock that slot (see sessionMayStart).
   final String? clientStartedAt;
 
   bool get clientStartedEarly => clientStartedAt != null;
