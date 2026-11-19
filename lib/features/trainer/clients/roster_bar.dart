@@ -53,7 +53,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
         : scoped.where((c) => c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q)).toList();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(18, 6, 18, 6),
       decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,7 +63,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
             placeholder: "Search clients by name or email…",
             onChanged: (_) => setState(() {}),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           SizedBox(
             height: 60,
             child: ListView(

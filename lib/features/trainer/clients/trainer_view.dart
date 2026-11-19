@@ -13,7 +13,6 @@ import "../chat/coach_chat_screen.dart";
 import "../dashboard/live_workouts_card.dart";
 import "../schedule/add_manual_booking_sheet.dart";
 import "../shell/trainer_shell_state.dart";
-import "client_activity.dart";
 import "documents_tab.dart";
 import "habits_tab.dart";
 import "intake_tab.dart";
@@ -200,18 +199,6 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
   @override
   Widget build(BuildContext context) {
     final activeInMore = _tab == "more" || _moreTabs.any((t) => t.key == _tab);
-    final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
-    final bookings = ref
-        .watch(allBookingsProvider)
-        .where((b) => b.clientId == widget.clientId)
-        .toList();
-    final now = DateTime.now();
-    final activity = recentClientActivity(
-      logs: record?.workoutLogs ?? const [],
-      bookings: bookings,
-      notes: record?.trainerNotes ?? const [],
-      now: now,
-    );
 
     return LocalBackScope(
       isOpen: _history.isNotEmpty,
@@ -220,7 +207,7 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
             child: _QuickActions(
               onMessage: _message,
               onBook: _book,
@@ -228,12 +215,6 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
               onNote: _addNote,
             ),
           ),
-          if (activity.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: _ActivityStrip(items: activity, now: now),
-            ),
-          const SizedBox(height: 6),
           Container(
             key: const Key("client-tabs"),
             decoration: BoxDecoration(
@@ -337,7 +318,7 @@ class _TabButton extends StatelessWidget {
     return TapHighlight(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
@@ -349,8 +330,8 @@ class _TabButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(def.icon, size: 15, color: color),
-            const SizedBox(height: 4),
+            Icon(def.icon, size: 14, color: color),
+            const SizedBox(height: 2),
             Text(
               def.label,
               maxLines: 1,
@@ -385,7 +366,7 @@ class _QuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _RoundAction(
           icon: LucideIcons.messageSquare,
@@ -399,10 +380,10 @@ class _QuickActions extends StatelessWidget {
         ),
         _RoundAction(
           icon: LucideIcons.play,
-          label: "Log workout",
+          label: "Log",
           onTap: onLog,
         ),
-        _RoundAction(icon: LucideIcons.plus, label: "Add note", onTap: onNote),
+        _RoundAction(icon: LucideIcons.plus, label: "Note", onTap: onNote),
       ],
     );
   }
@@ -425,27 +406,31 @@ class _RoundAction extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: SizedBox(
-        width: 76,
+        width: 64,
         child: Column(
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.card,
-                border: Border.all(color: AppColors.line),
+            Tooltip(
+              message: label,
+              child: Container(
+                key: Key("quick-action-$label"),
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.card,
+                  border: Border.all(color: AppColors.line),
+                ),
+                child: Icon(icon, size: 14, color: AppColors.txt),
               ),
-              child: Icon(icon, size: 18, color: AppColors.txt),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 2),
             Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.fade,
               softWrap: false,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 9,
                 fontWeight: FontWeight.w600,
                 color: AppColors.mute,
               ),
@@ -455,66 +440,6 @@ class _RoundAction extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ActivityStrip extends StatelessWidget {
-  const _ActivityStrip({required this.items, required this.now});
-
-  final List<ClientActivityItem> items;
-  final DateTime now;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "RECENT",
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.6,
-            color: AppColors.mute,
-          ),
-        ),
-        const SizedBox(height: 6),
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0) Divider(height: 1, thickness: 1, color: AppColors.line),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Icon(_icon(items[i].kind), size: 15, color: AppColors.txt),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    items[i].text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  relativeActivityWhen(items[i].at, now),
-                  style: TextStyle(fontSize: 12, color: AppColors.mute),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  IconData _icon(ClientActivityKind kind) => switch (kind) {
-    ClientActivityKind.workout => LucideIcons.dumbbell,
-    ClientActivityKind.visit => LucideIcons.calendarCheck,
-    ClientActivityKind.note => LucideIcons.flag,
-  };
 }
 
 class _MorePanel extends StatelessWidget {
