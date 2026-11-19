@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CACHE_CONTROL,
   businessTimeZone,
+  calendarSyncAllowed,
   coachLabelForClient,
   eventRevision,
   fold,
@@ -56,6 +57,13 @@ test("a reschedule gets a later sequence from updated_at", () => {
   assert.equal(first.lastModified, "20261119T180000Z");
   assert.ok(moved.sequence > first.sequence);
   assert.equal(eventRevision(null).sequence, 0);
+});
+
+test("the owner has no calendar feed; clients and coaches do", () => {
+  assert.equal(calendarSyncAllowed("owner"), false);
+  assert.equal(calendarSyncAllowed("client"), true);
+  assert.equal(calendarSyncAllowed("coach"), true);
+  assert.equal(calendarSyncAllowed(null), false);
 });
 
 test("the feed is not cacheable by a shared cache", () => {

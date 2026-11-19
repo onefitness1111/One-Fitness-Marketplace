@@ -231,6 +231,12 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // The owner has no calendar sync. A leftover mode must not keep the
+      // page title on screen.
+      if (isOwner && mode == "calendarsync") {
+        ref.read(trainerModeProvider.notifier).reset();
+        return;
+      }
       _syncHomeTour(mode, isOwner, trainerAuth);
     });
 
@@ -334,6 +340,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         padding: EdgeInsets.all(18),
                         child: CalendarSyncSection(),
                       ),
+                      "calendarsync" when isOwner => const SizedBox.shrink(),
                       "coachbadges" when !isOwner => const CoachMeritBadgesScreen(),
                       "mypay" => const MyPayScreen(),
                       "reports" when isOwner => const ReportsHubScreen(),

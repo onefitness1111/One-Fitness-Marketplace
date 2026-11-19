@@ -136,6 +136,33 @@ void main() {
     "Support": "support",
   });
 
+  testWidgets("admin menu does not offer Calendar Sync", (tester) async {
+    await boot(tester, as: "owner");
+    await tester.tap(find.byIcon(LucideIcons.menu));
+    await tester.pumpAndSettle();
+    final drawer = find.byType(Drawer);
+    final scrollable = find.descendant(of: drawer, matching: find.byType(Scrollable)).first;
+    await tester.drag(scrollable, const Offset(0, -2400));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: drawer, matching: find.text("Calendar Sync")),
+      findsNothing,
+    );
+  });
+
+  testWidgets("coach menu offers Calendar Sync", (tester) async {
+    await boot(tester);
+    await tester.tap(find.byIcon(LucideIcons.menu));
+    await tester.pumpAndSettle();
+    final item = find.descendant(of: find.byType(Drawer), matching: find.text("Calendar Sync"));
+    await tester.scrollUntilVisible(
+      item,
+      80,
+      scrollable: find.descendant(of: find.byType(Drawer), matching: find.byType(Scrollable)).first,
+    );
+    expect(item, findsOneWidget);
+  });
+
   // Admin (owner) hamburger. "Reports" is a group whose label navigates.
   runMenuPages("admin", "owner", const {
     "Chat": "chat",

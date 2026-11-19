@@ -4,6 +4,11 @@
 export const DEFAULT_TIME_ZONE = "America/Los_Angeles";
 export const CACHE_CONTROL = "private, max-age=900";
 
+/// The owner account has no calendar. Clients and coaches do.
+export function calendarSyncAllowed(role) {
+  return role === "client" || role === "coach";
+}
+
 export function businessTimeZone(data) {
   const workouts = data?.workouts;
   return workouts?.businessTimeZone || data?.businessTimeZone || DEFAULT_TIME_ZONE;

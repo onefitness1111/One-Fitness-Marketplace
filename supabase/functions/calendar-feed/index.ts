@@ -4,8 +4,8 @@
 // get-calendar-link makes the old URL 404.
 //
 // A client sees the sessions they booked. A coach sees the sessions they
-// are running. The owner is treated the same way for now: only sessions
-// where they are the coach, not every session in the gym.
+// are running. The owner has no feed: an owner token answers 404, the same
+// as a token that was never issued.
 //
 // Deploy with the login check off:
 //   supabase functions deploy calendar-feed --no-verify-jwt
@@ -15,6 +15,7 @@ import {
   CACHE_CONTROL,
   businessTimeZone,
   clientLabelForStaff,
+  calendarSyncAllowed,
   coachLabelForClient,
   esc,
   eventRevision,
@@ -41,7 +42,9 @@ serve(async (req) => {
 
     const { data: profile } = await admin.from("profiles")
       .select("id, role").eq("calendar_token", token).maybeSingle();
-    if (!profile) return new Response("Not found.", { status: 404 });
+    if (!profile || !calendarSyncAllowed(profile.role)) {
+      return new Response("Not found.", { status: 404 });
+    }
 
     const { data: settingsRow } = await admin.from("platform_settings")
       .select("data").eq("id", "global").maybeSingle();

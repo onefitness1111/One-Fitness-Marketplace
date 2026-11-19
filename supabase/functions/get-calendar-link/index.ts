@@ -37,8 +37,14 @@ serve(async (req) => {
     );
 
     const { data: profile, error: readErr } = await admin.from("profiles")
-      .select("calendar_token").eq("id", user.id).maybeSingle();
+      .select("calendar_token, role").eq("id", user.id).maybeSingle();
     if (readErr) throw readErr;
+    if (profile?.role === "owner") {
+      return new Response(JSON.stringify({ error: "The owner account does not have calendar sync." }), {
+        status: 403,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
 
     let token = profile?.calendar_token as string | null;
     if (!token || regenerate) {
