@@ -24,6 +24,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { committedDayCount, decideSuggestedDays } from "./suggested_days.ts";
 import { buildAttachmentBlocks } from "../_shared/intakeAttachments.ts";
+import { intakeForAi } from "../_shared/currentIntake.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -121,7 +122,7 @@ serve(async (req) => {
 
     const { data: recordRow } = await admin.from("client_records").select("data").eq("profile_id", clientId).maybeSingle();
     const record = recordRow?.data || {};
-    const intake = record.intake || {};
+    const intake = await intakeForAi(admin, clientId, record);
     const hasTraining = !!intake.personalTraining?.completed;
     const hasPhysical = !!intake.physical?.completed;
     // Personalized Training Intake alone gates generation — Physical

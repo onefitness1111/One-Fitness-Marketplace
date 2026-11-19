@@ -12,6 +12,7 @@ import "../../../core/utils/flag_utils.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/program_utils.dart";
+import "../../../core/utils/intake_resubmit.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/charge.dart";
@@ -43,12 +44,16 @@ class ProfileTab extends ConsumerStatefulWidget {
     super.key,
     required this.clientId,
     required this.onGoToIntake,
+    this.onRequestProgram,
   });
 
   final String clientId;
   /// Opens the client's intake. The assessment key is the row that was
   /// tapped, so the form itself opens rather than the list it sits in.
   final void Function(String assessmentKey) onGoToIntake;
+
+  /// Owner only. [kind] is "training" or "nutrition".
+  final void Function(String kind)? onRequestProgram;
 
   @override
   ConsumerState<ProfileTab> createState() => _ProfileTabState();
@@ -88,6 +93,43 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     _freezeEnd.dispose();
     _freezeReason.dispose();
     super.dispose();
+  }
+
+  List<Widget> _programRefreshBanners(WidgetRef ref, Map<String, String> flags) {
+    if (flags.isEmpty) return const [];
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
+    final kinds = flags.keys.toList()..sort();
+    return [
+      for (final kind in kinds)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.line),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  programRefreshLabel(kind, forOwner: isOwner),
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                if (isOwner && widget.onRequestProgram != null) ...[
+                  const SizedBox(height: 10),
+                  BtnGhost(
+                    full: true,
+                    onPressed: () => widget.onRequestProgram!(kind),
+                    child: Text(kind == "nutrition" ? "Draft nutrition program" : "Draft training program"),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+    ];
   }
 
   @override
@@ -263,6 +305,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
             ],
           ),
           const SizedBox(height: 18),
+          ..._programRefreshBanners(ref, record?.programRefresh ?? const {}),
           const SectionLabel("Active Merit Badges"),
           hasActiveBadges
               ? Padding(

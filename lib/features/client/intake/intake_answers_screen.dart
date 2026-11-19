@@ -31,6 +31,7 @@ class IntakeAnswersScreen extends StatefulWidget {
     required this.onEdit,
     this.onFillAgain,
     this.schemaFor,
+    this.initialViewing = 0,
   });
 
   final IntakeSchema schema;
@@ -47,9 +48,11 @@ class IntakeAnswersScreen extends StatefulWidget {
   final VoidCallback onEdit;
 
   /// Answer the whole questionnaire again, keeping the current answers as an
-  /// earlier submission. Null hides the option, which is what the client's
-  /// own view wants: re-filling is a coach's call.
+  /// earlier submission.
   final VoidCallback? onFillAgain;
+
+  /// 0 is the current filing. 1 and up open an archived one, read-only.
+  final int initialViewing;
 
   /// The questions as they stood for a given form version.
   ///
@@ -66,7 +69,7 @@ class IntakeAnswersScreen extends StatefulWidget {
 
 class _IntakeAnswersScreenState extends State<IntakeAnswersScreen> {
   /// 0 is the current submission; 1 and up index [IntakeRecord.history].
-  int _viewing = 0;
+  late int _viewing = widget.initialViewing;
 
   bool get _isCurrent => _viewing == 0;
 
@@ -184,9 +187,10 @@ class _IntakeAnswersScreenState extends State<IntakeAnswersScreen> {
               text: widget.onFillAgain == null
                   ? "Editing this re-files the form under your name and today's "
                       "date, replacing the record of who filled it in and when."
-                  : "Editing corrects what's on record. Add another starts a "
-                      "blank copy of this form for this client — these answers "
-                      "are saved automatically and stay readable.",
+                  : "Editing corrects what's on record. Start new intake files "
+                      "another copy, with these answers already filled in so "
+                      "only what changed has to be updated. The earlier copy "
+                      "stays readable.",
             ),
             const SizedBox(height: 10),
             BtnGhost(
@@ -213,7 +217,7 @@ class _IntakeAnswersScreenState extends State<IntakeAnswersScreen> {
                   children: [
                     Icon(LucideIcons.filePlus, size: 15, color: AppColors.mute),
                     const SizedBox(width: 7),
-                    const Text("Add another"),
+                    const Text("Start new intake"),
                   ],
                 ),
               ),

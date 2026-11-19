@@ -6,6 +6,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../data/providers/program_draft_request.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "coach_measurements_tab.dart";
 import "documents_tab.dart";
@@ -233,7 +234,14 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
   Widget _body() {
     switch (_tab) {
       case "profile":
-        return ProfileTab(clientId: widget.clientId, onGoToIntake: _goToIntakeForm);
+        return ProfileTab(
+          clientId: widget.clientId,
+          onGoToIntake: _goToIntakeForm,
+          onRequestProgram: (kind) {
+            ref.read(programDraftRequestProvider.notifier).ask(widget.clientId, kind);
+            _visit("plans", "programs");
+          },
+        );
       case "intake":
         return IntakeTab(
           // Keyed so that arriving from a different row rebuilds the tab and

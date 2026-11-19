@@ -48,6 +48,7 @@ class ClientRecord {
     this.adoptedInitialsImage,
     this.photoVideoOptOut = false,
     this.guardianName,
+    this.programRefresh = const {},
   });
 
   final String id;
@@ -157,6 +158,10 @@ class ClientRecord {
   /// across documents, same as the adopted signature.
   final String? guardianName;
 
+  /// Set when a new intake is filed. Keys are "training" and "nutrition".
+  /// Cleared when the owner saves the replacement program.
+  final Map<String, String> programRefresh;
+
   bool loggedOn(String isoDate) => loggedDates.contains(isoDate);
 
   ClientRecord copyWith({
@@ -189,6 +194,7 @@ class ClientRecord {
     String? adoptedInitialsImage,
     bool? photoVideoOptOut,
     String? guardianName,
+    Map<String, String>? programRefresh,
   }) =>
       ClientRecord(
         id: id,
@@ -220,5 +226,6 @@ class ClientRecord {
         adoptedInitialsImage: adoptedInitialsImage ?? this.adoptedInitialsImage,
         photoVideoOptOut: photoVideoOptOut ?? this.photoVideoOptOut,
         guardianName: guardianName ?? this.guardianName,
+        programRefresh: programRefresh ?? this.programRefresh,
       );
 }
