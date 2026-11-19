@@ -10,12 +10,19 @@ void main() {
     expect(chatMayOpen(phone: "(818) 555-1212"), isTrue);
   });
 
-  test("the first-open note names the tag and the 6-hour window", () {
-    expect(kChatIntroBody, contains("@Coach"));
+  test("the first-open note depends on who is signed in", () {
+    expect(chatIntroBody("client"), kChatIntroBody);
+    expect(kChatIntroBody, contains("@Coach Chris"));
     expect(kChatIntroBody, contains("6 hours"));
+    expect(chatIntroBody("coach"), contains("@Alex Johnson"));
+    expect(chatIntroBody("coach"), contains("6 hours"));
+    expect(chatIntroBody("owner"), contains("@Coach Chris"));
+    expect(chatIntroBody("owner"), contains("@Alex Johnson"));
     expect(kChatIntroOk, "OK, I understand.");
-    expect(kChatIntroBody.toLowerCase().contains("password"), isFalse);
-    expect(kChatIntroBody.contains("AI"), isFalse);
+    for (final body in [kChatIntroBody, chatIntroBody("coach"), chatIntroBody("owner")]) {
+      expect(body.toLowerCase().contains("password"), isFalse);
+      expect(body.contains("AI"), isFalse);
+    }
   });
 
   test("email is not saved on the chat message", () {

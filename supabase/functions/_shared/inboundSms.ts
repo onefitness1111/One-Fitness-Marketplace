@@ -1,8 +1,9 @@
 // Inbound SMS to the business number.
 //
 // STOP, UNSUBSCRIBE and HELP are handled here. A normal text is routed by
-// chatRouting.mjs: a @CoachName tag, then the conversation that is still
-// inside 6 hours, then Business Chat. There is no menu of reply codes.
+// chatRouting.mjs: a client tags @CoachName; a coach tags @ClientName;
+// no tag stays with the conversation still inside 6 hours (for a coach,
+// the client they last texted); otherwise Business Chat.
 //
 // Deploy WITHOUT jwt verification. Twilio sends no JWT. The request is
 // checked with Twilio's signature instead.

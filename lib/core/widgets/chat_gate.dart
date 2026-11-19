@@ -3,6 +3,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
 import "../../data/providers/client_providers.dart";
+import "../../data/providers/trainer_providers.dart";
 import "../chat/chat_entry.dart";
 import "../legal/sms_consent.dart";
 import "../supabase/supabase_service.dart";
@@ -74,13 +75,14 @@ class _ChatEntryGateState extends ConsumerState<ChatEntryGate> {
       return;
     }
     if (!mounted) return;
+    final intro = chatIntroBody(_signedInRole());
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.card,
         title: const Text(kChatIntroTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        content: const Text(kChatIntroBody, style: TextStyle(fontSize: 14, height: 1.4)),
+        content: Text(intro, style: const TextStyle(fontSize: 14, height: 1.4)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -91,6 +93,13 @@ class _ChatEntryGateState extends ConsumerState<ChatEntryGate> {
     );
     await prefs.setBool(_introPrefKey, true);
     await SupabaseService.markChatIntroSeen();
+  }
+
+  String _signedInRole() {
+    final auth = ref.read(trainerAuthProvider);
+    if (auth == "owner") return "owner";
+    if (auth != null && auth.isNotEmpty) return "coach";
+    return "client";
   }
 
   Future<void> _addPhone() async {
