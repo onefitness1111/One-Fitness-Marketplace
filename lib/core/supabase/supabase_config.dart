@@ -12,6 +12,15 @@
 class SupabaseConfig {
   SupabaseConfig._();
 
-  static const url = "https://rivhgutksyddeckieknc.supabase.co";
-  static const publishableKey = "sb_publishable_csuTIe9FRmkrMdDeXNza5w_p_YDazdr";
+  /// Live project unless a build passes `--dart-define=SUPABASE_URL=...`.
+  static const url = String.fromEnvironment(
+    "SUPABASE_URL",
+    defaultValue: "https://rivhgutksyddeckieknc.supabase.co",
+  );
+
+  /// Live publishable key unless a build passes `--dart-define=SUPABASE_KEY=...`.
+  static const publishableKey = String.fromEnvironment(
+    "SUPABASE_KEY",
+    defaultValue: "sb_publishable_csuTIe9FRmkrMdDeXNza5w_p_YDazdr",
+  );
 }
