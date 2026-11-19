@@ -16,18 +16,33 @@ const _noteFlags = ["red", "yellow", "blue"];
 /// active notes grouped by flag priority, resolve/edit/archive actions, and
 /// a collapsed history of resolved/archived notes.
 class NotesTab extends ConsumerStatefulWidget {
-  const NotesTab({super.key, required this.clientId});
+  const NotesTab({
+    super.key,
+    required this.clientId,
+    this.startComposing = false,
+  });
 
   final String clientId;
+
+  /// Opens the existing add-note form, used by the quick action on the client.
+  final bool startComposing;
 
   @override
   ConsumerState<NotesTab> createState() => _NotesTabState();
 }
 
 class _NotesTabState extends ConsumerState<NotesTab> {
-  bool _adding = false;
+  late bool _adding = widget.startComposing;
   TrainerNote? _editing;
   bool _showHistory = false;
+
+  @override
+  void didUpdateWidget(covariant NotesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.startComposing && !oldWidget.startComposing) {
+      setState(() => _adding = true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -155,11 +170,7 @@ class _NotesTabState extends ConsumerState<NotesTab> {
               const SectionLabel("Trainer Notes"),
               TextButton.icon(
                 onPressed: () => setState(() => _adding = true),
-                icon: Icon(
-                  LucideIcons.plus,
-                  size: 14,
-                  color: AppColors.gold,
-                ),
+                icon: Icon(LucideIcons.plus, size: 14, color: AppColors.gold),
                 label: Text(
                   "Add Note",
                   style: TextStyle(
@@ -381,11 +392,7 @@ class _NoteCard extends StatelessWidget {
           if (note.title?.isNotEmpty == true) const SizedBox(height: 4),
           Text(
             note.details,
-            style: TextStyle(
-              fontSize: 13,
-              color: AppColors.txt,
-              height: 1.4,
-            ),
+            style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.4),
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -639,9 +646,7 @@ class _NoteFormState extends State<_NoteForm> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: selected
-                        ? AppColors.gold
-                        : AppColors.card,
+                    color: selected ? AppColors.gold : AppColors.card,
                     border: Border.all(
                       color: selected ? AppColors.gold : AppColors.line,
                     ),

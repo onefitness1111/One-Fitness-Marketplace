@@ -1,3 +1,4 @@
+import "../../../core/widgets/animated_screen_switcher.dart";
 import "../../../core/widgets/tap_highlight.dart";
 import "visits_tab.dart";
 import "package:flutter/material.dart";
@@ -6,18 +7,22 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/date_utils.dart";
 import "../../../data/providers/trainer_providers.dart";
-import "coach_measurements_tab.dart";
+import "../chat/coach_chat_screen.dart";
+import "../dashboard/live_workouts_card.dart";
+import "../schedule/add_manual_booking_sheet.dart";
+import "../shell/trainer_shell_state.dart";
+import "client_activity.dart";
 import "documents_tab.dart";
 import "habits_tab.dart";
 import "intake_tab.dart";
 import "logged_tab.dart";
-import "merit_badges_tab.dart";
 import "notes_tab.dart";
-import "photos_tab.dart";
 import "plans_tab.dart";
 import "points_tab.dart";
 import "profile_tab.dart";
+import "progress_tab.dart";
 import "squad_tab.dart";
 
 class _TabDef {
@@ -31,14 +36,13 @@ const _primary = [
   _TabDef("profile", "Profile", LucideIcons.user),
   _TabDef("plans", "Plans", LucideIcons.clipboardList),
   _TabDef("logs", "Logged", LucideIcons.history),
+  _TabDef("progress", "Progress", LucideIcons.image),
 ];
 
+/// Everything that is not on the top bar. Photos, measurements, and badges
+/// live together on Progress. Assessments stays here and is also opened
+/// straight from a profile row.
 const _moreTabs = [
-  // Until this was listed, the only way into a client's intake was tapping a
-  // row in the Profile tab's onboarding summary — so a coach who wanted to
-  // read what a client had answered had no way to find it. (The web app has
-  // the same gap; this is a deliberate divergence from TrainerView.jsx, as
-  // Documents/Photos/Measurements already are.)
   _TabDef("visits", "Visits", LucideIcons.calendarCheck),
   _TabDef("intake", "Assessments", LucideIcons.clipboardCheck),
   _TabDef("documents", "Documents", LucideIcons.fileSignature),
@@ -46,13 +50,9 @@ const _moreTabs = [
   _TabDef("notes", "Notes", LucideIcons.flag),
   _TabDef("squad", "Squad", LucideIcons.users2),
   _TabDef("points", "Points", LucideIcons.gift),
-  _TabDef("badges", "Badges", LucideIcons.award),
-  _TabDef("photos", "Photos", LucideIcons.image),
-  _TabDef("measurements", "Measurements", LucideIcons.ruler),
 ];
 
-/// Mirrors TrainerView.jsx — the per-client tab bar (3 primary tabs + a
-/// "More" dropdown for Habits/Notes/Squad), all fully built.
+/// The per-client view: five top tabs, a short activity line, and quick actions.
 class TrainerView extends ConsumerStatefulWidget {
   const TrainerView({super.key, required this.clientId});
 
@@ -64,6 +64,7 @@ class TrainerView extends ConsumerStatefulWidget {
 
 class _TrainerViewState extends ConsumerState<TrainerView> {
   String _tab = "profile";
+  bool _composeNote = false;
 
   /// Plans' own sub-tab. Kept here so it's part of [_history] below.
   String _plansSub = "training";
@@ -122,7 +123,9 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       // would look "gone" to the coach). Skip the refresh in that case.
       final current = ref.read(trainerClientRecordsProvider)[widget.clientId];
       if (!identical(current, baseline)) return;
-      ref.read(trainerClientRecordsProvider.notifier).update(widget.clientId, (_) => fresh);
+      ref
+          .read(trainerClientRecordsProvider.notifier)
+          .update(widget.clientId, (_) => fresh);
     } catch (_) {}
   }
 
@@ -159,73 +162,112 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
     _visit(k, k == "plans" ? "training" : _plansSub);
   }
 
-  // Uses showMenu (the root Overlay) rather than a Positioned-in-Stack
-  // dropdown: a Positioned that overflows its Stack's own box paints
-  // *behind* the next sibling in the outer Column (ProfileTab's content),
-  // which silently clipped the last couple of menu items when this list
-  // grew past 3 entries. showMenu always paints above everything.
-  Future<void> _openMoreMenu(BuildContext buttonContext) async {
-    final button = buttonContext.findRenderObject() as RenderBox;
-    final overlay = Overlay.of(buttonContext).context.findRenderObject() as RenderBox;
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(
-        button.localToGlobal(Offset(0, button.size.height), ancestor: overlay),
-        button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+  void _message() {
+    ref.read(coachChatOpenRequestProvider.notifier).open(widget.clientId);
+    ref.read(trainerModeProvider.notifier).go("chat");
+  }
+
+  void _book() {
+    showAddManualBookingSheet(
+      context,
+      ref,
+      initialDate: isoToday(),
+      initialClientId: widget.clientId,
+    );
+  }
+
+  void _logWorkout() {
+    final matches = ref
+        .read(trainerRosterProvider)
+        .where((c) => c.id == widget.clientId);
+    final name = matches.isEmpty ? "Client" : matches.first.name;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            LiveWorkoutPage(clientId: widget.clientId, clientName: name),
       ),
-      Offset.zero & overlay.size,
     );
-    final selected = await showMenu<String>(
-      context: buttonContext,
-      position: position,
-      color: AppColors.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: AppColors.line)),
-      constraints: const BoxConstraints(minWidth: 190),
-      items: _moreTabs.map((t) {
-        final active = _tab == t.key;
-        return PopupMenuItem<String>(
-          value: t.key,
-          child: Row(
-            children: [
-              Icon(t.icon, size: 16, color: active ? AppColors.gold : AppColors.mute),
-              const SizedBox(width: 12),
-              Text(t.label, style: TextStyle(fontSize: 14, color: active ? AppColors.gold : AppColors.txt, fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-    if (selected != null) _goTab(selected);
+  }
+
+  void _addNote() {
+    setState(() => _composeNote = true);
+    _go("notes", null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _composeNote) setState(() => _composeNote = false);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final activeInMore = _moreTabs.any((t) => t.key == _tab);
+    final activeInMore = _tab == "more" || _moreTabs.any((t) => t.key == _tab);
+    final record = ref.watch(trainerClientRecordsProvider)[widget.clientId];
+    final bookings = ref
+        .watch(allBookingsProvider)
+        .where((b) => b.clientId == widget.clientId)
+        .toList();
+    final now = DateTime.now();
+    final activity = recentClientActivity(
+      logs: record?.workoutLogs ?? const [],
+      bookings: bookings,
+      notes: record?.trainerNotes ?? const [],
+      now: now,
+    );
 
     return LocalBackScope(
       isOpen: _history.isNotEmpty,
       onBack: _back,
       child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
-          child: Row(
-            children: [
-              ..._primary.map((t) => Expanded(child: _TabButton(def: t, active: _tab == t.key, onTap: () => _goTab(t.key)))),
-              Expanded(
-                child: Builder(
-                  builder: (btnContext) => _TabButton(
-                    def: const _TabDef("more", "More", LucideIcons.moreHorizontal),
-                    active: activeInMore,
-                    onTap: () => _openMoreMenu(btnContext),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            child: _QuickActions(
+              onMessage: _message,
+              onBook: _book,
+              onLog: _logWorkout,
+              onNote: _addNote,
+            ),
+          ),
+          if (activity.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: _ActivityStrip(items: activity, now: now),
+            ),
+          const SizedBox(height: 6),
+          Container(
+            key: const Key("client-tabs"),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: AppColors.line)),
+            ),
+            child: Row(
+              children: [
+                ..._primary.map(
+                  (t) => Expanded(
+                    child: _TabButton(
+                      def: t,
+                      active: _tab == t.key,
+                      onTap: () => _goTab(t.key),
+                    ),
                   ),
                 ),
-              ),
-            ],
+                Expanded(
+                  child: _TabButton(
+                    def: const _TabDef(
+                      "more",
+                      "More",
+                      LucideIcons.moreHorizontal,
+                    ),
+                    active: activeInMore,
+                    onTap: () => _goTab("more"),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        Expanded(child: _body()),
-      ],
+          Expanded(
+            child: AnimatedScreenSwitcher(screenKey: _tab, child: _body()),
+          ),
+        ],
       ),
     );
   }
@@ -233,7 +275,10 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
   Widget _body() {
     switch (_tab) {
       case "profile":
-        return ProfileTab(clientId: widget.clientId, onGoToIntake: _goToIntakeForm);
+        return ProfileTab(
+          clientId: widget.clientId,
+          onGoToIntake: _goToIntakeForm,
+        );
       case "intake":
         return IntakeTab(
           // Keyed so that arriving from a different row rebuilds the tab and
@@ -246,7 +291,15 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       case "logs":
         return LoggedTab(clientId: widget.clientId);
       case "plans":
-        return PlansTab(clientId: widget.clientId, sub: _plansSub, onSubChanged: (s) => _visit("plans", s));
+        return PlansTab(
+          clientId: widget.clientId,
+          sub: _plansSub,
+          onSubChanged: (s) => _visit("plans", s),
+        );
+      case "progress":
+        return ProgressTab(clientId: widget.clientId);
+      case "more":
+        return _MorePanel(tabs: _moreTabs, activeKey: null, onSelect: _goTab);
       case "visits":
         return VisitsTab(clientId: widget.clientId);
       case "documents":
@@ -254,17 +307,14 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       case "habits":
         return HabitsTab(clientId: widget.clientId);
       case "notes":
-        return NotesTab(clientId: widget.clientId);
+        return NotesTab(
+          clientId: widget.clientId,
+          startComposing: _composeNote,
+        );
       case "squad":
         return SquadTab(clientId: widget.clientId);
       case "points":
         return PointsTab(clientId: widget.clientId);
-      case "badges":
-        return MeritBadgesTab(clientId: widget.clientId);
-      case "photos":
-        return PhotosTab(clientId: widget.clientId);
-      case "measurements":
-        return CoachMeasurementsTab(clientId: widget.clientId);
       default:
         return const SizedBox.shrink();
     }
@@ -272,34 +322,252 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
 }
 
 class _TabButton extends StatelessWidget {
-  const _TabButton({required this.def, required this.active, required this.onTap});
+  const _TabButton({
+    required this.def,
+    required this.active,
+    required this.onTap,
+  });
   final _TabDef def;
   final bool active;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? AppColors.gold : AppColors.mute;
+    final color = active ? AppColors.txt : AppColors.mute;
     return TapHighlight(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: active ? AppColors.gold : Colors.transparent, width: 2))),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: active ? AppColors.txt : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(def.icon, size: 14, color: color),
-                const SizedBox(width: 4),
-                Text(def.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
-              ],
+            Icon(def.icon, size: 15, color: color),
+            const SizedBox(height: 4),
+            Text(
+              def.label,
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _QuickActions extends StatelessWidget {
+  const _QuickActions({
+    required this.onMessage,
+    required this.onBook,
+    required this.onLog,
+    required this.onNote,
+  });
+
+  final VoidCallback onMessage;
+  final VoidCallback onBook;
+  final VoidCallback onLog;
+  final VoidCallback onNote;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _RoundAction(
+          icon: LucideIcons.messageSquare,
+          label: "Message",
+          onTap: onMessage,
+        ),
+        _RoundAction(
+          icon: LucideIcons.calendarPlus,
+          label: "Book",
+          onTap: onBook,
+        ),
+        _RoundAction(
+          icon: LucideIcons.play,
+          label: "Log workout",
+          onTap: onLog,
+        ),
+        _RoundAction(icon: LucideIcons.plus, label: "Add note", onTap: onNote),
+      ],
+    );
+  }
+}
+
+class _RoundAction extends StatelessWidget {
+  const _RoundAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return TapHighlight(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: 76,
+        child: Column(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.card,
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Icon(icon, size: 18, color: AppColors.txt),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.mute,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityStrip extends StatelessWidget {
+  const _ActivityStrip({required this.items, required this.now});
+
+  final List<ClientActivityItem> items;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "RECENT",
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+            color: AppColors.mute,
+          ),
+        ),
+        const SizedBox(height: 6),
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) Divider(height: 1, thickness: 1, color: AppColors.line),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Icon(_icon(items[i].kind), size: 15, color: AppColors.txt),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    items[i].text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  relativeActivityWhen(items[i].at, now),
+                  style: TextStyle(fontSize: 12, color: AppColors.mute),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  IconData _icon(ClientActivityKind kind) => switch (kind) {
+    ClientActivityKind.workout => LucideIcons.dumbbell,
+    ClientActivityKind.visit => LucideIcons.calendarCheck,
+    ClientActivityKind.note => LucideIcons.flag,
+  };
+}
+
+class _MorePanel extends StatelessWidget {
+  const _MorePanel({
+    required this.tabs,
+    required this.onSelect,
+    this.activeKey,
+  });
+
+  final List<_TabDef> tabs;
+  final String? activeKey;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      key: const Key("client-more"),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+      itemCount: tabs.length,
+      separatorBuilder: (context, index) =>
+          Divider(height: 1, thickness: 1, indent: 56, color: AppColors.line),
+      itemBuilder: (context, index) {
+        final tab = tabs[index];
+        final active = tab.key == activeKey;
+        return TapHighlight(
+          onTap: () => onSelect(tab.key),
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+            child: Row(
+              children: [
+                Icon(
+                  tab.icon,
+                  size: 18,
+                  color: active ? AppColors.txt : AppColors.mute,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    tab.label,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                      color: active ? AppColors.txt : AppColors.txt,
+                    ),
+                  ),
+                ),
+                Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
