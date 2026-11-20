@@ -18,18 +18,15 @@ final _coachAwardable = kMeritBadges
     .toList();
 
 /// Mirrors MeritBadgesTab.jsx — coach/owner client-profile tab (More →
-/// Badges). Award a coach-category badge, remove an active coach-awarded
+/// Merit Badges). Award a coach-category badge, remove an active coach-awarded
 /// one, an owner-only "force assign any badge" override, an Active grid, a
 /// History section for removed coach-awarded badges, and a full-catalog
 /// reference. Automatic badges are awarded by award-merit-badge, not from
 /// this screen. The owner can still force-assign one, and that one stays.
 class MeritBadgesTab extends ConsumerStatefulWidget {
-  const MeritBadgesTab({super.key, required this.clientId, this.embedded = false});
+  const MeritBadgesTab({super.key, required this.clientId});
 
   final String clientId;
-
-  /// Inside the Progress page, so the parent scrolls instead of this tab.
-  final bool embedded;
 
   @override
   ConsumerState<MeritBadgesTab> createState() => _MeritBadgesTabState();
@@ -138,8 +135,7 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
           onBack: () => setState(() => _showGymCitizen = false),
         ),
       );
-      if (!widget.embedded) return page;
-      return SizedBox(height: MediaQuery.sizeOf(context).height * 0.72, child: page);
+      return page;
     }
 
     Future<void> refreshBadgesAndPoints() => _refreshBadgesAndPoints();
@@ -669,9 +665,6 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
           }),
         ],
     );
-    if (widget.embedded) {
-      return Padding(padding: const EdgeInsets.fromLTRB(4, 10, 4, 18), child: content);
-    }
     return SingleChildScrollView(padding: const EdgeInsets.all(18), child: content);
   }
 }

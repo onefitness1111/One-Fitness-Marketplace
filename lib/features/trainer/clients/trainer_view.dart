@@ -20,6 +20,7 @@ import "intake_tab.dart";
 import "logged_tab.dart";
 import "notes_tab.dart";
 import "plans_tab.dart";
+import "merit_badges_tab.dart";
 import "points_tab.dart";
 import "profile_tab.dart";
 import "progress_tab.dart";
@@ -39,9 +40,9 @@ const _primary = [
   _TabDef("progress", "Progress", LucideIcons.image),
 ];
 
-/// Everything that is not on the top bar. Photos, measurements, and badges
-/// live together on Progress. Assessments stays here and is also opened
-/// straight from a profile row.
+/// Everything that is not on the top bar. Photos and measurements live
+/// together on Progress. Assessments stays here and is also opened
+/// straight from a profile row. Merit Badges opens the full badge screen.
 const _moreTabs = [
   _TabDef("visits", "Visits", LucideIcons.calendarCheck),
   _TabDef("intake", "Assessments", LucideIcons.clipboardCheck),
@@ -50,6 +51,7 @@ const _moreTabs = [
   _TabDef("notes", "Notes", LucideIcons.flag),
   _TabDef("squad", "Squad", LucideIcons.users2),
   _TabDef("points", "Points", LucideIcons.gift),
+  _TabDef("badges", "Merit Badges", LucideIcons.award),
 ];
 
 /// The per-client view: five top tabs, a short activity line, and quick actions.
@@ -312,6 +314,8 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
         return SquadTab(clientId: widget.clientId);
       case "points":
         return PointsTab(clientId: widget.clientId);
+      case "badges":
+        return MeritBadgesTab(clientId: widget.clientId);
       default:
         return const SizedBox.shrink();
     }
