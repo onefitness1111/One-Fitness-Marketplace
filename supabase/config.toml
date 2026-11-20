@@ -6,3 +6,7 @@ verify_jwt = false
 
 [functions.get-calendar-link]
 verify_jwt = true
+
+# Plate photos and Quick add macro estimates. Signed-in callers only.
+[functions.estimate-plate]
+verify_jwt = true
