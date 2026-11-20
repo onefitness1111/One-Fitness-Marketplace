@@ -135,6 +135,37 @@ class Trainer {
   /// [sessionTypes] still offered by the gym.
   List<String> get offeredSessionTypes => sessionTypes.where(LiveCatalog.offersType).toList();
 
+  /// Keeps this coach's profile and swaps in pay fields from [source].
+  /// Used when a fresh directory load must not wipe rates already on screen.
+  Trainer withPayFrom(Trainer source) => Trainer(
+        id: id,
+        name: name,
+        title: title,
+        photo: photo,
+        phone: phone,
+        email: email,
+        locationName: locationName,
+        locationAddress: locationAddress,
+        locations: locations,
+        bio: bio,
+        beforeAfters: beforeAfters,
+        availability: availability,
+        commissionRate: source.commissionRate,
+        disciplines: disciplines,
+        sessionTypes: sessionTypes,
+        reviewedByOwner: reviewedByOwner,
+        signupAt: signupAt,
+        payoutMode: source.payoutMode,
+        payoutRateCents: source.payoutRateCents,
+        referralCommissionPercent: source.referralCommissionPercent,
+        coachCode: coachCode,
+        unavailability: unavailability,
+        coachName: coachName,
+        secondaryCoachName: secondaryCoachName,
+        firstName: firstName,
+        lastName: lastName,
+      );
+
   /// Only availability is routinely replaced in place (the owner creating
   /// a one-off session, a coach editing their week); everything else goes
   /// through the full edit form, which rebuilds the whole object.

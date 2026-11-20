@@ -12,6 +12,7 @@ import "../../../data/models/availability_block.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "trainer_edit_form.dart";
 
@@ -192,6 +193,7 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
       );
     }
 
+    final payReady = ref.watch(trainerPayReadyProvider);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -225,7 +227,7 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
                 .map((b) => b.sessionType)
                 .toSet();
             return AppCard(
-              onTap: () => setState(() => _editing = t),
+              onTap: payReady ? () => setState(() => _editing = t) : null,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -276,7 +278,7 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
                     ),
                   _IconLine(
                     icon: LucideIcons.dollarSign,
-                    text: _payoutSummary(t),
+                    text: payReady ? _payoutSummary(t) : "Loading pay…",
                   ),
                   const SizedBox(height: 8),
                   _AvailSummary(availability: t.offeredAvailability),

@@ -10,6 +10,7 @@ import "../../../data/models/report_range.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 
 String _money(num v) => "\$${v.toStringAsFixed(2)}";
@@ -49,6 +50,9 @@ class ServiceCommissionsReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(trainerPayReadyProvider)) {
+      return const HintBox(text: "Loading pay…");
+    }
     final trainers = _trainers(ref, onlyTrainerId);
     final bookings = ref.watch(allBookingsProvider);
     final roster = ref.watch(trainerRosterProvider);
@@ -65,6 +69,9 @@ class PayrollSummaryReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(trainerPayReadyProvider)) {
+      return const HintBox(text: "Loading pay…");
+    }
     final trainers = _trainers(ref, onlyTrainerId);
     final bookings = ref.watch(allBookingsProvider);
     final roster = ref.watch(trainerRosterProvider);

@@ -5,6 +5,7 @@ import "../../../core/utils/report_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/report_range.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "coach_badge_progress_list.dart";
 import "../reports/date_range_filter.dart";
@@ -30,6 +31,9 @@ class _MyPayScreenState extends ConsumerState<MyPayScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!ref.watch(trainerPayReadyProvider)) {
+      return const Padding(padding: EdgeInsets.all(18), child: HintBox(text: "Loading pay…"));
+    }
     final trainerAuth = ref.watch(trainerAuthProvider);
     final trainers = ref.watch(trainersProvider);
     final matches = trainers.where((t) => t.id == trainerAuth);
