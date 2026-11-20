@@ -33,15 +33,32 @@ export function offeringsOn(availability, ymd) {
     const disc = block?.discipline || "";
     const dates = block?.dates || {};
     const byDay = block?.byDay || {};
-    for (const slot of slotsOf(dates[ymd])) oneOffs.push({ type, disc, slot });
-    for (const slot of slotsOf(byDay[wd] ?? byDay[Number(wd)])) weekly.push({ type, disc, slot });
+    const duration = Number(block?.durationMin) || 60;
+    for (const slot of slotsOf(dates[ymd])) oneOffs.push({ type, disc, slot, duration });
+    for (const slot of slotsOf(byDay[wd] ?? byDay[Number(wd)])) weekly.push({ type, disc, slot, duration });
   }
   const taken = new Set(oneOffs.map((o) => `${o.slot}|${o.type}|${o.disc}`));
   return [...oneOffs, ...weekly.filter((o) => !taken.has(`${o.slot}|${o.type}|${o.disc}`))];
 }
 
-function off(unavailability, ymd) {
-  return (unavailability || []).some((u) => ymd >= String(u.startDate || "") && ymd <= String(u.endDate || ""));
+// All-day, and any older entry with no times, covers the whole day.
+// A start time with no end runs to midnight. A start and end apply on
+// every day in the range, and only remove slots that overlap those minutes.
+function offeringBlocked(unavailability, ymd, slot, duration) {
+  const start = Number(slot);
+  const end = start + (Number(duration) || 60);
+  return (unavailability || []).some((u) => {
+    const from = String(u.startDate || "");
+    const to = String(u.endDate || u.startDate || "");
+    if (ymd < from || ymd > to) return false;
+    const startMin = u.startMin == null || u.startMin === "" ? null : Number(u.startMin);
+    const endMin = u.endMin == null || u.endMin === "" ? null : Number(u.endMin);
+    const whole = u.allDay === true || (startMin == null && endMin == null);
+    if (whole) return true;
+    const blockStart = startMin ?? 0;
+    const blockEnd = endMin == null ? 24 * 60 : endMin;
+    return blockStart < end && blockEnd > start;
+  });
 }
 
 function eachDay(start, end, fn) {
@@ -62,8 +79,10 @@ export function fullHouseQualifies({ availability, unavailability, bookings, sta
   const completed = expected.filter((b) => b.attendance === "checked-in").length;
   let capacity = 0;
   eachDay(start, end, (ymd) => {
-    if (off(unavailability, ymd)) return;
-    for (const o of offeringsOn(availability, ymd)) capacity += capFor(o.type, semiPrivateCap);
+    for (const o of offeringsOn(availability, ymd)) {
+      if (offeringBlocked(unavailability, ymd, o.slot, o.duration)) continue;
+      capacity += capFor(o.type, semiPrivateCap);
+    }
   });
   const booked = expected.length;
   const utilization = capacity === 0 ? 0 : booked / capacity;

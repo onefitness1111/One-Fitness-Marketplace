@@ -59,6 +59,21 @@ test("full house needs both the check-in rate and the booked capacity", () => {
   assert.equal(fullHouseQualifies({ availability, unavailability: [], bookings: missed, ...month }), false);
 });
 
+test("a partial-day block only removes the slots it covers", () => {
+  const availability = [{ sessionType: "one-on-one", discipline: "personal-training", byDay: { 1: [540, 900] }, durationMin: 60 }];
+  // October 2026 Mondays: 5, 12, 19, 26. Four morning bookings, all checked in.
+  const bookings = [5, 12, 19, 26].map((d) => ({
+    date: `2026-10-${String(d).padStart(2, "0")}`,
+    attendance: "checked-in",
+  }));
+  // Afternoon-only block leaves the 9:00 slots. 4 booked / 4 open = full house.
+  const afternoon = [{ startDate: "2026-10-01", endDate: "2026-10-31", allDay: false, startMin: 840, endMin: 24 * 60 }];
+  assert.equal(fullHouseQualifies({ availability, unavailability: afternoon, bookings, ...month }), true);
+  // The same dates with no times is a legacy all-day block, so those mornings are gone.
+  const legacy = [{ startDate: "2026-10-01", endDate: "2026-10-31", note: "Away" }];
+  assert.equal(fullHouseQualifies({ availability, unavailability: legacy, bookings, ...month }), false);
+});
+
 test("PR factory is five different clients", () => {
   const events = ["a", "b", "c", "d", "e"].map((clientId) => ({ clientId, earnedAt: "2026-10-03T12:00:00Z" }));
   assert.equal(prFactoryQualifies(events, month.start, month.end), true);

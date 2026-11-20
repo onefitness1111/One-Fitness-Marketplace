@@ -25,12 +25,13 @@ NextOpenSlot? nextOpenSlot({
   if (start == null) return null;
   for (var i = 0; i < horizonDays; i++) {
     final date = isoDate(start.add(Duration(days: i)));
-    if (fallsInUnavailability(trainer, date)) continue;
     final slots = trainerOfferingsOn(trainer, date).map((o) => o.slot).toSet().toList()..sort();
     for (final slot in slots) {
-      if (fallsInBlockedTime(blocked, trainer.id, date, slot)) continue;
       final offerings = trainerOfferingsOn(trainer, date).where((o) => o.slot == slot);
       if (offerings.isEmpty) continue;
+      final len = offerings.first.durationMin;
+      if (fallsInUnavailability(trainer, date, slot: slot, sessionLen: len)) continue;
+      if (fallsInBlockedTime(blocked, trainer.id, date, slot, sessionLen: len)) continue;
       final cap = capFor(offerings.first.sessionType, semiPrivateCap: semiPrivateCap);
       final taken = bookedCount(bookings, trainer.id, date, slot);
       if (taken < cap) return NextOpenSlot(date: date, slot: slot);

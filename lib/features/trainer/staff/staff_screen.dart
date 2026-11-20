@@ -72,7 +72,6 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
                   payoutMode: t.payoutMode,
                   payoutRateCents: t.payoutRateCents,
                   referralCommissionPercent: t.referralCommissionPercent,
-                  unavailability: t.unavailability,
                 );
               } else {
                 // Brand-new trainer — real Supabase Auth account, created on

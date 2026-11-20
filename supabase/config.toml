@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.get-calendar-link]
 verify_jwt = true
+
+[functions.save-coach-unavailability]
+verify_jwt = true

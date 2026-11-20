@@ -7,6 +7,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/unavailability.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/onboarding_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -218,22 +219,24 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
       Trainer? match;
       var anyOffered = false;
       var anyAvailableToday = false;
+      String? unavailableReason;
       for (final t in _eligibleTrainers) {
-        final offers = trainerOfferingsOn(t, date).any(
-          (o) =>
-              o.sessionType == _sessionType &&
-              o.discipline == _discipline &&
-              o.slot == slot,
-        );
-        if (!offers) continue;
+        Offering? offer;
+        for (final o in trainerOfferingsOn(t, date)) {
+          if (o.sessionType == _sessionType && o.discipline == _discipline && o.slot == slot) {
+            offer = o;
+            break;
+          }
+        }
+        if (offer == null) continue;
         anyOffered = true;
-        // Offers this slot in general, but marked themselves unavailable on
-        // this specific calendar date (Coach Availability Tab spec), or
-        // blocked this specific date/time off (Delete/Archive Behavior
-        // spec's "session availability" rule) — same treatment as being
-        // fully booked, just a more precise reason.
-        if (fallsInUnavailability(t, date)) continue;
-        if (fallsInBlockedTime(blockedTimes, t.id, date, slot)) continue;
+        // A partial-day block only removes the times it covers. An all-day
+        // block, including an older entry with no times, still removes the day.
+        if (fallsInUnavailability(t, date, slot: slot, sessionLen: offer.durationMin)) {
+          unavailableReason ??= clientUnavailabilityLine(t, date);
+          continue;
+        }
+        if (fallsInBlockedTime(blockedTimes, t.id, date, slot, sessionLen: offer.durationMin)) continue;
         anyAvailableToday = true;
         if (bookedCount(provisional, t.id, date, slot) <
             capFor(_sessionType!, semiPrivateCap: settings.semiPrivateCap)) {
@@ -258,7 +261,7 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
             weekday: weekday,
             slot: slot,
             status: "skipped",
-            reason: "Coach unavailable",
+            reason: unavailableReason ?? "Coach unavailable",
           );
         }
         return _Occurrence(
