@@ -6,7 +6,6 @@ import "package:supabase_flutter/supabase_flutter.dart";
 import "../../../core/live_log/live_log_sync.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/workout_logging.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/workout_log.dart";
@@ -31,6 +30,7 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
   @override
   void initState() {
     super.initState();
+    LiveActivity.revision.addListener(_onLiveRevision);
     _refresh();
     try {
       _channel = LiveActivity.watch(onChange: _refresh);
@@ -39,20 +39,19 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
 
   @override
   void dispose() {
+    LiveActivity.revision.removeListener(_onLiveRevision);
     final c = _channel;
     if (c != null) SupabaseService.client.removeChannel(c);
     super.dispose();
   }
 
+  void _onLiveRevision() {
+    unawaited(_refresh());
+  }
+
   Future<void> _refresh() async {
     try {
-      final rows = await LiveActivity.recent(within: const Duration(hours: 2));
-      final today = isoToday();
-      final map = <String, String>{};
-      for (final r in rows) {
-        if (r["log_date"]?.toString() != today) continue;
-        map.putIfAbsent(r["client_id"].toString(), () => r["day_id"].toString());
-      }
+      final map = await LiveActivity.openDays();
       if (mounted) setState(() => _active = map);
     } catch (_) {}
   }

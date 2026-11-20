@@ -5,6 +5,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
 import "package:uuid/uuid.dart";
 import "../supabase/supabase_service.dart";
+import "current_live_day.dart";
 
 /// One set's live values. Reps and weight each carry the time they were last
 /// changed, so the two fields merge independently and the newest edit wins.
@@ -386,6 +387,12 @@ class LiveLogController {
 class LiveActivity {
   LiveActivity._();
 
+  /// Bumped when this phone starts or ends a live day, so the open screen
+  /// re-reads without waiting on the realtime socket.
+  static final ValueNotifier<int> revision = ValueNotifier(0);
+
+  static void changed() => revision.value++;
+
   /// Rows touched in the last [within], newest first. [clientId] null = every
   /// client the signed-in staff member can read.
   static Future<List<Map<String, dynamic>>> recent({String? clientId, Duration within = const Duration(hours: 3)}) async {
@@ -401,6 +408,68 @@ class LiveActivity {
       final updated = DateTime.tryParse(r["updated_at"]?.toString() ?? "");
       return updated != null && updated.isAfter(ended);
     }).toList();
+  }
+
+  /// The single open live day for one client, or null. Unfinished set logs
+  /// are not consulted.
+  static Future<String?> currentDay(String clientId) async {
+    final map = await openDays(clientId: clientId);
+    return map[clientId];
+  }
+
+  /// client id -> the one day that is live right now.
+  static Future<Map<String, String>> openDays({String? clientId}) async {
+    var q = SupabaseService.client
+        .from("live_day_runs")
+        .select("client_id, day_id, started_at, ended_at")
+        .isFilter("ended_at", null);
+    if (clientId != null) q = q.eq("client_id", clientId);
+    final rows = await q;
+    final runs = <LiveDayRun>[];
+    for (final raw in rows as List) {
+      final row = (raw as Map).cast<String, dynamic>();
+      final started = DateTime.tryParse(row["started_at"]?.toString() ?? "");
+      final dayId = row["day_id"]?.toString() ?? "";
+      final who = row["client_id"]?.toString() ?? "";
+      if (started == null || dayId.isEmpty || who.isEmpty) continue;
+      final endedRaw = row["ended_at"]?.toString();
+      runs.add(LiveDayRun(
+        clientId: who,
+        dayId: dayId,
+        startedAt: started,
+        endedAt: (endedRaw == null || endedRaw.isEmpty) ? null : DateTime.tryParse(endedRaw),
+      ));
+    }
+    return currentLiveDayByClient(runs);
+  }
+
+  /// Closes every open live day except [keepDayId]. Set logs stay writable.
+  static Future<void> closeOtherDays(String clientId, {required String keepDayId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    try {
+      await SupabaseService.client
+          .from("live_day_runs")
+          .update({"ended_at": now})
+          .eq("client_id", clientId)
+          .neq("day_id", keepDayId)
+          .isFilter("ended_at", null);
+    } catch (_) {}
+  }
+
+  /// End / timeout. Closes the live marker only, not the workout log.
+  static Future<void> closeAllDays(String clientId) async {
+    try {
+      await SupabaseService.client.rpc("end_open_live_days", params: {"p_client": clientId});
+      return;
+    } catch (_) {}
+    final now = DateTime.now().toUtc().toIso8601String();
+    try {
+      await SupabaseService.client
+          .from("live_day_runs")
+          .update({"ended_at": now})
+          .eq("client_id", clientId)
+          .isFilter("ended_at", null);
+    } catch (_) {}
   }
 
   /// Finishes one program day. A different day logged on the same date stays open.
@@ -438,6 +507,13 @@ class LiveActivity {
       event: PostgresChangeEvent.all,
       schema: "public",
       table: "live_set_logs",
+      filter: clientId == null ? null : PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: "client_id", value: clientId),
+      callback: (_) => onChange(),
+    );
+    ch.onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: "public",
+      table: "live_day_runs",
       filter: clientId == null ? null : PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: "client_id", value: clientId),
       callback: (_) => onChange(),
     );

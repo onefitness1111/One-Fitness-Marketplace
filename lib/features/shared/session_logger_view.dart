@@ -4,6 +4,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "dart:async";
 import "package:supabase_flutter/supabase_flutter.dart";
 import "../../core/live_log/live_log_store.dart";
+import "../../core/live_log/current_live_day.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/navigation/local_back_stack.dart";
 import "../../core/supabase/supabase_service.dart";
@@ -151,6 +152,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   void initState() {
     super.initState();
     if (widget.liveSync && widget.client.id.isNotEmpty) {
+      LiveActivity.revision.addListener(_onLiveRevision);
       _refreshLiveDays();
       try {
         _activity = LiveActivity.watch(clientId: widget.client.id, onChange: _refreshLiveDays);
@@ -168,49 +170,48 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   @override
   void dispose() {
     _live?.dispose();
+    LiveActivity.revision.removeListener(_onLiveRevision);
     final a = _activity;
     if (a != null) SupabaseService.client.removeChannel(a);
     super.dispose();
   }
 
+  void _onLiveRevision() {
+    unawaited(_refreshLiveDays());
+  }
+
   Future<void> _refreshLiveDays() async {
     try {
-      final rows = await LiveActivity.recent(clientId: widget.client.id);
-      final today = isoToday();
-      final days = <String>{};
+      // The badge is the one open live-day row. An unfinished set log on
+      // another day does not make that day live.
+      final runs = await SupabaseService.client
+          .from("live_day_runs")
+          .select("day_id, started_role, started_at, ended_at")
+          .eq("client_id", widget.client.id)
+          .isFilter("ended_at", null);
+      final parsed = <LiveDayRun>[];
       String? coachDay;
-      for (final r in rows) {
-        if (r["log_date"]?.toString() != today) continue;
-        final ended = r["ended_at"]?.toString();
-        if (ended != null && ended.isNotEmpty) continue;
-        final dayId = r["day_id"].toString();
-        days.add(dayId);
-        final exercise = r["exercise_name"]?.toString() ?? "";
-        if (exercise == "__day_started_coach__") coachDay = dayId;
-      }
-      try {
-        final runs = await SupabaseService.client
-            .from("live_day_runs")
-            .select("day_id, started_role, started_at, ended_at")
-            .eq("client_id", widget.client.id)
-            .eq("log_date", today)
-            .isFilter("ended_at", null);
-        for (final raw in runs as List) {
-          final row = (raw as Map).cast<String, dynamic>();
-          final dayId = row["day_id"]?.toString() ?? "";
-          if (dayId.isEmpty) continue;
-          days.add(dayId);
-          final role = row["started_role"]?.toString();
-          if (role == "coach" || role == "owner") coachDay = dayId;
+      DateTime? coachAt;
+      for (final raw in runs as List) {
+        final row = (raw as Map).cast<String, dynamic>();
+        final dayId = row["day_id"]?.toString() ?? "";
+        final started = DateTime.tryParse(row["started_at"]?.toString() ?? "");
+        if (dayId.isEmpty || started == null) continue;
+        parsed.add(LiveDayRun(clientId: widget.client.id, dayId: dayId, startedAt: started));
+        final role = row["started_role"]?.toString();
+        if ((role == "coach" || role == "owner") && (coachAt == null || started.isAfter(coachAt))) {
+          coachDay = dayId;
+          coachAt = started;
         }
-      } catch (_) {}
+      }
+      final live = currentLiveDayByClient(parsed)[widget.client.id];
       if (!mounted) return;
       setState(() {
-        _liveDays = days;
-        _coachLedDayId = coachDay;
+        _liveDays = live == null ? {} : {live};
+        _coachLedDayId = live != null && coachDay == live ? coachDay : null;
       });
-      if (widget.loggedBy == "client" && coachDay != null && _dayId != coachDay) {
-        _startDay(coachDay, announce: false);
+      if (widget.loggedBy == "client" && _coachLedDayId != null && _dayId != _coachLedDayId) {
+        _startDay(_coachLedDayId!, announce: false);
       }
     } catch (_) {}
   }
@@ -412,6 +413,8 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       _sessionStarted = true;
       _sessionData.clear();
       _focusIndex = widget.initialFocusIndex;
+      // Only this day is live, even before the server row comes back.
+      _liveDays = {dayId};
     });
     _seedDraftsFromStore();
     final prog = _currentProgram();
@@ -420,14 +423,18 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       if (!announce) return;
       final role = widget.authorRole ?? widget.loggedBy;
       final me = SupabaseService.currentUser?.id;
-      unawaited(SupabaseService.startLiveDay(
-        clientId: widget.client.id,
-        date: isoToday(),
-        dayId: dayId,
-        programId: prog.id,
-        role: role == "owner" ? "owner" : (role == "client" ? "client" : "coach"),
-        trainerId: role == "client" ? null : me,
-      ));
+      unawaited(() async {
+        await LiveActivity.closeOtherDays(widget.client.id, keepDayId: dayId);
+        await SupabaseService.startLiveDay(
+          clientId: widget.client.id,
+          date: isoToday(),
+          dayId: dayId,
+          programId: prog.id,
+          role: role == "owner" ? "owner" : (role == "client" ? "client" : "coach"),
+          trainerId: role == "client" ? null : me,
+        );
+        LiveActivity.changed();
+      }());
       if (role != "client") {
         setState(() => _coachLedDayId = dayId);
       }

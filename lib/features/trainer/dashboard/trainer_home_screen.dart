@@ -145,8 +145,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final run = _run;
     _run = null;
     if (run == null) return;
-    // Ending the booked clock does not finish a program day. Each day is
-    // saved and closed on its own, so two days on the same date stay separate.
+    // The clock and Beep Your Coach stop. The workout log stays open, so
+    // the coach can still type sets. The "Live now" marker does not: no
+    // day stays joinable after End or after the clock runs out.
+    final clients = _runClientIds;
     _runClientIds = const [];
     try {
       await SupabaseService.endSessionRun(run.id);
@@ -155,6 +157,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       // Left live server-side; the next start reuses it rather than
       // stacking a second run.
     }
+    for (final clientId in clients) {
+      await LiveActivity.closeAllDays(clientId);
+    }
+    LiveActivity.changed();
   }
   bool _noShowSweepDone = false;
 
