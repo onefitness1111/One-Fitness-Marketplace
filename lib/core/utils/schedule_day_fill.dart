@@ -26,6 +26,7 @@ ScheduleDayFill? scheduleDayFill({
   String? gymLocationName,
   int semiPrivateCap = 4,
   bool skipStarted = false,
+  bool Function(Trainer trainer, Offering offering)? keep,
 }) {
   final sunday = isSunday(date);
   final trainerIds = trainers.map((t) => t.id).toSet();
@@ -42,6 +43,7 @@ ScheduleDayFill? scheduleDayFill({
       if (discipline != null && o.discipline != discipline) continue;
       final where = o.locationName ?? gymLocationName;
       if (locationName != null && where != locationName) continue;
+      if (keep != null && !keep(t, o)) continue;
       if (fallsInBlockedTime(blocked, t.id, date, o.slot)) continue;
       if (skipStarted && sessionHasStarted(date, o.slot)) continue;
       hadOffering = true;
