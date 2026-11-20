@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/motion/booked_screen.dart";
+import "coach_profile_screen.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/late_fee_notice.dart";
@@ -2018,7 +2019,18 @@ class _StepThreeState extends State<_StepThree> {
                                 ),
                                 child: Row(
                                   children: [
-                                    Avatar(src: a.trainer.photo, name: a.trainer.displayTitle, size: 38, active: a.mine),
+                                    TapHighlight(
+                                      onTap: () => CoachProfileScreen.open(
+                                        context,
+                                        a.trainer,
+                                        onBook: (a.mine || isFull) ? null : () {
+                                          Navigator.of(context).pop();
+                                          onSlotTap(a.trainer, chosenType, chosenDisc, slot, a.mine, isFull);
+                                        },
+                                      ),
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Avatar(src: a.trainer.photo, name: a.trainer.displayTitle, size: 38, active: a.mine),
+                                    ),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Column(
@@ -2040,7 +2052,14 @@ class _StepThreeState extends State<_StepThree> {
                                           Padding(
                                             padding: const EdgeInsets.only(top: 3),
                                             child: TapHighlight(
-                                              onTap: () => CoachProfileCard.show(context, a.trainer),
+                                              onTap: () => CoachProfileScreen.open(
+                                                context,
+                                                a.trainer,
+                                                onBook: (a.mine || isFull) ? null : () {
+                                                  Navigator.of(context).pop();
+                                                  onSlotTap(a.trainer, chosenType, chosenDisc, slot, a.mine, isFull);
+                                                },
+                                              ),
                                               child: Row(
                                                 mainAxisSize: MainAxisSize.min,
                                                 children: [
