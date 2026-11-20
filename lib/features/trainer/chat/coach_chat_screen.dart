@@ -128,22 +128,28 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   bool get _iAmOwner => _staff.any((p) => p["id"] == _me && p["role"] == "owner");
 
   /// Teammates other than me, plus the business contact.
+  /// Chat history walks this full list, so a past direct thread with the
+  /// owner still appears when it has messages.
   List<Map<String, dynamic>> get _teammates => [
         {"id": "market", "name": kMarketplaceName, "role": "market"},
         ...(_staff.where((p) => p["id"] != _me).toList()
           ..sort((a, b) => ((a["name"] as String?) ?? "").compareTo((b["name"] as String?) ?? ""))),
       ];
 
+  /// "Who are you messaging?" — same people, minus the owner tile for a coach.
+  List<Map<String, dynamic>> get _newChatTeammates =>
+      staffNewChatChoices(_teammates, viewerIsOwner: _iAmOwner);
+
   List<ChatConversation> _staffConversations(Set<String> unreadKeys) {
     final out = <ChatConversation>[];
     for (final t in _teammates) {
       final key = t["id"] as String;
-      final thread = key == "market"
-          ? _staffMessages.where((m) => m["recipient_id"] == null && (_iAmOwner || m["sender_id"] == _me)).toList()
-          : _staffMessages
-              .where((m) =>
-                  (m["sender_id"] == _me && m["recipient_id"] == key) || (m["sender_id"] == key && m["recipient_id"] == _me))
-              .toList();
+      final thread = staffThreadMessages(
+        key: key,
+        me: _me,
+        viewerIsOwner: _iAmOwner,
+        messages: _staffMessages,
+      );
       if (thread.isEmpty) continue;
       final last = thread.last;
       out.add(ChatConversation(
@@ -345,7 +351,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: _RecipientSetup(
           roster: roster,
-          staff: _teammates,
+          staff: _newChatTeammates,
           initialRecipientId: _recipientId,
           initialChannels: _channels,
           confirmLabel: "Save",
@@ -524,7 +530,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           padding: const EdgeInsets.all(16),
           child: _RecipientSetup(
             roster: roster,
-            staff: _teammates,
+            staff: _newChatTeammates,
             initialRecipientId: _recipientId,
             initialChannels: _channels,
             confirmLabel: "Start chat",
