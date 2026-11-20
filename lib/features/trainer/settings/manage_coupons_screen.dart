@@ -1,12 +1,15 @@
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/package_renewal.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/coupon.dart";
 import "../../../core/payments/coupon_duration.dart";
+import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 
 /// Owner-managed coupon-code catalog, reached from Customize Platform's
@@ -159,6 +162,10 @@ class _ManageCouponsScreenState extends ConsumerState<ManageCouponsScreen> {
               ],
             ),
           ),
+          if (ref.watch(trainerAuthProvider) == "owner") ...[
+            const SizedBox(height: 28),
+            const _PackageRenewalOffer(),
+          ],
         ],
       ),
     );
@@ -359,6 +366,185 @@ class _CouponEditFormState extends State<_CouponEditForm> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Owner-only block under Coupons. Coaches never reach Customize Platform,
+/// and this block is also omitted unless the signed-in person is the owner.
+class _PackageRenewalOffer extends ConsumerStatefulWidget {
+  const _PackageRenewalOffer();
+
+  @override
+  ConsumerState<_PackageRenewalOffer> createState() => _PackageRenewalOfferState();
+}
+
+class _PackageRenewalOfferState extends ConsumerState<_PackageRenewalOffer> {
+  late bool _enabled;
+  final _percent = TextEditingController();
+  final _sessions = TextEditingController();
+  bool _dirty = false;
+  bool _saving = false;
+  bool _saved = false;
+  bool _applying = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = ref.read(platformSettingsProvider);
+    _enabled = settings.renewalDiscountEnabled;
+    _percent.text = "${settings.renewalDiscountPercent}";
+    _sessions.text = "${settings.renewalDiscountSessions}";
+  }
+
+  @override
+  void dispose() {
+    _percent.dispose();
+    _sessions.dispose();
+    super.dispose();
+  }
+
+  void _apply(PlatformSettings settings) {
+    _applying = true;
+    _enabled = settings.renewalDiscountEnabled;
+    _percent.text = "${settings.renewalDiscountPercent}";
+    _sessions.text = "${settings.renewalDiscountSessions}";
+    _dirty = false;
+    _error = null;
+    _applying = false;
+  }
+
+  void _touch() {
+    if (_applying) return;
+    setState(() {
+      _dirty = true;
+      _saved = false;
+      _error = null;
+    });
+  }
+
+  String? _validationError() {
+    final percent = int.tryParse(_percent.text.trim());
+    if (percent == null || percent < kRenewDiscountPercentMin || percent > kRenewDiscountPercentMax) {
+      return "Enter a percent from $kRenewDiscountPercentMin to $kRenewDiscountPercentMax.";
+    }
+    final sessions = int.tryParse(_sessions.text.trim());
+    if (sessions == null || sessions < kRenewDiscountSessionsMin || sessions > kRenewDiscountSessionsMax) {
+      return "Enter sessions left from $kRenewDiscountSessionsMin to $kRenewDiscountSessionsMax. At 2 left, the reminder is full price.";
+    }
+    return null;
+  }
+
+  Future<void> _save() async {
+    final problem = _validationError();
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+    final percent = int.parse(_percent.text.trim());
+    final sessions = int.parse(_sessions.text.trim());
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final prev = ref.read(platformSettingsProvider);
+    final next = prev.copyWith(
+      renewalDiscountEnabled: _enabled,
+      renewalDiscountPercent: percent,
+      renewalDiscountSessions: sessions,
+    );
+    try {
+      await SupabaseService.savePlatformSettings(prev, next);
+      ref.read(platformSettingsProvider.notifier).update((_) => next);
+      if (!mounted) return;
+      setState(() {
+        _dirty = false;
+        _saved = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = "Couldn't save — check your connection and try again.");
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<PlatformSettings>(platformSettingsProvider, (prev, next) {
+      if (!_dirty && !_saving) setState(() => _apply(next));
+    });
+    final problem = _validationError();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionLabel("Package renewal offer"),
+        const HintBox(
+          text: "When a session package is running low, the client can renew it at this discount. Turn it off and they are not offered a discount. The reminder at 2 sessions left stays full price either way. If they tap Not now, that package does not get the discount later.",
+        ),
+        const SizedBox(height: 10),
+        AppCard(
+          child: TapHighlight(
+            onTap: () => setState(() {
+              _enabled = !_enabled;
+              _dirty = true;
+              _saved = false;
+              _error = null;
+            }),
+            child: Row(
+              children: [
+                const Expanded(child: Text("Discount on package renewal", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                Icon(_enabled ? LucideIcons.toggleRight : LucideIcons.toggleLeft, size: 30, color: _enabled ? AppColors.gold : AppColors.mute),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        FieldLabeled(
+          label: "Discount percent",
+          child: AppField(
+            controller: _percent,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) => _touch(),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text("A whole number from $kRenewDiscountPercentMin to $kRenewDiscountPercentMax.", style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4)),
+        const SizedBox(height: 10),
+        FieldLabeled(
+          label: "Sessions left when the discount starts",
+          child: AppField(
+            controller: _sessions,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) => _touch(),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          "The discount shows from this many sessions left, down to 3. At 2 sessions left the reminder is full price.",
+          style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+        ),
+        if (problem != null && _dirty) ...[
+          const SizedBox(height: 8),
+          Text(problem, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+        ],
+        if (_error != null && _error != problem) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: TextStyle(color: AppColors.errorText, fontSize: 12)),
+        ],
+        if (_saved && !_dirty) ...[
+          const SizedBox(height: 8),
+          Text("Saved. This is the offer clients see from now on.", style: TextStyle(color: AppColors.success, fontSize: 12, fontWeight: FontWeight.w700)),
+        ],
+        const SizedBox(height: 12),
+        BtnGold(
+          full: true,
+          onPressed: _saving || problem != null ? null : _save,
+          child: Text(_saving ? "Saving…" : "Save"),
+        ),
+      ],
     );
   }
 }

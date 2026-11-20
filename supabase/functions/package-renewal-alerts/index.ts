@@ -6,7 +6,9 @@
 // A signed-in client can call it for themselves, which is how the reminder
 // shows up in the app. The password is not stored in this file.
 //
-// 8 sessions left: "Renew now at 5% off." 2 left: full price.
+// The discount percent and the sessions-left threshold are the owner's
+// saved offer. When nothing has been saved: 5% off at 8 sessions left.
+// 2 left: full price, even if the discount is turned off.
 // Each reminder is sent once. The numbers match packageRenewal.ts and
 // lib/core/utils/package_renewal.dart.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
@@ -14,8 +16,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
 import {
   effectivePackageMax,
+  renewalDiscountBody,
   renewalDiscountCents,
+  renewalDiscountTitle,
   renewalOffer,
+  renewalOfferFromSettings,
 } from "../_shared/packageRenewal.ts";
 
 const CORS_HEADERS = {
@@ -73,6 +78,10 @@ serve(async (req) => {
       if (profile?.role === "client") onlyClient = user.id;
       else if (profile?.role !== "owner") throw new Error("Not allowed.");
     }
+
+    const { data: settingsRow, error: settingsErr } = await admin.from("platform_settings").select("data").eq("id", "global").maybeSingle();
+    if (settingsErr) throw new Error("Couldn't read the renewal offer.");
+    const renewalConfig = renewalOfferFromSettings(settingsRow?.data);
 
     let clientQuery = admin.from("clients").select("profile_id, plans, session_count_override, session_count_override_month");
     if (onlyClient) clientQuery = clientQuery.eq("profile_id", onlyClient);
@@ -146,16 +155,17 @@ serve(async (req) => {
         const already = (paidRows || []).some((p: { client_id: string; plan_id: string; enrollment_start: string }) =>
           p.client_id === clientId && p.plan_id === held.planId && String(p.enrollment_start || "").slice(0, 10) === held.start
         );
-        const offer = renewalOffer(remaining, max, price, forfeited, already);
+        const offer = renewalOffer(remaining, max, price, forfeited, already, renewalConfig);
         if (offer === "none") continue;
 
         const kind = offer === "discount" ? "package_discount" : "package_full";
         const existing = notices.find((n: { kind: string }) => n.kind === kind);
         const name = String(held.plan.name || "package");
-        const off = offer === "discount" ? renewalDiscountCents(price) : 0;
-        const title = offer === "discount" ? "Renew now at 5% off" : "Renew now";
+        const percent = renewalConfig.percent;
+        const off = offer === "discount" ? renewalDiscountCents(price, percent) : 0;
+        const title = offer === "discount" ? renewalDiscountTitle(percent) : "Renew now";
         const body = offer === "discount"
-          ? `Your ${name} has ${remaining} sessions left. Renew now and the price is 5% off. If you skip this, that discount is gone for this package.`
+          ? renewalDiscountBody(name, remaining, percent)
           : `Your ${name} has ${remaining} sessions left. Renew now to keep your sessions going.`;
 
         if (!existing) {
@@ -191,6 +201,7 @@ serve(async (req) => {
               remaining,
               priceCents: price,
               chargeCents: price - off,
+              ...(offer === "discount" ? { discountPercent: percent } : {}),
             });
           }
         }

@@ -19,6 +19,7 @@ class _Offer {
     required this.remaining,
     required this.priceCents,
     required this.chargeCents,
+    required this.discountPercent,
   });
 
   final String planId;
@@ -29,10 +30,17 @@ class _Offer {
   final int priceCents;
   final int chargeCents;
 
+  /// The percent the server used for [chargeCents]. Ignored for a full-price offer.
+  final int discountPercent;
+
   String get kind => offer == RenewalOffer.discount ? "package_discount" : "package_full";
 }
 
-String _money(int cents) => "\$${(cents / 100).toStringAsFixed(2)}";
+int _discountPercent(Map<String, dynamic> row) {
+  final sent = (row["discountPercent"] as num?)?.toInt();
+  if (sent != null && sent >= kRenewDiscountPercentMin && sent <= kRenewDiscountPercentMax) return sent;
+  return kRenewDiscountPercent;
+}
 
 /// The in-app half of the package renewal reminder. The phone notification
 /// is sent by the same server check.
@@ -75,6 +83,7 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
           remaining: (row["remaining"] as num?)?.toInt() ?? 0,
           priceCents: (row["priceCents"] as num?)?.toInt() ?? 0,
           chargeCents: (row["chargeCents"] as num?)?.toInt() ?? 0,
+          discountPercent: _discountPercent(row),
         ));
       }
       if (mounted) setState(() { _offers = next; _loaded = true; _error = null; });
@@ -97,7 +106,7 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
     } catch (_) {
       if (mounted) {
         setState(() => _error = offer.offer == RenewalOffer.discount
-            ? "Couldn't save that, so the 5% is still available."
+            ? renewalDiscountStillThere(offer.discountPercent)
             : "Couldn't close that reminder.");
       }
     } finally {
@@ -107,13 +116,18 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
 
   Future<void> _renew(_Offer offer) async {
     final price = offer.offer == RenewalOffer.discount
-        ? "Renew ${offer.planName} at 5% off? The package price is ${_money(offer.chargeCents)} instead of ${_money(offer.priceCents)}."
-        : "Renew ${offer.planName} for ${_money(offer.chargeCents)}?";
+        ? renewalDiscountQuestion(
+            planName: offer.planName,
+            percent: offer.discountPercent,
+            chargeCents: offer.chargeCents,
+            priceCents: offer.priceCents,
+          )
+        : "Renew ${offer.planName} for ${renewalMoney(offer.chargeCents)}?";
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.card,
-        title: Text(offer.offer == RenewalOffer.discount ? "Renew now at 5% off" : "Renew now"),
+        title: Text(offer.offer == RenewalOffer.discount ? renewalDiscountTitle(offer.discountPercent) : "Renew now"),
         content: Text(
           "$price You'll confirm the charge on the card you have on file before anything is taken. The next screen shows the total, including any card fee.",
           style: const TextStyle(fontSize: 14),
@@ -162,7 +176,7 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
       _offers = _offers.where((o) => o.planId != offer.planId).toList();
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Renewal confirmed. ${_money(offer.chargeCents)} was charged to the card on file, plus any card fee shown on the payment screen.")),
+      SnackBar(content: Text("Renewal confirmed. ${renewalMoney(offer.chargeCents)} was charged to the card on file, plus any card fee shown on the payment screen.")),
     );
   }
 
@@ -178,13 +192,13 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  offer.offer == RenewalOffer.discount ? "RENEW NOW AT 5% OFF" : "RENEW NOW",
+                  offer.offer == RenewalOffer.discount ? renewalDiscountBanner(offer.discountPercent) : "RENEW NOW",
                   style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 0.6),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   offer.offer == RenewalOffer.discount
-                      ? "Your ${offer.planName} has ${offer.remaining} sessions left. Renew now and the price is 5% off. If you skip this, that discount is gone for this package."
+                      ? renewalDiscountBody(planName: offer.planName, remaining: offer.remaining, percent: offer.discountPercent)
                       : "Your ${offer.planName} has ${offer.remaining} sessions left. Renew now to keep your sessions going.",
                   style: const TextStyle(fontSize: 14, height: 1.35),
                 ),

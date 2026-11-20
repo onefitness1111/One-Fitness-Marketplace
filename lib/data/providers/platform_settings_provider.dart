@@ -1,5 +1,6 @@
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/utils/offered_catalog.dart";
+import "../../core/utils/package_renewal.dart";
 
 /// One place the gym runs sessions at (Customize Platform → Location). The
 /// first is the main one; the rest are extra sites a session can be created
@@ -138,6 +139,9 @@ class PlatformSettings {
     this.badgeClientMilestoneCents = 0,
     this.badgeRetentionCents = 0,
     this.beepSounds = const {},
+    this.renewalDiscountEnabled = true,
+    this.renewalDiscountPercent = kRenewDiscountPercent,
+    this.renewalDiscountSessions = kRenewDiscountSessions,
   });
 
   final int lateCancellationHours;
@@ -308,6 +312,20 @@ class PlatformSettings {
   /// type's first option — see resolveSound.
   final Map<String, String> beepSounds;
 
+  /// Package renewal discount (Customize Platform → Coupons). Off means a
+  /// running-out package is not offered a discount. The full-price reminder
+  /// at 2 sessions left is separate and always stays. Defaults match the
+  /// offer from before this could be edited: on, 5%, at 8 sessions left.
+  final bool renewalDiscountEnabled;
+  final int renewalDiscountPercent;
+  final int renewalDiscountSessions;
+
+  RenewalOfferSettings get renewalOffer => RenewalOfferSettings(
+        enabled: renewalDiscountEnabled,
+        percent: renewalDiscountPercent,
+        sessionsLeft: renewalDiscountSessions,
+      );
+
   PlatformSettings copyWith({
     int? lateCancellationHours,
     bool? blockRescheduleInWindow,
@@ -366,6 +384,9 @@ class PlatformSettings {
     int? badgeClientMilestoneCents,
     int? badgeRetentionCents,
     Map<String, String>? beepSounds,
+    bool? renewalDiscountEnabled,
+    int? renewalDiscountPercent,
+    int? renewalDiscountSessions,
   }) =>
       PlatformSettings(
         lateCancellationHours: lateCancellationHours ?? this.lateCancellationHours,
@@ -424,6 +445,9 @@ class PlatformSettings {
         badgeSessionsCoachedCents: badgeSessionsCoachedCents ?? this.badgeSessionsCoachedCents,
         badgeClientMilestoneCents: badgeClientMilestoneCents ?? this.badgeClientMilestoneCents,
         badgeRetentionCents: badgeRetentionCents ?? this.badgeRetentionCents,
+        renewalDiscountEnabled: renewalDiscountEnabled ?? this.renewalDiscountEnabled,
+        renewalDiscountPercent: renewalDiscountPercent ?? this.renewalDiscountPercent,
+        renewalDiscountSessions: renewalDiscountSessions ?? this.renewalDiscountSessions,
       );
 }
 
