@@ -28,6 +28,7 @@ import "../../data/models/coach_merit_badge.dart";
 import "../../data/models/coach_pr_event.dart";
 import "../../data/models/comm_message.dart";
 import "../../data/models/earned_badge.dart";
+import "../../data/models/merit_badge_def.dart";
 import "../../data/models/exercise_def.dart";
 import "../../data/models/food_log.dart";
 import "../../data/models/exercise_prescription.dart";
@@ -4322,9 +4323,12 @@ class SupabaseService {
     try {
       final result = await awardMeritBadge(clientId, event);
       final awarded = result["awarded"];
-      if (awarded is List) return awarded.whereType<String>().toList();
-      if (result["badgeKey"] is String && result["ok"] == true && result["alreadyEarned"] != true) {
-        return [result["badgeKey"] as String];
+      if (awarded is List) {
+        return awarded.whereType<String>().where((key) => meritBadgeByKey(key) != null).toList();
+      }
+      final key = result["badgeKey"];
+      if (key is String && result["ok"] == true && result["alreadyEarned"] != true && meritBadgeByKey(key) != null) {
+        return [key];
       }
     } catch (_) {}
     return const [];
@@ -4355,35 +4359,51 @@ class SupabaseService {
     String clientId,
     String badgeKey, {
     String? sourceRefId,
-  }) => _invokeFunction("award-merit-badge", {
-    "clientId": clientId,
-    "badgeKey": badgeKey,
-    if (sourceRefId != null) "sourceRefId": sourceRefId,
-  });
+  }) {
+    if (badgeKey == "first_session") {
+      return Future.error(Exception("That badge is no longer awarded."));
+    }
+    return _invokeFunction("award-merit-badge", {
+      "clientId": clientId,
+      "badgeKey": badgeKey,
+      if (sourceRefId != null) "sourceRefId": sourceRefId,
+    });
+  }
 
   /// Coach/owner manual award — badgeKey must be one of MERIT_BADGES'
-  /// category:"coach" entries (Record Breaker, Gym Citizen).
+  /// category:"coach" entries (Record Breaker) or a Gym Citizen sub-badge.
+  /// The retired first_session key is refused before any request is sent.
   static Future<Map<String, dynamic>> grantMeritBadge(
     String clientId,
     String badgeKey,
     String? note,
-  ) => _invokeFunction("grant-merit-badge", {
-    "clientId": clientId,
-    "badgeKey": badgeKey,
-    if (note != null) "note": note,
-  });
+  ) {
+    if (badgeKey == "first_session") {
+      return Future.error(Exception("That badge is no longer awarded."));
+    }
+    return _invokeFunction("grant-merit-badge", {
+      "clientId": clientId,
+      "badgeKey": badgeKey,
+      if (note != null) "note": note,
+    });
+  }
 
-  /// Owner-only override — any of the 11 catalog badges, bypassing all
-  /// eligibility checks.
+  /// Owner-only override — any current catalog badge, bypassing eligibility.
+  /// The retired first_session key is refused before any request is sent.
   static Future<Map<String, dynamic>> forceAwardMeritBadge(
     String clientId,
     String badgeKey,
     String? note,
-  ) => _invokeFunction("force-award-merit-badge", {
-    "clientId": clientId,
-    "badgeKey": badgeKey,
-    if (note != null) "note": note,
-  });
+  ) {
+    if (badgeKey == "first_session") {
+      return Future.error(Exception("That badge is no longer awarded."));
+    }
+    return _invokeFunction("force-award-merit-badge", {
+      "clientId": clientId,
+      "badgeKey": badgeKey,
+      if (note != null) "note": note,
+    });
+  }
 
   /// Coach/owner-only removal — only ever allowed for a coach-awarded badge;
   /// the server re-verifies this itself. Soft-delete (revoked_at set).
