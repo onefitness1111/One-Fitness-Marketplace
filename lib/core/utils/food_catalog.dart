@@ -14,6 +14,8 @@ class FoodItem {
     required this.carbs,
     required this.fats,
     this.aliases = const [],
+    this.mealTypes = const [],
+    this.dietTags = const [],
   });
 
   final String name;
@@ -23,6 +25,13 @@ class FoodItem {
   final double carbs;
   final double fats;
   final List<String> aliases;
+
+  /// Empty means [inferredFoodMealTypes] decides. A food can be more than
+  /// one meal, for example lunch and dinner.
+  final List<String> mealTypes;
+
+  /// Empty means [inferredFoodDietTags] decides. Explicit tags win.
+  final List<String> dietTags;
 
   IngredientMacros get perUnit => IngredientMacros(cals: calories, p: protein, c: carbs, f: fats);
 
@@ -178,3 +187,60 @@ bool mealMatchesDiet(MealDef meal, String filter) {
   }
   return meal.dietTags.contains(filter);
 }
+
+/// Slots a catalog meal belongs to. Lunch and dinner count as both unless
+/// [MealDef.alsoFor] says otherwise. A smoothie also counts as a snack.
+List<String> mealSlots(MealDef meal) {
+  if (meal.alsoFor.isNotEmpty) {
+    return {meal.mealType, ...meal.alsoFor}.toList();
+  }
+  if (meal.mealType == "lunch" || meal.mealType == "dinner") {
+    return ["lunch", "dinner"];
+  }
+  if (meal.mealType == "smoothies") return ["smoothies", "snacks"];
+  return [meal.mealType];
+}
+
+List<String> foodMealTypes(FoodItem food) {
+  if (food.mealTypes.isNotEmpty) return food.mealTypes;
+  final n = food.name.toLowerCase();
+  const breakfast = ["egg", "oat", "yogurt", "bacon", "granola"];
+  const snacks = ["almond", "apple", "hummus", "rice cake", "berries", "banana"];
+  if (breakfast.any(n.contains)) return ["breakfast"];
+  if (snacks.any(n.contains)) return ["snacks", "breakfast"];
+  return ["lunch", "dinner"];
+}
+
+List<String> foodDietTags(FoodItem food) {
+  if (food.dietTags.isNotEmpty) return food.dietTags;
+  final n = food.name.toLowerCase();
+  const meat = ["chicken", "steak", "beef", "turkey", "bacon", "salmon", "tuna", "shrimp", "cod", "fish"];
+  const dairy = ["yogurt", "cheese", "milk", "cream"];
+  final dairyHit = dairy.any(n.contains) || (n.contains("butter") && !n.contains("almond") && !n.contains("peanut"));
+  final meatHit = meat.any(n.contains);
+  final tags = <String>["omnivore"];
+  if (!meatHit) tags.add("vegetarian");
+  if (!meatHit && !dairyHit && !n.contains("egg") && !n.contains("honey")) tags.add("vegan");
+  if (!dairyHit) tags.add("dairy-free");
+  if (!ingredientHasGluten(food.name)) tags.add("gluten-free");
+  if (food.carbs <= 8) tags.add("keto");
+  return tags;
+}
+
+bool foodMatchesDiet(FoodItem food, String filter) {
+  if (filter.isEmpty) return true;
+  final tags = foodDietTags(food);
+  if (filter == "vegetarian") return tags.contains("vegetarian") || tags.contains("vegan");
+  return tags.contains(filter);
+}
+
+bool foodMatchesMeal(FoodItem food, String meal) {
+  if (meal.isEmpty || meal == "all") return true;
+  return foodMealTypes(food).contains(meal);
+}
+
+bool mealMatchesSlot(MealDef meal, String mealFilter) {
+  if (mealFilter.isEmpty || mealFilter == "all") return true;
+  return mealSlots(meal).contains(mealFilter);
+}
+

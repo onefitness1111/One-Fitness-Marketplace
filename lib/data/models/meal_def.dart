@@ -14,6 +14,7 @@ class MealDef {
     this.instructions,
     this.notes,
     this.dietTags = const [],
+    this.alsoFor = const [],
     this.isCustom = false,
     this.photoDataUrl,
   });
@@ -29,6 +30,10 @@ class MealDef {
   final String? instructions;
   final String? notes;
   final List<String> dietTags;
+
+  /// Extra meal slots besides [mealType]. Empty means lunch and dinner
+  /// count as both, and a smoothie also counts as a snack.
+  final List<String> alsoFor;
   final bool isCustom;
 
   /// Optional compressed photo (`data:image/jpeg;base64,...`). Absent on
