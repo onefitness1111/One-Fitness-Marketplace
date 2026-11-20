@@ -7,6 +7,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/source_citations.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/program_utils.dart";
+import "../../../core/utils/workout_week.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/comm_message.dart";
 import "../../../data/models/exercise_prescription.dart";
@@ -44,6 +45,8 @@ class _NoteTarget {
 }
 
 class _WorkoutTabState extends ConsumerState<WorkoutTab> {
+  String? _loggingDayId;
+  DateTime _shown = dateOnly(DateTime.now());
   Future<void> _saveSession(WorkoutLogEntry entry) async {
     final client = ref.read(clientRecordProvider);
     // Same id = the same live session: replace, never log it twice.
@@ -292,83 +295,164 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
   @override
   Widget build(BuildContext context) {
     final client = ref.watch(clientRecordProvider);
-    final allNotes = getClientProgramNotes(client);
+    if (_loggingDayId != null) {
+      return Column(
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _loggingDayId = null),
+              icon: Icon(Icons.chevron_left, color: AppColors.txt),
+              label: Text("Program", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          Expanded(
+            child: SessionLoggerView(
+              client: client,
+              authorName: ref.watch(clientInfoProvider).name,
+              authorRole: "client",
+              onSave: _saveSession,
+              initialDayId: _loggingDayId,
+              exerciseFooterBuilder: _exerciseFooter,
+              beepBarBuilder: (names, focusIndex, fullView) => BeepBar(
+                exerciseNames: names,
+                focusIndex: focusIndex,
+                fullView: fullView,
+              ),
+              footer: const Padding(
+                padding: EdgeInsets.fromLTRB(18, 0, 18, 18),
+                child: SourceCitations(sources: kTrainingSources, disclaimer: kTrainingDisclaimer),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final programs = client.savedPrograms.where((p) => p.status == "active" && p.programDays.isNotEmpty).toList();
+    final days = programs.isEmpty ? const <ProgramDay>[] : programs.first.programDays;
+    final today = dateOnly(DateTime.now());
+    final start = weekStart(_shown);
+    final selected = programDayOn(days, _shown);
+    final isToday = dateOnly(_shown) == today;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
       children: [
-        if (allNotes.isNotEmpty)
+        Row(
+          children: [
+            for (var i = 0; i < 7; i++)
+              Expanded(child: _WeekDay(
+                date: start.add(Duration(days: i)),
+                selected: dateOnly(start.add(Duration(days: i))) == dateOnly(_shown),
+                onTap: () => setState(() => _shown = dateOnly(start.add(Duration(days: i)))),
+              )),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (selected == null)
+          Text(
+            "No active workout program yet. Your coach will assign one to your profile.",
+            style: TextStyle(color: AppColors.mute, height: 1.4),
+          )
+        else ...[
+          Text(isToday ? "Today" : _weekday(_shown), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
+          const SizedBox(height: 6),
           Container(
-            margin: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.danger.withValues(alpha: 0.07),
-              border: Border.all(color: AppColors.danger),
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.line),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  "\u{1F4DD} Your program notes (${allNotes.length})",
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.danger,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ...allNotes.map(
-                  (n) => Padding(
-                    padding: const EdgeInsets.only(bottom: 3),
-                    child: RichText(
-                      text: TextSpan(
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.mute,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: "${n.label}: ",
-                            style: TextStyle(color: AppColors.txt),
-                          ),
-                          TextSpan(text: n.text),
-                        ],
-                      ),
+                Text(selected.title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.txt)),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => setState(() => _loggingDayId = selected.id),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.bg,
+                      backgroundColor: AppColors.txt,
+                      side: BorderSide(color: AppColors.txt),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    child: const Text("Start workout", style: TextStyle(fontWeight: FontWeight.w800)),
                   ),
                 ),
               ],
             ),
           ),
-        Expanded(
-          child: SessionLoggerView(
-            client: client,
-            authorName: ref.watch(clientInfoProvider).name,
-            authorRole: "client",
-            onSave: _saveSession,
-            exerciseFooterBuilder: _exerciseFooter,
-            // Only appears while the client's coach actually has the
-            // semi-private session running; BeepBar renders nothing
-            // otherwise.
-            beepBarBuilder: (names, focusIndex, fullView) => BeepBar(
-              exerciseNames: names,
-              focusIndex: focusIndex,
-              fullView: fullView,
-            ),
-            // Guideline 1.4.1 again: a training program is health guidance,
-            // so it carries its sources and the same stop-if-you-feel-unwell
-            // warning, on the screen rather than in a legal page.
-            footer: const Padding(
-              padding: EdgeInsets.fromLTRB(18, 0, 18, 18),
-              child: SourceCitations(
-                sources: kTrainingSources,
-                disclaimer: kTrainingDisclaimer,
+          const SizedBox(height: 16),
+          for (final exercise in selected.exercises)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.line),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(exercise.name, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.txt)),
+                    const SizedBox(height: 2),
+                    Text(
+                      "${exercise.sets} sets · ${exercise.reps} reps${(exercise.weight ?? "").isEmpty ? "" : " · ${exercise.weight}"}",
+                      style: TextStyle(fontSize: 12, color: AppColors.mute),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+        ],
       ],
     );
   }
+}
+
+class _WeekDay extends StatelessWidget {
+  const _WeekDay({required this.date, required this.selected, required this.onTap});
+  final DateTime date;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const names = ["M", "T", "W", "T", "F", "S", "S"];
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Text(names[date.weekday - 1], style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? AppColors.txt : Colors.transparent,
+              shape: BoxShape.circle,
+              border: Border.all(color: selected ? AppColors.txt : AppColors.line),
+            ),
+            child: Text(
+              "${date.day}",
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: selected ? AppColors.bg : AppColors.txt),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _weekday(DateTime date) {
+  const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  return names[date.weekday - 1];
 }

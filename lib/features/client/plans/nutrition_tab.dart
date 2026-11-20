@@ -160,15 +160,7 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
       return ListView(
         padding: const EdgeInsets.all(18),
         children: [
-          FoodLogSection(dayType: _dayType),
-          for (final c in const [("breakfast", "Breakfast"), ("lunch", "Lunch"), ("dinner", "Dinner")])
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: OutlinedButton(
-                onPressed: () => _restaurant(c.$1, c.$2),
-                child: Text("Restaurant for ${c.$2.toLowerCase()}"),
-              ),
-            ),
+          FoodLogSection(),
           const HintBox(text: "Complete your Nutritional Assessment (under Forms) so your coach can build your nutrition program. It'll show up here. You can still log food above."),
         ],
       );
@@ -191,6 +183,13 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const FoodLogSection(),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text("Program details", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w800, fontSize: 14)),
+            iconColor: AppColors.txt,
+            collapsedIconColor: AppColors.mute,
+            children: [
           if (hasTargets) ...[
             Container(
               padding: const EdgeInsets.all(3),
@@ -241,7 +240,6 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
             _CalorieBudgetPanel(mealBudgets: _dayType == "training" ? n.mealBudgets.training : n.mealBudgets.rest, dailyCalTarget: dailyCal),
             const SizedBox(height: 18),
           ],
-          FoodLogSection(dayType: _dayType),
 
           // The client picks their own meals for every category, alongside
           // whatever their coach suggested. Snacks and smoothies
@@ -339,6 +337,8 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
               child: Text(n.guidelines!, style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.6)),
             ),
           ],
+            ],
+          ),
 
           // Directly beneath the guidance, never folded away: App Review
           // guideline 1.4.1 requires health recommendations to carry

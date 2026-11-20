@@ -1498,6 +1498,9 @@ class SupabaseService {
     dietTags: ((j["dietTags"] as List?) ?? const [])
         .whereType<String>()
         .toList(),
+    alsoFor: ((j["alsoFor"] as List?) ?? const [])
+        .whereType<String>()
+        .toList(),
     isCustom: j["isCustom"] as bool? ?? true,
     photoDataUrl: j["photoDataUrl"] as String?,
   );
@@ -5547,6 +5550,7 @@ class SupabaseService {
     "instructions": m.instructions,
     "notes": m.notes,
     "dietTags": m.dietTags,
+    "alsoFor": m.alsoFor,
     "isCustom": m.isCustom,
     if (m.photoDataUrl != null) "photoDataUrl": m.photoDataUrl,
   };
