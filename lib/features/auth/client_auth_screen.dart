@@ -34,6 +34,23 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
     super.dispose();
   }
 
+  Future<void> _forgot(String email, void Function(String) show) async {
+    final address = email.trim();
+    if (address.isEmpty) {
+      show("Enter your email, then tap Forgot password.");
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await SupabaseService.sendPasswordReset(address);
+      if (mounted) show("Reset email sent. Open it on this phone.");
+    } catch (e) {
+      if (mounted) show(authErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _signIn() async {
     if (_email.text.trim().isEmpty || _password.text.isEmpty) {
       setState(() => _error = "Enter your email and password.");
@@ -181,6 +198,15 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
                                   placeholder: "••••••",
                                   obscureText: true,
                                   onChanged: (_) => setState(() => _error = null),
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton(
+                                  onPressed: _busy ? null : () => _forgot(_email.text, (m) => setState(() => _error = m)),
+                                  style: TextButton.styleFrom(foregroundColor: AppColors.txt, padding: EdgeInsets.zero, minimumSize: Size.zero),
+                                  child: const Text("Forgot password?", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                                 ),
                               ),
                               if (_error != null) ...[

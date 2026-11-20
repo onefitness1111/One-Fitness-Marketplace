@@ -5,6 +5,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/notifications/push_prompt.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
@@ -1099,6 +1100,7 @@ class _ComposerState extends State<_Composer> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const ChatSavedNotice(),
+            const PushOffHint(),
             Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -1106,6 +1108,7 @@ class _ComposerState extends State<_Composer> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 110),
                 child: TextField(
+                  onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
                   controller: widget.controller,
       keyboardType: TextInputType.multiline,
       textCapitalization: TextCapitalization.sentences,

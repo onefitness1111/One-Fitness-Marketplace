@@ -426,6 +426,7 @@ class _SquadComposerState extends State<_SquadComposer> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 110),
                 child: TextField(
+                  onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
                   controller: widget.controller,
       keyboardType: TextInputType.multiline,
       textCapitalization: TextCapitalization.sentences,

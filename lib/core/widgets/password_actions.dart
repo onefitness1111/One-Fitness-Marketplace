@@ -1,11 +1,11 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../core/auth/password_rules.dart";
 import "../supabase/supabase_service.dart";
 import "../theme/app_colors.dart";
 import "../utils/write_failure.dart";
 import "../../data/providers/trainer_providers.dart";
-import "widgets.dart";
 
 /// The two ways staff can deal with someone who can't get in, side by side:
 ///
@@ -38,6 +38,9 @@ class PasswordActions extends ConsumerStatefulWidget {
 }
 
 class _PasswordActionsState extends ConsumerState<PasswordActions> {
+  final _next = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _show = false;
   bool _busy = false;
   String? _message;
   bool _isError = false;
@@ -65,11 +68,25 @@ class _PasswordActionsState extends ConsumerState<PasswordActions> {
       await SupabaseService.sendPasswordResetFor(id);
       _say("Reset link sent to the email on their account.");
     } catch (e) {
-      // Was `catch (_)` with a fixed "check your connection" line, so a
-      // rate limit, a rejected address and an unconfigured email provider
-      // all looked identical — and all looked like the user's wifi.
-      _say(writeFailureMessage(e, whatFailed: "Couldn't send the reset email"), error: true);
+      _say(_failure(e, "Couldn't send the reset email"), error: true);
     }
+  }
+
+  /// The edge function already phrases the refusal. A bare network failure
+  /// still gets the connection hint.
+  String _failure(Object e, String whatFailed) {
+    if (e is Exception) {
+      final msg = e.toString().replaceFirst(RegExp(r"^Exception:\s*"), "").trim();
+      if (msg.isNotEmpty) return msg;
+    }
+    return writeFailureMessage(e, whatFailed: whatFailed);
+  }
+
+  @override
+  void dispose() {
+    _next.dispose();
+    _confirm.dispose();
+    super.dispose();
   }
 
   Future<void> _setPassword() async {
@@ -78,186 +95,113 @@ class _PasswordActionsState extends ConsumerState<PasswordActions> {
       _say("Save this profile first, then you can set a password.", error: true);
       return;
     }
-    final chosen = await showKeyboardSheet<String>(
-      context,
-      builder: (ctx) => _SetPasswordDialog(name: widget.name),
-    );
-    if (chosen == null || !mounted) return;
-
+    final problem = passwordChangeError(_next.text, _confirm.text);
+    if (problem != null) {
+      _say(problem, error: true);
+      return;
+    }
     setState(() {
       _busy = true;
       _message = null;
     });
     try {
-      await SupabaseService.adminSetPassword(profileId: id, password: chosen);
+      await SupabaseService.adminSetPassword(profileId: id, password: _next.text);
+      _next.clear();
+      _confirm.clear();
       _say("Password updated. Tell ${widget.name} the new password and ask them to change it after signing in.");
     } catch (e) {
-      _say(e.toString().replaceFirst("Exception: ", ""), error: true);
+      _say(_failure(e, "Couldn't set that password"), error: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isOwner = ref.watch(trainerAuthProvider) == "owner";
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 10),
-        Text(
-          "Password",
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.txt),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _busy ? null : _sendReset,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.gold,
-                  side: BorderSide(color: AppColors.goldDim),
-                  padding: const EdgeInsets.symmetric(vertical: 9),
-                ),
-                icon: const Icon(LucideIcons.mail, size: 13),
-                label: const Text("Send reset email",
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
-              ),
-            ),
-            if (isOwner) ...[
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _setPassword,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.mute,
-                    side: BorderSide(color: AppColors.line),
-                    padding: const EdgeInsets.symmetric(vertical: 9),
-                  ),
-                  icon: const Icon(LucideIcons.keyRound, size: 13),
-                  label: const Text("Set a password",
-                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
-                ),
-              ),
-            ],
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Text(
-            isOwner
-                ? "A reset email lets them choose their own password. Setting one yourself is for someone locked out with no access to their email."
-                : "Sends a link so they can choose a new password themselves.",
-            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
-          ),
-        ),
-        if (_message != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              _message!,
-              style: TextStyle(
-                fontSize: 11.5,
-                height: 1.4,
-                color: _isError ? AppColors.errorText : AppColors.gold,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-      ],
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: BorderSide(color: AppColors.line),
     );
-  }
-}
-
-class _SetPasswordDialog extends StatefulWidget {
-  const _SetPasswordDialog({required this.name});
-  final String name;
-
-  @override
-  State<_SetPasswordDialog> createState() => _SetPasswordDialogState();
-}
-
-class _SetPasswordDialogState extends State<_SetPasswordDialog> {
-  final _a = TextEditingController();
-  final _b = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _a.dispose();
-    _b.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final a = _a.text, b = _b.text;
-    if (a.length < 8) {
-      setState(() => _error = "Use at least 8 characters.");
-      return;
-    }
-    if (a != b) {
-      setState(() => _error = "The two passwords don't match.");
-      return;
-    }
-    Navigator.of(context).pop(a);
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text("Set a password for ${widget.name}",
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
-        Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            "They'll be able to sign in with this straight away. Tell them in "
-            "person and ask them to change it once they're in — anyone who "
-            "overhears it can use it.",
-            style: TextStyle(fontSize: 12.5, height: 1.5, color: AppColors.mute),
-          ),
-          const SizedBox(height: 14),
-          FieldLabeled(
-            label: "New password",
-            child: AppField(kind: FieldKind.password,
-              controller: _a,
-              obscureText: true,
-              placeholder: "At least 8 characters",
-              onChanged: (_) => setState(() => _error = null),
+        const SizedBox(height: 14),
+        Text("Password", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.txt)),
+        const SizedBox(height: 4),
+        Text(
+          isOwner
+              ? "Set a password for ${widget.name}, or email them a link."
+              : "Email them a link so they can choose a new password.",
+          style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.4),
+        ),
+        if (isOwner) ...[
+          const SizedBox(height: 10),
+          TextField(
+            controller: _next,
+            obscureText: !_show,
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+            onChanged: (_) => setState(() => _message = null),
+            style: TextStyle(color: AppColors.txt, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: "New password",
+              hintStyle: TextStyle(color: AppColors.mute),
+              filled: true,
+              fillColor: AppColors.bg,
+              isDense: true,
+              border: border,
+              enabledBorder: border,
+              focusedBorder: border,
+              suffixIcon: IconButton(
+                onPressed: () => setState(() => _show = !_show),
+                icon: Icon(_show ? LucideIcons.eyeOff : LucideIcons.eye, size: 16, color: AppColors.mute),
+              ),
             ),
           ),
           const SizedBox(height: 8),
-          FieldLabeled(
-            label: "Confirm password",
-            child: AppField(kind: FieldKind.password,
-              controller: _b,
-              obscureText: true,
-              placeholder: "••••••••",
-              onChanged: (_) => setState(() => _error = null),
+          TextField(
+            controller: _confirm,
+            obscureText: !_show,
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+            onChanged: (_) => setState(() => _message = null),
+            style: TextStyle(color: AppColors.txt, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: "Confirm password",
+              hintStyle: TextStyle(color: AppColors.mute),
+              filled: true,
+              fillColor: AppColors.bg,
+              isDense: true,
+              border: border,
+              enabledBorder: border,
+              focusedBorder: border,
             ),
           ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(_error!,
-                  style: TextStyle(fontSize: 12, color: AppColors.errorText)),
+          const SizedBox(height: 10),
+          OutlinedButton(
+            onPressed: _busy ? null : _setPassword,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.txt,
+              side: BorderSide(color: AppColors.txt),
+              padding: const EdgeInsets.symmetric(vertical: 12),
             ),
+            child: const Text("Set new password", style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
         ],
+        TextButton(
+          onPressed: _busy ? null : _sendReset,
+          style: TextButton.styleFrom(foregroundColor: AppColors.mute),
+          child: Text(_busy ? "Working…" : "Send reset email", style: const TextStyle(fontWeight: FontWeight.w700)),
         ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(child: BtnGhost(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel"))),
-            const SizedBox(width: 8),
-            Expanded(child: BtnGold(onPressed: _submit, child: const Text("Set password"))),
-          ],
-        ),
+        if (_message != null)
+          Text(
+            _message!,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: _isError ? AppColors.errorText : AppColors.txt,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
       ],
     );
   }
 }
+

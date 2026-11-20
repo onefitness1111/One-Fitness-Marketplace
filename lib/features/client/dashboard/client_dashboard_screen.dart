@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/notifications/push_prompt.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
@@ -157,6 +158,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
     }
 
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,6 +167,8 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             "Hey $firstName, it's ${_hasSessionToday ? "lifting day!" : "a rest day"}",
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           )),
+          const SizedBox(height: 8),
+          const TurnOnNotificationsBanner(),
           const SizedBox(height: 2),
           stag(Padding(
             padding: const EdgeInsets.only(bottom: 16),

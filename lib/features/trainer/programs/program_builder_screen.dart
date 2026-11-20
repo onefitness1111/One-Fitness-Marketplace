@@ -12,7 +12,10 @@ import "../../../data/models/saved_program.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../core/programs/exchange_exercise.dart";
+import "../../../core/widgets/swipe_reveal.dart";
 import "exercise_picker_sheet.dart";
+import "exercise_prescription_editor.dart";
 
 String _uid() => DateTime.now().microsecondsSinceEpoch.toString();
 
@@ -128,6 +131,27 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
           .map((d) => d.id == dayId ? d.copyWith(exercises: exercises) : d)
           .toList(),
     );
+  }
+
+  Future<void> _exchangeExercise(ExercisePrescription current) async {
+    final dayId = _activeDayId;
+    if (dayId == null) return;
+    final picked = await showExercisePickerSheet(context);
+    if (picked == null || !mounted) return;
+    final next = exchangeExerciseOnDay(
+      days: _days,
+      dayId: dayId,
+      prescriptionId: current.id,
+      name: picked.name,
+      exerciseId: picked.id,
+      group: picked.primaryMuscle,
+    );
+    _saveDays(next);
+    final replaced = next.expand((day) => day.exercises).where((exercise) => exercise.id == current.id);
+    if (replaced.isEmpty || !mounted) return;
+    final edited = await showExercisePrescriptionEditor(context, replaced.first);
+    if (edited == null || !mounted) return;
+    _updateItem(current.id, (_) => edited);
   }
 
   Future<void> _addExercise() async {
@@ -578,6 +602,14 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                 text:
                     'No exercises yet for ${activeDay.title}. Tap "Add exercise" to pull from the library.',
               ),
+            if (activeDay.exercises.isNotEmpty && widget.clientId != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  "Swipe an exercise left to exchange it.",
+                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
+              ),
             if (activeDay.exercises.length > 1)
               Padding(
                 padding: EdgeInsets.only(bottom: 8),
@@ -601,7 +633,7 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
               final canCouple =
                   i < activeDay.exercises.length - 1 && !isSuperset;
               final flagged = ex.clientNoteText != null;
-              return Container(
+              final card = Container(
                 margin: EdgeInsets.only(bottom: groupContinues ? 4 : 12),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -897,6 +929,8 @@ class _ProgramBuilderScreenState extends ConsumerState<ProgramBuilderScreen> {
                   ],
                 ),
               );
+              if (widget.clientId == null) return card;
+              return SwipeReveal(onExchange: () => _exchangeExercise(ex), child: card);
               },
             ),
             BtnGold(

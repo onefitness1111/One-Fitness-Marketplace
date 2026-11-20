@@ -77,41 +77,52 @@ class CoachLedDaysNotifier extends Notifier<List<CoachLedDay>> {
 final coachLedDaysProvider =
     NotifierProvider<CoachLedDaysNotifier, List<CoachLedDay>>(CoachLedDaysNotifier.new);
 
+Future<List<dynamic>> _coachLedRows(Future<dynamic> query) async {
+  try {
+    final rows = await query;
+    return rows is List ? rows : const [];
+  } catch (_) {
+    return const [];
+  }
+}
+
 Future<List<CoachLedDay>> loadCoachLedDays() async {
   final found = <String, CoachLedDay>{};
-  try {
-    final runs = await SupabaseService.client
-        .from("live_day_runs")
-        .select("client_id, day_id, started_role, trainer_id, ended_at")
-        .isFilter("ended_at", null);
-    for (final raw in runs as List) {
-      final row = (raw as Map).cast<String, dynamic>();
-      final role = row["started_role"]?.toString();
-      if (role != "coach" && role != "owner") continue;
-      final clientId = row["client_id"]?.toString() ?? "";
-      final dayId = row["day_id"]?.toString() ?? "";
-      if (clientId.isEmpty || dayId.isEmpty) continue;
-      found[clientId] = CoachLedDay(
-        clientId: clientId,
-        dayId: dayId,
-        trainerId: row["trainer_id"]?.toString(),
-      );
-    }
-  } catch (_) {}
-  try {
-    final rows = await SupabaseService.client
-        .from("live_set_logs")
-        .select("client_id, day_id, exercise_name, ended_at")
-        .eq("exercise_name", "__day_started_coach__")
-        .isFilter("ended_at", null);
-    for (final raw in rows as List) {
-      final row = (raw as Map).cast<String, dynamic>();
-      final clientId = row["client_id"]?.toString() ?? "";
-      final dayId = row["day_id"]?.toString() ?? "";
-      if (clientId.isEmpty || dayId.isEmpty || found.containsKey(clientId)) continue;
-      found[clientId] = CoachLedDay(clientId: clientId, dayId: dayId);
-    }
-  } catch (_) {}
+  final both = await Future.wait([
+    _coachLedRows(
+      SupabaseService.client
+          .from("live_day_runs")
+          .select("client_id, day_id, started_role, trainer_id, ended_at")
+          .isFilter("ended_at", null),
+    ),
+    _coachLedRows(
+      SupabaseService.client
+          .from("live_set_logs")
+          .select("client_id, day_id, exercise_name, ended_at")
+          .eq("exercise_name", "__day_started_coach__")
+          .isFilter("ended_at", null),
+    ),
+  ]);
+  for (final raw in both[0]) {
+    final row = (raw as Map).cast<String, dynamic>();
+    final role = row["started_role"]?.toString();
+    if (role != "coach" && role != "owner") continue;
+    final clientId = row["client_id"]?.toString() ?? "";
+    final dayId = row["day_id"]?.toString() ?? "";
+    if (clientId.isEmpty || dayId.isEmpty) continue;
+    found[clientId] = CoachLedDay(
+      clientId: clientId,
+      dayId: dayId,
+      trainerId: row["trainer_id"]?.toString(),
+    );
+  }
+  for (final raw in both[1]) {
+    final row = (raw as Map).cast<String, dynamic>();
+    final clientId = row["client_id"]?.toString() ?? "";
+    final dayId = row["day_id"]?.toString() ?? "";
+    if (clientId.isEmpty || dayId.isEmpty || found.containsKey(clientId)) continue;
+    found[clientId] = CoachLedDay(clientId: clientId, dayId: dayId);
+  }
   return found.values.toList();
 }
 
@@ -170,13 +181,17 @@ class BeepRealtime {
 
   Future<void> start() async {
     await stop();
+    final sessionsF = SupabaseService.loadLiveSessions();
+    final daysF = loadCoachLedDays();
     try {
-      _ref.read(liveSessionsProvider.notifier).setAll(await SupabaseService.loadLiveSessions());
-      _ref.read(coachLedDaysProvider.notifier).setAll(await loadCoachLedDays());
+      _ref.read(liveSessionsProvider.notifier).setAll(await sessionsF);
     } catch (_) {
       // A failed first load is not fatal — the subscriptions below still
       // deliver anything that changes from here on.
     }
+    try {
+      _ref.read(coachLedDaysProvider.notifier).setAll(await daysF);
+    } catch (_) {}
 
     _runsChannel = SupabaseService.client
         .channel("session_runs_live")

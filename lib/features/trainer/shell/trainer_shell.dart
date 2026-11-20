@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
@@ -12,6 +14,7 @@ import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../challenges/coach_challenges_screen.dart";
 import "../chat/coach_chat_screen.dart";
@@ -208,6 +211,9 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     final mode = ref.watch(trainerModeProvider);
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
+    if (mode == "staff" || mode == "mypay" || mode == "reports") {
+      unawaited(ensureTrainerPay(ref));
+    }
 
     void go(String key) {
       ref.read(trainerModeProvider.notifier).go(key);
@@ -280,7 +286,10 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         Builder(
                           key: kStaffTourKeys["staff-hamburger"],
                           builder: (context) => IconButton(
-                            onPressed: () => Scaffold.of(context).openDrawer(),
+                            onPressed: () {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              Scaffold.of(context).openDrawer();
+                            },
                             icon: Icon(
                               LucideIcons.menu,
                               size: 22,

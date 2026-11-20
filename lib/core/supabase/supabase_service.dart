@@ -3,6 +3,7 @@ import "dart:typed_data";
 import "package:http/http.dart" as http;
 import "package:supabase_flutter/supabase_flutter.dart";
 import "package:uuid/uuid.dart";
+import "../../data/cache/bootstrap_cache.dart";
 import "streamed_upload.dart";
 import "../utils/coach_merit_badge_utils.dart";
 import "../utils/image_shrink.dart";
@@ -99,20 +100,8 @@ class SupabaseService {
   /// { id, role, name, email, phone, photo_url } or null if signed out /
   /// the account's app-side row was removed.
   static Future<Map<String, dynamic>?> getSessionProfile() async {
-    final user = currentUser;
-    if (user == null) return null;
-    final directory = await loadProfileDirectory();
-    Map<String, dynamic>? row;
-    for (final p in directory) {
-      if (p["id"] == user.id) {
-        row = p;
-        break;
-      }
-    }
-    if (row == null) return null;
-    final profile = Map<String, dynamic>.from(row);
-    await _attachContacts([profile]);
-    return profile;
+    if (currentUser == null) return null;
+    return sessionProfileIn(await directoryWithContacts());
   }
 
   static Future<void> signIn(String email, String password) async {
@@ -495,7 +484,9 @@ class SupabaseService {
   }
 
   static Future<void> signOut() async {
+    final id = currentUser?.id;
     await client.auth.signOut();
+    await BootstrapCache.deleteFor(id);
   }
 
   // ── Read ──────────────────────────────────────────────────────────
@@ -515,6 +506,25 @@ class SupabaseService {
     final rows = await client.rpc("profile_directory");
     if (rows is! List) return [];
     return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
+  }
+
+  /// One directory read plus one contact read. Sign-in reuses this list for
+  /// the session profile, the roster, and the coach names.
+  static Future<List<Map<String, dynamic>>> directoryWithContacts() async {
+    final directory = await loadProfileDirectory();
+    final copies = [for (final p in directory) Map<String, dynamic>.from(p)];
+    await _attachContacts(copies);
+    return copies;
+  }
+
+  /// The signed-in row inside a directory that already has contact fields.
+  static Map<String, dynamic>? sessionProfileIn(List<Map<String, dynamic>> directory) {
+    final user = currentUser;
+    if (user == null) return null;
+    for (final p in directory) {
+      if (p["id"] == user.id) return p;
+    }
+    return null;
   }
 
   static Future<List<dynamic>> _rpcList(String name, Map<String, dynamic> params) async {
@@ -580,7 +590,11 @@ class SupabaseService {
   /// client doesn't need the whole-gym roster fetched first just to find
   /// their own row in it.
   static Future<ClientInfo?> loadClientById(String id) async {
-    final directory = await loadProfileDirectory();
+    return clientFromDirectory(await directoryWithContacts(), id);
+  }
+
+  /// One client's row from a directory that already has contact fields.
+  static Future<ClientInfo?> clientFromDirectory(List<Map<String, dynamic>> directory, String id) async {
     Map<String, dynamic>? profile;
     for (final p in directory) {
       if (p["id"] == id) {
@@ -588,9 +602,7 @@ class SupabaseService {
         break;
       }
     }
-    if (profile == null) return null;
-    final profileRow = Map<String, dynamic>.from(profile);
-    await _attachContacts([profileRow]);
+    if (profile == null || profile["role"] != "client") return null;
     final c = await client
         .from("clients")
         .select(_clientColumns)
@@ -598,49 +610,241 @@ class SupabaseService {
         .maybeSingle();
     final clientRow = Map<String, dynamic>.from(c ?? const {});
     if (c != null) await _attachBilling([clientRow]);
-    return _clientInfoFromRow(profileRow, clientRow);
+    return _clientInfoFromRow(profile, clientRow);
   }
 
   static Future<List<ClientInfo>> loadRoster() async {
-    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "client").toList();
-    if (profiles.isEmpty) return [];
-    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
-    await _attachContacts(profileRows);
-    final ids = profileRows.map((p) => p["id"] as String).toList();
+    return rosterFromDirectory(await directoryWithContacts());
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchClientRows(List<String> ids) async {
+    if (ids.isEmpty) return [];
     final clients = await client
         .from("clients")
         .select(_clientColumns)
         .inFilter("profile_id", ids);
-    final clientRows = [for (final c in clients) Map<String, dynamic>.from(c as Map)];
+    final clientRows = [for (final c in clients as List) Map<String, dynamic>.from(c as Map)];
     await _attachBilling(clientRows);
-    final byId = {for (final c in clientRows) c["profile_id"] as String: c};
+    return clientRows;
+  }
+
+  static List<ClientInfo> rosterFromParts(
+    List<Map<String, dynamic>> directory,
+    List<Map<String, dynamic>> clientRows,
+  ) {
+    final profileRows = [
+      for (final p in directory)
+        if (p["role"] == "client") Map<String, dynamic>.from(p),
+    ];
+    final byId = {for (final c in clientRows) if (c["profile_id"] is String) c["profile_id"] as String: c};
     return _safeMap(
       profileRows,
       (p) => _clientInfoFromRow(p, byId[p["id"]] ?? const {}),
     );
   }
 
-  static Future<List<Trainer>> loadTrainers() async {
-    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "coach").toList();
-    if (profiles.isEmpty) return [];
-    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
-    await _attachContacts(profileRows);
-    final ids = profileRows.map((p) => p["id"] as String).toList();
+  static Future<List<ClientInfo>> rosterFromDirectory(List<Map<String, dynamic>> directory) async {
+    final ids = [
+      for (final p in directory)
+        if (p["role"] == "client" && p["id"] is String) p["id"] as String,
+    ];
+    if (ids.isEmpty) return [];
+    return rosterFromParts(directory, await fetchClientRows(ids));
+  }
+
+  static Future<List<Trainer>> loadTrainers({bool includePay = true}) async {
+    return trainersFromDirectory(await directoryWithContacts(), includePay: includePay);
+  }
+
+  /// Coach names from a directory that already has contact fields.
+  /// [includePay] is false at sign-in; pay loads when a pay screen opens.
+  static Future<List<Map<String, dynamic>>> fetchTrainerRows(List<String> ids) async {
+    if (ids.isEmpty) return [];
     final trainers = await client
         .from("trainers")
         .select(_trainerColumns)
         .inFilter("profile_id", ids);
-    final trainerRows = [for (final t in trainers) Map<String, dynamic>.from(t as Map)];
-    await _attachPay(trainerRows);
-    final byId = {for (final t in trainerRows) t["profile_id"] as String: t};
+    return [for (final t in trainers as List) Map<String, dynamic>.from(t as Map)];
+  }
+
+  static List<Trainer> trainersFromParts(
+    List<Map<String, dynamic>> directory,
+    List<Map<String, dynamic>> trainerRows,
+  ) {
+    final profileRows = [
+      for (final p in directory)
+        if (p["role"] == "coach") Map<String, dynamic>.from(p),
+    ];
+    final byId = {for (final t in trainerRows) if (t["profile_id"] is String) t["profile_id"] as String: t};
     final withRow = profileRows.where((p) => byId.containsKey(p["id"]));
     return _safeMap(withRow, (p) => _trainerFromRow(p, byId[p["id"]]!));
   }
 
-  static Future<List<Booking>> loadBookings() async {
-    final rows = await client.from("bookings").select();
-    return _safeMap(rows, _bookingFromRow);
+  static Future<List<Trainer>> trainersFromDirectory(
+    List<Map<String, dynamic>> directory, {
+    bool includePay = true,
+  }) async {
+    final ids = [
+      for (final p in directory)
+        if (p["role"] == "coach" && p["id"] is String) p["id"] as String,
+    ];
+    if (ids.isEmpty) return [];
+    final trainerRows = await fetchTrainerRows(ids);
+    if (includePay) await _attachPay(trainerRows);
+    return trainersFromParts(directory, trainerRows);
   }
+
+  static List<Map<String, dynamic>> payRowsFrom(dynamic raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final row in raw)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
+
+  static Map<String, dynamic> _mapList(dynamic raw) {
+    if (raw is Map) return raw.cast<String, dynamic>();
+    return const {};
+  }
+
+  static List<Map<String, dynamic>> _rowList(dynamic raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final row in raw)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
+
+  /// Builds the on-device snapshot from the raw rows just fetched. The
+  /// directory already has contact fields and the server-stripped names.
+  static Map<String, dynamic> encodeFirstScreen({
+    required List<Map<String, dynamic>> directory,
+    required List<Map<String, dynamic>> clientRows,
+    required List<Map<String, dynamic>> trainerRows,
+    required List<Map<String, dynamic>> bookingRows,
+    required List<Map<String, dynamic>> recordRows,
+    required Map<String, dynamic>? ownRecord,
+    required List<Map<String, dynamic>> planRows,
+    required List<Map<String, dynamic>> waiverRows,
+    required Map<String, dynamic>? settings,
+    required List<Map<String, dynamic>>? payRows,
+    required bool isClient,
+  }) =>
+      {
+        "v": 1,
+        "isClient": isClient,
+        "directory": directory,
+        "clientRows": clientRows,
+        "trainerRows": trainerRows,
+        "bookingRows": bookingRows,
+        "recordRows": recordRows,
+        "ownRecord": ownRecord,
+        "planRows": planRows,
+        "waiverRows": waiverRows,
+        "settings": settings,
+        "payRows": payRows,
+      };
+
+  static CachedFirstScreen? decodeFirstScreen(Map<String, dynamic> json) {
+    try {
+      final directory = _rowList(json["directory"]);
+      final isClient = json["isClient"] == true;
+      var trainers = trainersFromParts(directory, _rowList(json["trainerRows"]));
+      final payRows = _rowList(json["payRows"]);
+      if (payRows.isNotEmpty) {
+        final byId = {for (final row in payRows) row["profile_id"]?.toString(): row};
+        trainers = [
+          for (final t in trainers)
+            byId[t.id] == null ? t : _trainerWithPay(t, byId[t.id]!),
+        ];
+      }
+      final profile = sessionProfileIn(directory);
+      final ownId = profile?["id"]?.toString() ?? "";
+      final records = isClient
+          ? (ownId.isEmpty
+              ? <String, ClientRecord>{}
+              : {ownId: recordFromData(ownId, _mapList(json["ownRecord"]))})
+          : recordsFromDashboardRows(_rowList(json["recordRows"]));
+      var roster = rosterFromParts(directory, _rowList(json["clientRows"]));
+      if (isClient) roster = roster.where((c) => c.id == ownId).toList();
+      return CachedFirstScreen(
+        profile: profile,
+        roster: roster,
+        trainers: trainers,
+        bookings: bookingsFromRows(_rowList(json["bookingRows"])),
+        records: records,
+        plans: plansFromRows(_rowList(json["planRows"])),
+        waivers: waiversFromRows(_rowList(json["waiverRows"])),
+        settings: settingsFromJson(json["settings"] is Map ? (json["settings"] as Map).cast<String, dynamic>() : null),
+        payReady: payRows.isNotEmpty,
+        isClient: isClient,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print("[SupabaseService] bootstrap cache unreadable: $e");
+      return null;
+    }
+  }
+
+  /// Pay rates for coaches the caller is allowed to see (their own row, or
+  /// every coach when the caller is the owner). Other fields stay as they are.
+  static Future<List<Trainer>> attachTrainerPay(List<Trainer> trainers) async {
+    if (trainers.isEmpty) return trainers;
+    final ids = trainers.map((t) => t.id).toList();
+    final rows = await _rpcList("trainer_pay_for", {"p_ids": ids});
+    final byId = <String, Map<String, dynamic>>{
+      for (final raw in rows)
+        if (raw is Map && raw["profile_id"] is String)
+          raw["profile_id"] as String: raw.cast<String, dynamic>(),
+    };
+    if (trainers.isNotEmpty && byId.isEmpty) {
+      throw Exception("Pay rates have not loaded yet.");
+    }
+    return [
+      for (final t in trainers)
+        if (byId[t.id] == null) t else _trainerWithPay(t, byId[t.id]!),
+    ];
+  }
+
+  static Trainer _trainerWithPay(Trainer t, Map<String, dynamic> pay) => Trainer(
+        id: t.id,
+        name: t.name,
+        title: t.title,
+        photo: t.photo,
+        phone: t.phone,
+        email: t.email,
+        locationName: t.locationName,
+        locationAddress: t.locationAddress,
+        locations: t.locations,
+        bio: t.bio,
+        beforeAfters: t.beforeAfters,
+        availability: t.availability,
+        commissionRate: (pay["commission_rate"] as num?) ?? t.commissionRate,
+        disciplines: t.disciplines,
+        sessionTypes: t.sessionTypes,
+        reviewedByOwner: t.reviewedByOwner,
+        signupAt: t.signupAt,
+        payoutMode: pay["payout_mode"] as String? ?? t.payoutMode,
+        payoutRateCents: _asInt(pay["payout_rate_cents"]) ?? t.payoutRateCents,
+        referralCommissionPercent: (pay["referral_commission_percent"] as num?) ?? t.referralCommissionPercent,
+        coachCode: t.coachCode,
+        unavailability: t.unavailability,
+        coachName: t.coachName,
+        secondaryCoachName: t.secondaryCoachName,
+        firstName: t.firstName,
+        lastName: t.lastName,
+      );
+
+  static Future<List<Map<String, dynamic>>> fetchBookingRows() async {
+    final rows = await client.from("bookings").select();
+    return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
+  }
+
+  static List<Booking> bookingsFromRows(List<Map<String, dynamic>> rows) =>
+      _safeMap(rows, _bookingFromRow);
+
+  static Future<List<Booking>> loadBookings() async =>
+      bookingsFromRows(await fetchBookingRows());
 
   /// Maps a realtime `bookings` row. Null when the row is unusable.
   static Booking? bookingFromRealtimeRow(Map<String, dynamic> row) {
@@ -666,6 +870,53 @@ class SupabaseService {
   /// Ids are chunked so the `in` filter never pushes the request URL past
   /// what the gateway accepts. A client with no row gets the same blank
   /// record [loadClientRecord] would have returned.
+  /// Every client record this person may see, in one request, without
+  /// waiting for the roster. Only the fields the coach dashboard reads:
+  /// programs, nutrition, the live split, logged sessions, and notes.
+  static const dashboardRecordColumns =
+      "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,programDays:data->programDays,workoutLogs:data->workoutLogs,trainerNotes:data->trainerNotes";
+
+  static Future<List<Map<String, dynamic>>> fetchDashboardRecordRows() async {
+    final rows = await client.from("client_records").select(dashboardRecordColumns);
+    return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
+  }
+
+  static Map<String, ClientRecord> recordsFromDashboardRows(List<Map<String, dynamic>> rows) {
+    final out = <String, ClientRecord>{};
+    for (final row in rows) {
+      final id = row["profile_id"]?.toString() ?? "";
+      if (id.isEmpty) continue;
+      dynamic pick(String key) => row[key] ?? row["data->$key"];
+      try {
+        out[id] = _clientRecordFromJson(id, {
+          "savedPrograms": pick("savedPrograms"),
+          "nutrition": pick("nutrition"),
+          "programDays": pick("programDays"),
+          "workoutLogs": pick("workoutLogs"),
+          "trainerNotes": pick("trainerNotes"),
+        });
+      } catch (e) {
+        // ignore: avoid_print
+        print("[SupabaseService] skipped client record $id: $e");
+      }
+    }
+    return out;
+  }
+
+  static Future<Map<String, dynamic>> fetchOwnRecordData(String id) async {
+    final row = await client
+        .from("client_records")
+        .select("data")
+        .eq("profile_id", id)
+        .maybeSingle();
+    final data = row?["data"];
+    if (data is Map) return data.cast<String, dynamic>();
+    return const {};
+  }
+
+  static ClientRecord recordFromData(String id, Map<String, dynamic> data) =>
+      _clientRecordFromJson(id, data);
+
   static Future<Map<String, ClientRecord>> loadClientRecords(
     List<String> ids,
   ) async {
@@ -694,8 +945,12 @@ class SupabaseService {
   /// Owner-edited membership plans (jsonb-blob-per-row, same convention as
   /// products/waiver_docs/programs_library/custom_meals — id + a `data`
   /// blob whose keys are already camelCase, unlike the normalized tables).
-  static Future<List<MembershipPlan>> loadMembershipPlans() async {
+  static Future<List<Map<String, dynamic>>> fetchPlanRows() async {
     final rows = await client.from("membership_plans").select();
+    return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
+  }
+
+  static List<MembershipPlan> plansFromRows(List<Map<String, dynamic>> rows) {
     final plans = _safeMap(
       rows,
       (r) =>
@@ -717,6 +972,9 @@ class SupabaseService {
     });
     return plans;
   }
+
+  static Future<List<MembershipPlan>> loadMembershipPlans() async =>
+      plansFromRows(await fetchPlanRows());
 
   /// Writes the owner's chosen plan order, as a `sortOrder` on each plan.
   ///
@@ -1021,13 +1279,18 @@ class SupabaseService {
         .toList(),
   );
 
-  static Future<List<WaiverDoc>> loadWaiverDocs() async {
+  static Future<List<Map<String, dynamic>>> fetchWaiverRows() async {
     final rows = await client.from("waiver_docs").select();
-    return _safeMap(
-      rows,
-      (r) => _waiverDocFromJson((r["data"] as Map).cast<String, dynamic>()),
-    );
+    return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
   }
+
+  static List<WaiverDoc> waiversFromRows(List<Map<String, dynamic>> rows) => _safeMap(
+        rows,
+        (r) => _waiverDocFromJson((r["data"] as Map).cast<String, dynamic>()),
+      );
+
+  static Future<List<WaiverDoc>> loadWaiverDocs() async =>
+      waiversFromRows(await fetchWaiverRows());
 
   static WaiverDoc _waiverDocFromJson(Map<String, dynamic> j) => WaiverDoc(
     id: j["id"] as String,
@@ -1491,17 +1754,23 @@ class SupabaseService {
   /// Returns
   /// null if no row exists yet, in which case the caller keeps the model's
   /// own defaults (same as every other "real, even if absent" domain here).
-  static Future<PlatformSettings?> loadPlatformSettings() async {
+  static Future<Map<String, dynamic>?> fetchSettingsJson() async {
     final row = await client
         .from("platform_settings")
         .select("data")
         .eq("id", "global")
         .maybeSingle();
     if (row == null) return null;
-    return _platformSettingsFromJson(
-      (row["data"] as Map).cast<String, dynamic>(),
-    );
+    final data = row["data"];
+    if (data is! Map) return null;
+    return data.cast<String, dynamic>();
   }
+
+  static PlatformSettings? settingsFromJson(Map<String, dynamic>? json) =>
+      json == null ? null : _platformSettingsFromJson(json);
+
+  static Future<PlatformSettings?> loadPlatformSettings() async =>
+      settingsFromJson(await fetchSettingsJson());
 
   static PlatformSettings _platformSettingsFromJson(Map<String, dynamic> j) {
     final access = ((j["access"] as Map?) ?? const {}).cast<String, dynamic>();
@@ -1940,7 +2209,12 @@ class SupabaseService {
   /// account (a brand-new signup sets the initial password directly, see
   /// signUpClient/signUpCoach).
   static Future<void> sendPasswordReset(String email) =>
-      client.auth.resetPasswordForEmail(email);
+      client.auth.resetPasswordForEmail(email.trim(), redirectTo: "onefitness://reset-password");
+
+  static Future<void> updatePassword(String password) =>
+      client.auth.updateUser(UserAttributes(password: password));
+
+  static Future<void> recoverSessionFromUrl(Uri uri) => client.auth.getSessionFromUrl(uri);
 
   /// Staff sends a reset link. The address stays on the server, so a coach
   /// can do this for a client without being shown the email.
@@ -3713,12 +3987,17 @@ class SupabaseService {
   /// of coaches — and RLS already narrows it to the caller's own sessions
   /// plus any they're booked into.
   static Future<List<LiveSession>> loadLiveSessions() async {
-    try {
-      // Finishes runs whose clock ended recently. Older stuck rows are
-      // left alone. A missing function (not deployed yet) is ignored.
-      await client.rpc("close_recent_expired_session_runs");
-    } catch (_) {}
-    final rows = await client.from("session_runs").select().isFilter("ended_at", null);
+    // The close and the read are independent enough to share the wait.
+    // A run that expires during this overlap can show as live until the
+    // next refresh; the close still runs.
+    final close = () async {
+      try {
+        await client.rpc("close_recent_expired_session_runs");
+      } catch (_) {}
+    }();
+    final rowsFuture = client.from("session_runs").select().isFilter("ended_at", null);
+    await close;
+    final rows = await rowsFuture;
     return rows
         .map((r) => LiveSession.fromJson(r.cast<String, dynamic>()))
         .whereType<LiveSession>()
@@ -4204,13 +4483,12 @@ class SupabaseService {
     required String profileId,
     required String password,
   }) async {
-    final res = await client.functions.invoke(
-      "admin-set-password",
-      body: {"profileId": profileId, "password": password},
-    );
-    final data = res.data;
-    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
-    if (res.status != 200) throw Exception("Couldn't set that password. Please try again.");
+    final data = await _invokeFunction("admin-set-password", {
+      "profileId": profileId,
+      "password": password,
+    });
+    final err = data["error"];
+    if (err != null) throw Exception(err.toString());
   }
 
   /// Takes the late-cancellation fee from the client's saved card. The
@@ -4739,6 +5017,8 @@ class SupabaseService {
     "percentOff": c.percentOff,
     "flatOffCents": c.flatOffCents,
     "archived": c.archived,
+    "duration": c.duration,
+    "durationInMonths": c.durationInMonths,
   };
 
   static Coupon _couponFromJson(Map<String, dynamic> j) => Coupon(
@@ -4748,6 +5028,8 @@ class SupabaseService {
     percentOff: _asInt(j["percentOff"]) ?? 0,
     flatOffCents: _asInt(j["flatOffCents"]) ?? 0,
     archived: j["archived"] as bool? ?? false,
+    duration: j["duration"] as String? ?? "once",
+    durationInMonths: _asInt(j["durationInMonths"]) ?? 1,
   );
 
   static Future<List<Coupon>> loadCoupons() async {

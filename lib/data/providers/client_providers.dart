@@ -109,6 +109,8 @@ class TrainersNotifier extends Notifier<List<Trainer>> {
   void remove(String id) => state = state.where((t) => t.id != id).toList();
 
   void setAll(List<Trainer> next) => state = next;
+
+  List<Trainer> snapshot() => List<Trainer>.from(state);
 }
 
 final trainersProvider = NotifierProvider<TrainersNotifier, List<Trainer>>(TrainersNotifier.new);

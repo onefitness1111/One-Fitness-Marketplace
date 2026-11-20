@@ -3,6 +3,7 @@ import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/membership_utils.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/payments/membership_proration.dart";
 import "../../../core/payments/payment_method_picker.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../core/supabase/supabase_service.dart";
@@ -291,7 +292,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                   style: TextStyle(color: AppColors.txt, fontSize: 13),
                   items: [
                     const DropdownMenuItem<String?>(value: null, child: Text("No coupon")),
-                    ...coupons.map((c) => DropdownMenuItem<String?>(value: c.id, child: Text("${c.code} — ${c.valueLabel}"))),
+                    ...coupons.map((c) => DropdownMenuItem<String?>(value: c.id, child: Text("${c.code} — ${c.durationLabel}"))),
                   ],
                   onChanged: (v) => setState(() {
                     _couponId = v;
@@ -304,6 +305,31 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                 placeholder: "Type a code if the client has one",
                 textCapitalization: TextCapitalization.characters,
               ),
+          ],
+          if (plan != null && effectivePaymentType(plan) == "subscription" && (isOwner ? (_priceOverrideCents ?? plan.priceCents) : plan.priceCents) > 0) ...[
+            const SizedBox(height: 10),
+            Builder(builder: (context) {
+              final price = isOwner ? (_priceOverrideCents ?? plan.priceCents) : plan.priceCents;
+              final settings = ref.watch(platformSettingsProvider);
+              final anchor = resolveAnchorDay(
+                clientDay: widget.info.billingAnchorDay,
+                planDay: plan.renewalDay,
+                platformDay: settings.defaultBillingAnchorDay,
+              );
+              final typed = ref.watch(couponsProvider.notifier).byCode(isOwner ? (coupon?.code ?? "") : _couponTyped.text.trim());
+              final quote = membershipFirstCharge(now: DateTime.now(), priceCents: price, anchorDay: anchor);
+              final fee = processingFeeCents(
+                enabled: settings.cardFee.enabled,
+                structure: settings.cardFee.structure,
+                percent: settings.cardFee.percent,
+                flatCents: settings.cardFee.flatCents,
+                baseCents: quote?.proratedCents ?? price,
+              );
+              return Text(
+                "${_takePaymentLine(price, anchor, typed ?? coupon)}${fee > 0 ? " Card fee ${money(fee)} on today's ${quote == null ? "amount" : "prorated amount"}." : ""}",
+                style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.4),
+              );
+            }),
           ],
           const SizedBox(height: 16),
           if (_error != null)
@@ -428,7 +454,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Payment received — ${plan.name} is being activated for ${widget.info.name}.")),
+          SnackBar(content: Text(result.receipt ?? "Payment received — ${plan.name} is being activated for ${widget.info.name}.")),
         );
         widget.onBack();
       }
@@ -437,13 +463,13 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
       SupabaseService.sendPushNotification(
         profileId: widget.info.id,
         title: "Payment received",
-        body: "Your card was charged for ${plan.name}.",
+        body: result.receipt ?? "Your card was charged for ${plan.name}.",
         sms: true,
       ).catchError((_) {});
       SupabaseService.sendEmail(
         profileId: widget.info.id,
         subject: "Payment received — ${plan.name}",
-        text: "Hi ${widget.info.name},\n\nYour card was charged for ${plan.name} at ONE Fitness.\n\n— ONE Fitness",
+        text: "Hi ${widget.info.name},\n\n${result.receipt ?? "Your card was charged for ${plan.name} at ONE Fitness."}\n\n— ONE Fitness",
       ).catchError((_) {});
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceFirst("Exception: ", ""));
@@ -451,6 +477,19 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
       if (mounted) setState(() => _busy = false);
     }
   }
+}
+
+String _takePaymentLine(int priceCents, int? anchorDay, Coupon? coupon) {
+  final quote = membershipFirstCharge(now: DateTime.now(), priceCents: priceCents, anchorDay: anchorDay);
+  if (quote == null) return "Today ${money(priceCents)}. Then ${money(priceCents)} each month from this date.";
+  return firstChargeSentence(
+    quote: quote,
+    couponType: coupon?.type,
+    percentOff: coupon?.percentOff ?? 0,
+    flatOffCents: coupon?.flatOffCents ?? 0,
+    duration: coupon?.duration ?? "once",
+    durationInMonths: coupon?.durationInMonths ?? 1,
+  );
 }
 
 /// Plans bucketed by category, in the gym's own category order.

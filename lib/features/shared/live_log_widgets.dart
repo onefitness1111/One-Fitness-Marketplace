@@ -109,6 +109,7 @@ class _LiveNotesBoxState extends State<LiveNotesBox> {
                 children: [
                   Expanded(
                     child: TextField(
+                      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
                       controller: _text,
                       minLines: 1,
                       maxLines: 3,

@@ -14,6 +14,7 @@ import "../../../core/utils/coach_merit_badge_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/report_utils.dart";
+import "../../../core/widgets/password_actions.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
@@ -367,6 +368,11 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
                     Text("Email: ${t.email ?? '—'}", style: TextStyle(fontSize: 12, color: AppColors.mute)),
                     const SizedBox(height: 4),
                     Text("Phone: ${t.phone ?? '—'}", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                    PasswordActions(
+                      profileId: t.id,
+                      email: t.email ?? "",
+                      name: t.displayTitle,
+                    ),
                     if (t.signupAt != null) ...[
                       const SizedBox(height: 4),
                       Text("Signed up: ${niceDate(t.signupAt!)}", style: TextStyle(fontSize: 12, color: AppColors.mute)),

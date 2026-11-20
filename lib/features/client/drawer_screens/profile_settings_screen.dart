@@ -15,6 +15,8 @@ import "../../../core/legal/terms_screen.dart";
 import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/blocked_users_screen.dart";
 import "../../../core/widgets/delete_account_screen.dart";
+import "../../../core/notifications/push_prompt.dart";
+import "../../../core/widgets/change_password_form.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
@@ -236,12 +238,12 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: AppColors.line)),
               ),
-              child: _SettingRow(
-                icon: LucideIcons.bell,
-                label: "Notification Preferences",
-                detail: "App notifications ${info.pushOptIn ? "on" : "off"} · SMS ${info.smsOptIn ? "on" : "off"}",
-                onTap: () => setState(() => _section = "notifications"),
-              ),
+              child:           _SettingRow(
+            icon: LucideIcons.bell,
+            label: "Notifications",
+            detail: ref.watch(pushNoticeProvider).authorized ? "On" : "Off",
+            onTap: () => ref.read(pushNoticeProvider.notifier).enable(),
+          ),
             ),
           ),
 
@@ -602,8 +604,6 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
 
   bool _saving = false;
   String? _error;
-  bool _resetBusy = false;
-  bool _resetSent = false;
 
   Future<void> _pickPhoto() async {
     setState(() => _pickingPhoto = true);
@@ -631,32 +631,6 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
         () => _birthday.text =
             "${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}",
       );
-  }
-
-  Future<void> _sendPasswordReset() async {
-    final email = _email.text.trim();
-    if (email.isEmpty) {
-      setState(
-        () => _error = "An email is required before sending a reset link.",
-      );
-      return;
-    }
-    setState(() {
-      _resetBusy = true;
-      _error = null;
-    });
-    try {
-      await SupabaseService.sendPasswordReset(email);
-      if (mounted) setState(() => _resetSent = true);
-    } catch (e) {
-      if (mounted)
-        setState(
-          () => _error =
-              writeFailureMessage(e, whatFailed: "Couldn't send the reset email"),
-        );
-    } finally {
-      if (mounted) setState(() => _resetBusy = false);
-    }
   }
 
   Future<void> _save() async {
@@ -870,38 +844,7 @@ class _EditProfileSectionState extends ConsumerState<_EditProfileSection> {
             ),
           ),
           const SizedBox(height: 18),
-          Container(
-            height: 1,
-            color: AppColors.line,
-            margin: const EdgeInsets.symmetric(vertical: 2),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            "Password changes go through email now — send a reset link to ${_email.text.trim().isEmpty ? "this account's email" : _email.text.trim()}.",
-            style: TextStyle(fontSize: 12, color: AppColors.mute),
-          ),
-          const SizedBox(height: 8),
-          if (_resetSent)
-            Text(
-              "✓ Reset email sent.",
-              style: TextStyle(
-                color: AppColors.gold,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            )
-          else
-            BtnGhost(
-              onPressed: _resetBusy ? null : _sendPasswordReset,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(LucideIcons.lock, size: 14),
-                  const SizedBox(width: 6),
-                  Text(_resetBusy ? "Sending…" : "Send password reset email"),
-                ],
-              ),
-            ),
+          ChangePasswordForm(email: _email.text.trim()),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 10),

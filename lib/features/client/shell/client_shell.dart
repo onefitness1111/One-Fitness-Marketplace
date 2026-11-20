@@ -482,8 +482,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                             Builder(
                               key: kDashboardTourKeys["dash-hamburger"],
                               builder: (context) => IconButton(
-                                onPressed: () =>
-                                    Scaffold.of(context).openDrawer(),
+                                onPressed: () {
+                                  FocusManager.instance.primaryFocus?.unfocus();
+                                  Scaffold.of(context).openDrawer();
+                                },
                                 icon: Icon(
                                   LucideIcons.menu,
                                   size: 22,

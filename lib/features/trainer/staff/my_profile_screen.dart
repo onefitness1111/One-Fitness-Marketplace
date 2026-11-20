@@ -9,6 +9,8 @@ import "../../../data/models/trainer.dart" show sameBeforeAfters;
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/blocked_users_screen.dart";
 import "../../../core/widgets/delete_account_screen.dart";
+import "../../../core/notifications/push_prompt.dart";
+import "../../../core/widgets/change_password_form.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
@@ -42,6 +44,7 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
         child: BlockedUsersScreen(onBack: _close),
       );
     }
+
     if (_section == "terms") {
       return LocalBackScope(
         isOpen: true,
@@ -70,6 +73,21 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
     if (matches.isEmpty) {
       return const Padding(padding: EdgeInsets.all(18), child: HintBox(text: "Profile not found."));
     }
+    if (_section == "password") {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: _close,
+        child: ListView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.all(18),
+          children: [
+            BackBar(onBack: _close, title: "Change password"),
+            const SizedBox(height: 14),
+            ChangePasswordForm(email: matches.first.email ?? ""),
+          ],
+        ),
+      );
+    }
 
     return Column(
       children: [
@@ -79,6 +97,17 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
         const Padding(
           padding: EdgeInsets.fromLTRB(18, 14, 18, 4),
           child: ThemeModePicker(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() => _section = "password"),
+              style: TextButton.styleFrom(foregroundColor: AppColors.txt, padding: EdgeInsets.zero),
+              child: const Text("Change password", style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ),
         ),
         Expanded(
           child: TrainerEditForm(
