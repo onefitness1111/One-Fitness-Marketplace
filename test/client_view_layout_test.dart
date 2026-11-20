@@ -43,6 +43,10 @@ void main() {
     expect(find.text("Note"), findsOneWidget);
     expect(find.text("RECENT"), findsNothing);
     expect(tester.getSize(find.byKey(const Key("quick-action-Message"))), const Size(32, 32));
+    final gap = tester.getTopLeft(find.byKey(const Key("quick-action-Message"))).dy -
+        tester.getBottomLeft(tabs).dy;
+    expect(gap, greaterThanOrEqualTo(8));
+    expect(gap, lessThanOrEqualTo(12));
 
     await tester.tap(find.descendant(of: tabs, matching: find.text("More")));
     await tester.pump();

@@ -261,3 +261,21 @@ class PointsLedgerNotifier extends Notifier<List<PointsLedgerEntry>> {
 }
 
 final pointsLedgerProvider = NotifierProvider<PointsLedgerNotifier, List<PointsLedgerEntry>>(PointsLedgerNotifier.new);
+
+/// Owner profiles from the directory. Clients use this only to keep an old
+/// direct thread in history. It is not a person they can start a chat with.
+class OwnerContact {
+  const OwnerContact({required this.id, required this.name});
+
+  final String id;
+  final String name;
+}
+
+class OwnerDirectory extends Notifier<List<OwnerContact>> {
+  @override
+  List<OwnerContact> build() => const [];
+
+  void setAll(List<OwnerContact> next) => state = next;
+}
+
+final ownerDirectoryProvider = NotifierProvider<OwnerDirectory, List<OwnerContact>>(OwnerDirectory.new);

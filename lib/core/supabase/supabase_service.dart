@@ -4437,11 +4437,13 @@ class SupabaseService {
     required String channel,
     required bool allClients,
     List<String> clientIds = const [],
+    List<String> channels = const [],
     String? subject,
   }) =>
       _invokeFunction("broadcast-message", {
         "text": text,
         "channel": channel,
+        if (channels.isNotEmpty) "channels": channels,
         "all": allClients,
         "clientIds": clientIds,
         if (subject != null && subject.trim().isNotEmpty) "subject": subject.trim(),

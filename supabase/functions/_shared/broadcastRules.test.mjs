@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   broadcastChannel,
-  broadcastChannelFromSet,
+  broadcastWays,
   previewBroadcast,
   scopeBroadcast,
   smsQuietHours,
@@ -14,14 +14,13 @@ const clients = [
   { id: "c", primaryTrainerId: "pat", phone: "5553334444", email: "c@gym.test", smsOptIn: true },
 ];
 
-test("only app, app plus text, or email alone are allowed", () => {
-  assert.equal(broadcastChannelFromSet(["inapp"]), "app");
-  assert.equal(broadcastChannelFromSet(["sms", "inapp"]), "app_sms");
-  assert.equal(broadcastChannelFromSet(["email"]), "email");
-  assert.equal(broadcastChannelFromSet(["sms"]), null);
-  assert.equal(broadcastChannelFromSet(["email", "inapp"]), null);
-  assert.equal(broadcastChannelFromSet(["email", "sms"]), null);
-  assert.equal(broadcastChannelFromSet(["inapp", "sms", "email"]), null);
+test("any mix of in app, text, and email is allowed, and empty is not", () => {
+  assert.deepEqual(broadcastWays(["inapp"]), { app: true, sms: false, email: false });
+  assert.deepEqual(broadcastWays(["sms", "inapp"]), { app: true, sms: true, email: false });
+  assert.deepEqual(broadcastWays(["email", "inapp"]), { app: true, sms: false, email: true });
+  assert.deepEqual(broadcastWays(["inapp", "sms", "email"]), { app: true, sms: true, email: true });
+  assert.equal(broadcastWays([]), null);
+  assert.deepEqual(broadcastWays({ channel: "app_sms" }), { app: true, sms: true, email: false });
   assert.equal(broadcastChannel("sms"), null);
   assert.equal(broadcastChannel("app_sms"), "app_sms");
 });
@@ -61,7 +60,7 @@ test("quiet hours are before 8am and from 9pm Pacific", () => {
 
 test("the preview skips a missing phone, an opt-out, and a missing email", () => {
   const text = previewBroadcast({
-    channel: "app_sms",
+    ways: { app: true, sms: true },
     recipients: clients.filter((c) => c.primaryTrainerId === "chris"),
     now: new Date("2026-01-15T18:00:00Z"),
   });
@@ -70,7 +69,7 @@ test("the preview skips a missing phone, an opt-out, and a missing email", () =>
   assert.equal(text.skippedNoPhone, 1);
 
   const stopped = previewBroadcast({
-    channel: "app_sms",
+    ways: { app: true, sms: true },
     recipients: [{ id: "a", phone: "555", smsOptIn: true, smsOptedOut: true }],
     now: new Date("2026-07-15T20:00:00Z"),
   });

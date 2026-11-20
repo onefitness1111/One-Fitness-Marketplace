@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
+import "../../../core/chat/client_recipients.dart";
 import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
@@ -131,14 +132,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  List<Trainer> _candidateCoaches(ClientInfo info, List<Trainer> trainers, PlatformSettings settings) {
+  List<Trainer> _scopedCoaches(ClientInfo info, List<Trainer> trainers, PlatformSettings settings) {
     // "Allow clients to message any coach" off (the default) scopes the
     // picker to coaches the client actually has a relationship with.
     final scoped = settings.clientsCanMessageAnyCoach
         ? trainers
         : trainers.where((t) => t.id == info.primaryTrainerId).toList();
-    final real = scoped.isNotEmpty ? scoped : trainers;
-    return [...real, Trainer(id: "business", name: kMarketplaceName)];
+    return scoped.isNotEmpty ? scoped : trainers;
   }
 
   Future<void> _openChangeSheet({
@@ -295,8 +295,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final client = ref.watch(clientRecordProvider);
     final trainers = ref.watch(trainersProvider);
     final settings = ref.watch(platformSettingsProvider);
-    final candidates = _candidateCoaches(info, trainers, settings);
-    final realCandidates = candidates.where((t) => t.id != "business").toList();
+    final owners = ref.watch(ownerDirectoryProvider);
+    final scoped = _scopedCoaches(info, trainers, settings);
+    final reach = clientRecipients(
+      coachIds: scoped.map((t) => t.id),
+      ownerIds: owners.map((o) => o.id).toSet(),
+      messageTrainerIds: client.comms.map((m) => m.trainerId),
+    );
+    final realCandidates = [
+      for (final t in scoped)
+        if (reach.pickerCoachIds.contains(t.id)) t,
+    ];
+    final pastOwners = [
+      for (final owner in owners)
+        if (reach.historyIds.contains(owner.id) && realCandidates.every((t) => t.id != owner.id))
+          Trainer(
+            id: owner.id,
+            name: owner.name,
+            coachName: owner.name.isEmpty ? null : owner.name,
+          ),
+    ];
+    final candidates = [
+      ...realCandidates,
+      ...pastOwners,
+      Trainer(id: "business", name: kMarketplaceName),
+    ];
 
     if (_view == _ChatView.picker || (_view == _ChatView.thread && !_isSetUp)) {
       return LocalBackScope(

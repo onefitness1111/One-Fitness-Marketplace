@@ -12,7 +12,7 @@ class ChatSavedNotice extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Text(
-        "ONE Fitness can see this chat.",
+        "ONE Fitness Marketplace can see this chat.",
         textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 13,

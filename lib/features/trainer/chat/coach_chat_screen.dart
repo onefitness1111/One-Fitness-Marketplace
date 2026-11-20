@@ -15,6 +15,7 @@ import "../../../core/widgets/message_reactions.dart";
 import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
+import "../../../core/widgets/send_via_chips.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
@@ -905,20 +906,9 @@ class _RecipientSetupState extends State<_RecipientSetup> {
               ),
           ],
           const SizedBox(height: 12),
-          Text("Send via — pick any", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              for (final ch in chatChannelOrder) ...[
-                if (ch != chatChannelOrder.first) const SizedBox(width: 8),
-                _SegOption(
-                  label: chatChannelLabels[ch]!,
-                  selected: _channels.contains(ch),
-                  multi: true,
-                  onTap: () => setState(() => _channels = toggleChannel(_channels, ch)),
-                ),
-              ],
-            ],
+          SendViaChips(
+            channels: _channels,
+            onChanged: (next) => setState(() => _channels = next),
           ),
           // Clients aren't asked for a number any more, so a coach picking
           // SMS needs to know up front when there's nothing to text —
@@ -946,59 +936,6 @@ class _RecipientSetupState extends State<_RecipientSetup> {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _SegOption extends StatelessWidget {
-  const _SegOption({required this.label, required this.selected, required this.onTap, this.multi = false});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// Several of these can be on at once — the tick is what stops three lit
-  /// segments reading as a broken radio group.
-  final bool multi;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = selected ? AppColors.onGold : AppColors.mute;
-    return Expanded(
-      child: Semantics(
-        checked: multi ? selected : null,
-        selected: multi ? null : selected,
-        child: TapHighlight(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? AppColors.gold : AppColors.card,
-              border: Border.all(color: selected ? AppColors.gold : AppColors.line),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (multi) ...[
-                  Icon(selected ? LucideIcons.check : LucideIcons.plus, size: 12, color: fg),
-                  const SizedBox(width: 4),
-                ],
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: fg),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

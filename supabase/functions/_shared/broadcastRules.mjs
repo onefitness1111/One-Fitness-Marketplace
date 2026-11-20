@@ -8,12 +8,18 @@ export function broadcastChannel(raw) {
   return BROADCAST_CHANNELS.includes(value) ? value : null;
 }
 
-/** A chip set is allowed only for app, app+sms, or email alone. */
-export function broadcastChannelFromSet(channels) {
-  const names = new Set((channels || []).map((c) => String(c || "").trim()).filter(Boolean));
-  if (names.size === 1 && names.has("inapp")) return "app";
-  if (names.size === 2 && names.has("inapp") && names.has("sms")) return "app_sms";
-  if (names.size === 1 && names.has("email")) return "email";
+/** Chip names, or the older single channel string. Empty is not a send. */
+export function broadcastWays(input) {
+  const listed = Array.isArray(input?.channels) ? input.channels : Array.isArray(input) ? input : null;
+  if (listed) {
+    const names = new Set(listed.map((c) => String(c || "").trim()).filter(Boolean));
+    const ways = { app: names.has("inapp"), sms: names.has("sms"), email: names.has("email") };
+    return ways.app || ways.sms || ways.email ? ways : null;
+  }
+  const single = broadcastChannel(typeof input === "string" ? input : input?.channel);
+  if (single === "app") return { app: true, sms: false, email: false };
+  if (single === "app_sms") return { app: true, sms: true, email: false };
+  if (single === "email") return { app: false, sms: false, email: true };
   return null;
 }
 
@@ -57,7 +63,7 @@ export function canText(person) {
   return Boolean(phone) && person?.smsOptIn === true && person?.smsOptedOut !== true;
 }
 
-export function previewBroadcast({ channel, recipients, now, refused = 0 }) {
+export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
   let sms = 0;
   let skippedNoPhone = 0;
   let skippedOptOut = 0;
@@ -65,22 +71,24 @@ export function previewBroadcast({ channel, recipients, now, refused = 0 }) {
   let email = 0;
   let skippedNoEmail = 0;
   const quiet = smsQuietHours(now);
+  const appOn = ways?.app === true;
+  const smsOn = ways?.sms === true;
+  const emailOn = ways?.email === true;
   for (const person of recipients || []) {
-    if (channel === "email") {
-      if (String(person.email || "").trim()) email += 1;
-      else skippedNoEmail += 1;
-      continue;
-    }
-    if (channel === "app_sms") {
+    if (smsOn) {
       if (!String(person.phone || "").trim()) skippedNoPhone += 1;
       else if (person.smsOptIn !== true || person.smsOptedOut === true) skippedOptOut += 1;
       else if (quiet) skippedQuietHours += 1;
       else sms += 1;
     }
+    if (emailOn) {
+      if (String(person.email || "").trim()) email += 1;
+      else skippedNoEmail += 1;
+    }
   }
   return {
     recipients: (recipients || []).length,
-    app: channel === "email" ? 0 : (recipients || []).length,
+    app: appOn ? (recipients || []).length : 0,
     sms,
     email,
     skippedNoPhone,
