@@ -8,24 +8,51 @@ import "../theme/app_colors.dart";
 /// Citations for health guidance, with the disclaimer that goes with them.
 ///
 /// App Review guideline 1.4.1 requires that an app showing health or
-/// medical recommendations cites its sources, and that "the citations to
-/// the sources should be easy for the user to find". So this sits directly
-/// under the guidance it supports — expanded by default, not folded away
-/// behind a tap, and not moved off to a legal screen.
-class SourceCitations extends StatelessWidget {
+/// medical recommendations cites its sources, and that the citations are
+/// easy for the user to find. By default every source is on screen under
+/// the guidance (the training screen). Pass [initiallyVisible] to keep the
+/// first sources — and the disclaimer — on screen with no extra tap, and
+/// to tuck the rest behind one control. That control stays on this page.
+/// The citations are not moved to a legal screen.
+class SourceCitations extends StatefulWidget {
   const SourceCitations({
     super.key,
     required this.sources,
     required this.disclaimer,
+    this.initiallyVisible,
   });
 
   final List<HealthSource> sources;
   final String disclaimer;
 
+  /// How many sources show before "Show N more sources". Null shows every
+  /// source immediately, which is what screens other than nutrition use.
+  final int? initiallyVisible;
+
+  @override
+  State<SourceCitations> createState() => _SourceCitationsState();
+}
+
+class _SourceCitationsState extends State<SourceCitations> {
+  bool _expanded = false;
+
+  bool get _canFold =>
+      widget.initiallyVisible != null &&
+      widget.initiallyVisible! < widget.sources.length &&
+      widget.initiallyVisible! > 0;
+
+  int get _shownCount {
+    if (!_canFold || _expanded) return widget.sources.length;
+    return widget.initiallyVisible!;
+  }
+
   Future<void> _open(BuildContext context, HealthSource s) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final ok = await launchUrl(Uri.parse(s.url), mode: LaunchMode.externalApplication);
+      final ok = await launchUrl(
+        Uri.parse(s.url),
+        mode: LaunchMode.externalApplication,
+      );
       if (!ok) throw Exception("could not launch");
     } catch (_) {
       // The citation still has to be usable if the browser won't open —
@@ -38,6 +65,16 @@ class SourceCitations extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final disclaimer = Text(
+      widget.disclaimer,
+      style: TextStyle(fontSize: 11.5, color: AppColors.mute, height: 1.5),
+    );
+    final hidden =
+        widget.sources.length -
+        (widget.initiallyVisible ?? widget.sources.length);
+    final moreLabel = hidden == 1
+        ? "Show 1 more source ⌄"
+        : "Show $hidden more sources ⌄";
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(top: 14, bottom: 4),
@@ -66,17 +103,20 @@ class SourceCitations extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            disclaimer,
-            style: TextStyle(fontSize: 11.5, color: AppColors.mute, height: 1.5),
-          ),
-          const SizedBox(height: 12),
+          // Default: the disclaimer leads, then every source. Folded: the
+          // first sources lead, and the disclaimer stays under them so it
+          // is never behind the "show more" tap. Guideline 1.4.1.
+          if (!_canFold) ...[disclaimer, const SizedBox(height: 12)],
           Text(
             "This guidance is based on:",
-            style: TextStyle(fontSize: 11.5, color: AppColors.txt, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: 11.5,
+              color: AppColors.txt,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 6),
-          for (final s in sources)
+          for (final s in widget.sources.take(_shownCount))
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: TapHighlight(
@@ -115,20 +155,51 @@ class SourceCitations extends StatelessWidget {
                           ),
                           Padding(
                             padding: EdgeInsets.only(left: 6, top: 2),
-                            child: Icon(LucideIcons.externalLink, size: 12, color: AppColors.gold),
+                            child: Icon(
+                              LucideIcons.externalLink,
+                              size: 12,
+                              color: AppColors.gold,
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 1),
                       Text(
                         "${s.publisher} · ${s.year}",
-                        style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.3),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.mute,
+                          height: 1.3,
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
             ),
+          if (_canFold)
+            Center(
+              child: TapHighlight(
+                onTap: () => setState(() => _expanded = !_expanded),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 4,
+                    horizontal: 8,
+                  ),
+                  child: Text(
+                    _expanded ? "Show fewer ⌃" : moreLabel,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.mute,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (_canFold) ...[const SizedBox(height: 8), disclaimer],
         ],
       ),
     );
