@@ -1,16 +1,17 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/workout_logging.dart";
 import "../../../core/legal/health_sources.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/source_citations.dart";
 import "../../../core/utils/date_utils.dart";
-import "../../../core/utils/program_utils.dart";
 import "../../../core/motion/motion.dart";
 import "../../../core/motion/stagger_in.dart";
 import "../../../core/utils/workout_week.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/models/client_record.dart";
 import "../../../data/models/comm_message.dart";
 import "../../../data/models/exercise_prescription.dart";
 import "../../../data/models/program_day.dart";
@@ -48,17 +49,31 @@ class _NoteTarget {
 
 class _WorkoutTabState extends ConsumerState<WorkoutTab> {
   String? _loggingDayId;
-  DateTime _shown = dateOnly(DateTime.now());
+  String? _openDayId;
+
   Future<void> _saveSession(WorkoutLogEntry entry) async {
     final client = ref.read(clientRecordProvider);
     // Same id = the same live session: replace, never log it twice.
-    final updatedLogs = [...client.workoutLogs.where((l) => l.id != entry.id), entry];
+    final updatedLogs = [
+      ...client.workoutLogs.where((l) => l.id != entry.id),
+      entry,
+    ];
     await SupabaseService.appendWorkoutLog(client.id, entry);
     final info = ref.read(clientInfoProvider);
-    flagSessionSwaps(entry: entry, clientName: info.name, coachId: info.primaryTrainerId);
-    await SupabaseService.awardAutomaticPoints(client.id, "workout_streak", "scan");
+    flagSessionSwaps(
+      entry: entry,
+      clientName: info.name,
+      coachId: info.primaryTrainerId,
+    );
+    await SupabaseService.awardAutomaticPoints(
+      client.id,
+      "workout_streak",
+      "scan",
+    );
     final freshBadges = await SupabaseService.loadMeritBadgesFor(client.id);
-    ref.read(earnedBadgesProvider.notifier).replaceForClient(client.id, freshBadges);
+    ref
+        .read(earnedBadgesProvider.notifier)
+        .replaceForClient(client.id, freshBadges);
     ref
         .read(clientRecordProvider.notifier)
         .update(
@@ -306,7 +321,13 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             child: TextButton.icon(
               onPressed: () => setState(() => _loggingDayId = null),
               icon: Icon(Icons.chevron_left, color: AppColors.txt),
-              label: Text("Program", style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
+              label: Text(
+                "Program",
+                style: TextStyle(
+                  color: AppColors.txt,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
           Expanded(
@@ -324,145 +345,248 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
               ),
               footer: const Padding(
                 padding: EdgeInsets.fromLTRB(18, 0, 18, 18),
-                child: SourceCitations(sources: kTrainingSources, disclaimer: kTrainingDisclaimer),
+                child: SourceCitations(
+                  sources: kTrainingSources,
+                  disclaimer: kTrainingDisclaimer,
+                ),
               ),
             ),
           ),
         ],
       );
     } else {
-    final programs = client.savedPrograms.where((p) => p.status == "active" && p.programDays.isNotEmpty).toList();
-    final days = programs.isEmpty ? const <ProgramDay>[] : programs.first.programDays;
-    final today = dateOnly(DateTime.now());
-    final start = weekStart(_shown);
-    final selected = programDayOn(days, _shown);
-    final isToday = dateOnly(_shown) == today;
+      page = _programPage(client);
+    }
+    return AnimatedSwitcher(
+      duration: reduceMotionOf(context)
+          ? const Duration(milliseconds: 80)
+          : motionExpand,
+      child: KeyedSubtree(key: ValueKey(_loggingDayId ?? "plan"), child: page),
+    );
+  }
 
-    page = ListView(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
-      children: [
-        Row(
-          children: [
-            for (var i = 0; i < 7; i++)
-              Expanded(child: _WeekDay(
-                date: start.add(Duration(days: i)),
-                selected: dateOnly(start.add(Duration(days: i))) == dateOnly(_shown),
-                onTap: () => setState(() => _shown = dateOnly(start.add(Duration(days: i)))),
-              )),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (selected == null)
+  Widget _programPage(ClientRecord client) {
+    final programs = client.savedPrograms
+        .where((p) => p.status == "active" && p.programDays.isNotEmpty)
+        .toList();
+    if (programs.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+        children: [
           Text(
             "No active workout program yet. Your coach will assign one to your profile.",
             style: TextStyle(color: AppColors.mute, height: 1.4),
-          )
-        else ...[
-          Text(isToday ? "Today" : _weekday(_shown), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
-          const SizedBox(height: 6),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(selected.title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.txt)),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () => setState(() => _loggingDayId = selected.id),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.bg,
-                      backgroundColor: AppColors.txt,
-                      side: BorderSide(color: AppColors.txt),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text("Start workout", style: TextStyle(fontWeight: FontWeight.w800)),
-                  ),
-                ),
-              ],
+          ),
+        ],
+      );
+    }
+
+    final days = programs.first.programDays;
+    final checked = currentCycleCheckedDays(
+      programDayIds: [for (final day in days) day.id],
+      logs: client.workoutLogs,
+    );
+    final openId = days.any((day) => day.id == _openDayId) ? _openDayId : null;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+      children: [
+        Text(
+          checked.isEmpty
+              ? "New round"
+              : "${checked.length} of ${days.length} done",
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppColors.mute,
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (var i = 0; i < days.length; i++)
+          StaggerIn(
+            key: ValueKey("program-day-$i-${days[i].id}"),
+            index: i,
+            child: _ProgramDayTile(
+              number: i + 1,
+              day: days[i],
+              checked: checked.contains(days[i].id),
+              open: openId == days[i].id,
+              onToggle: () => setState(() {
+                _openDayId = _openDayId == days[i].id ? null : days[i].id;
+              }),
+              onStart: () => setState(() => _loggingDayId = days[i].id),
             ),
           ),
-          const SizedBox(height: 16),
-          for (var i = 0; i < selected.exercises.length; i++)
-            StaggerIn(
-              index: i,
-              child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.line),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(selected.exercises[i].name, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.txt)),
-                    const SizedBox(height: 2),
-                    Text(
-                      "${selected.exercises[i].sets} sets · ${selected.exercises[i].reps} reps${(selected.exercises[i].weight ?? "").isEmpty ? "" : " · ${selected.exercises[i].weight}"}",
-                      style: TextStyle(fontSize: 12, color: AppColors.mute),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            ),
-        ],
       ],
-    );
-    }
-    return AnimatedSwitcher(
-      duration: reduceMotionOf(context) ? const Duration(milliseconds: 80) : motionExpand,
-      child: KeyedSubtree(key: ValueKey(_loggingDayId ?? "plan"), child: page),
     );
   }
 }
 
-class _WeekDay extends StatelessWidget {
-  const _WeekDay({required this.date, required this.selected, required this.onTap});
-  final DateTime date;
-  final bool selected;
-  final VoidCallback onTap;
+class _ProgramDayTile extends StatelessWidget {
+  const _ProgramDayTile({
+    required this.number,
+    required this.day,
+    required this.checked,
+    required this.open,
+    required this.onToggle,
+    required this.onStart,
+  });
+
+  final int number;
+  final ProgramDay day;
+  final bool checked;
+  final bool open;
+  final VoidCallback onToggle;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) {
-    const names = ["M", "T", "W", "T", "F", "S", "S"];
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Text(names[date.weekday - 1], style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Container(
-            width: 32,
-            height: 32,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? AppColors.txt : Colors.transparent,
-              shape: BoxShape.circle,
-              border: Border.all(color: selected ? AppColors.txt : AppColors.line),
+    final reduce = reduceMotionOf(context);
+    final title = day.title.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              // A boundary, so the exercises underneath stay their own labels.
+              container: true,
+              button: true,
+              expanded: open,
+              excludeSemantics: true,
+              label: checked ? "Day $number, completed" : "Day $number",
+              value: title.isEmpty ? null : title,
+              onTap: onToggle,
+              child: TapHighlight(
+                onTap: onToggle,
+                borderRadius: BorderRadius.vertical(
+                  top: const Radius.circular(12),
+                  bottom: open ? Radius.zero : const Radius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+                  child: Row(
+                    children: [
+                      Text(
+                        "Day $number",
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.txt,
+                        ),
+                      ),
+                      if (title.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.mute,
+                            ),
+                          ),
+                        ),
+                      ] else
+                        const Spacer(),
+                      if (checked) ...[
+                        Icon(Icons.check, size: 16, color: AppColors.txt),
+                        const SizedBox(width: 6),
+                      ],
+                      Icon(
+                        open ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: AppColors.mute,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            child: Text(
-              "${date.day}",
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: selected ? AppColors.bg : AppColors.txt),
+            AnimatedSize(
+              duration: reduce
+                  ? const Duration(milliseconds: 80)
+                  : motionExpand,
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: open
+                  ? _openBody()
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _openBody() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: onStart,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.bg,
+                backgroundColor: AppColors.txt,
+                side: BorderSide(color: AppColors.txt),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: const Text(
+                "Start workout",
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
             ),
           ),
+          if (day.exercises.isNotEmpty) const SizedBox(height: 12),
+          for (var i = 0; i < day.exercises.length; i++)
+            StaggerIn(
+              index: i,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        day.exercises[i].name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.txt,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        "${day.exercises[i].sets} sets · ${day.exercises[i].reps} reps${(day.exercises[i].weight ?? "").isEmpty ? "" : " · ${day.exercises[i].weight}"}",
+                        style: TextStyle(fontSize: 12, color: AppColors.mute),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
-}
-
-String _weekday(DateTime date) {
-  const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  return names[date.weekday - 1];
 }
