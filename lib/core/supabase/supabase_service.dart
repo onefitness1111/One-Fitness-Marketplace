@@ -62,6 +62,7 @@ import "../../data/models/waiver_signature_record.dart";
 import "../../data/models/workout_log.dart";
 import "../legal/sms_consent.dart";
 import "../../data/providers/platform_settings_provider.dart";
+import "../utils/package_renewal.dart";
 import "contact_reads.dart";
 import "supabase_config.dart";
 
@@ -1791,6 +1792,7 @@ class SupabaseService {
     final scheduling = ((j["scheduling"] as Map?) ?? const {})
         .cast<String, dynamic>();
     const defaults = PlatformSettings();
+    final renewalOffer = RenewalOfferSettings.fromJson(j["packageRenewal"]);
     // The old saved row was 24 hours and a $25 late fee, with no 4-hour
     // window. That was the previous default, not a choice Coach Chris made,
     // so it reads as the current rule: 12 hours is $15, 4 hours is $25.
@@ -1950,6 +1952,9 @@ class SupabaseService {
       badgeRetentionCents:
           _asInt(workouts["badgeRetentionCents"]) ??
           defaults.badgeRetentionCents,
+      renewalDiscountEnabled: renewalOffer.enabled,
+      renewalDiscountPercent: renewalOffer.percent,
+      renewalDiscountSessions: renewalOffer.sessionsLeft,
     );
   }
 
@@ -3626,6 +3631,16 @@ class SupabaseService {
   static Future<Map<String, dynamic>> estimatePlate(String jpegBase64) =>
       _invokeFunction("estimate-plate", {"image": jpegBase64});
 
+  /// Protein, carbs, and fat for a food name at a calorie count the client
+  /// already typed. No photo. Same function as [estimatePlate]. The phone
+  /// never sends a key, and the response does not say how the numbers
+  /// were produced.
+  static Future<Map<String, dynamic>> estimateFoodMacros({
+    required String name,
+    required int calories,
+  }) =>
+      _invokeFunction("estimate-plate", {"name": name, "calories": calories});
+
   /// Restaurant name search and menu suggestions for one meal slot.
   static Future<Map<String, dynamic>> recommendRestaurant(Map<String, dynamic> body) =>
       _invokeFunction("recommend-restaurant", body);
@@ -4708,7 +4723,7 @@ class SupabaseService {
     /// ISO yyyy-MM-dd the access stops. Staff only, same as above.
     String? accessExpiresAt,
     /// Set when the client is renewing a package they already hold. The
-    /// server decides the 5% and uses one idempotency key per package.
+    /// server reads the saved renewal offer and uses one idempotency key per package.
     String? renewalEnrollmentStart,
   }) =>
       _invokeFunction("create-payment-intent", {
@@ -4733,8 +4748,9 @@ class SupabaseService {
     ];
   }
 
-  /// Closes a renewal reminder. A 5% offer that is skipped or dismissed
-  /// is forfeited for that package. The server keeps that decision.
+  /// Closes a renewal reminder. A discount offer that is skipped or dismissed
+  /// is forfeited for that package. The server keeps that decision. The
+  /// percent is the one saved under Customize Platform → Coupons.
   static Future<void> dismissPackageRenewal({
     required String planId,
     required String enrollmentStart,
@@ -5033,6 +5049,9 @@ class SupabaseService {
       "defaultBillingAnchorDay": s.defaultBillingAnchorDay,
       "refundFeeOnRefund": s.refundFeeOnRefund,
     },
+    // Owner's package renewal discount. Absent on older rows; the app and
+    // the payment functions then use on / 5% / 8 sessions left.
+    "packageRenewal": s.renewalOffer.toJson(),
     "services": {
       "offeredSessionTypes": s.offeredSessionTypes,
       "offeredDisciplines": s.offeredDisciplines,
@@ -5143,7 +5162,7 @@ class SupabaseService {
       final prevTab = prevPatch[tab]!;
       final nextTab = nextPatch[tab]!;
       for (final key in nextTab.keys) {
-        if (prevTab[key] != nextTab[key]) {
+        if (!_sameSettingValue(prevTab[key], nextTab[key])) {
           auditRows.add({
             "changed_by": userId,
             "setting_key": "$tab.$key",
@@ -5156,6 +5175,16 @@ class SupabaseService {
     if (auditRows.isNotEmpty) {
       await client.from("platform_settings_audit").insert(auditRows);
     }
+  }
+
+  /// Nested settings (fees, the renewal offer, location lists) are maps.
+  /// Dart compares those by identity, which would log a change on every
+  /// save even when the contents did not change.
+  static bool _sameSettingValue(Object? a, Object? b) {
+    if (a is Map || a is List || b is Map || b is List) {
+      return jsonEncode(a) == jsonEncode(b);
+    }
+    return a == b;
   }
 
   static Map<String, dynamic> _couponToJson(Coupon c) => {

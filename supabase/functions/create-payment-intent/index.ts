@@ -12,7 +12,13 @@ import { replayLedger, planRedemption, pointsToDiscountCents } from "../_shared/
 import { ensureProduct } from "../_shared/stripeProduct.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
-import { effectivePackageMax, renewalDiscountCents, renewalIdempotencyKey, renewalOffer } from "../_shared/packageRenewal.ts";
+import {
+  effectivePackageMax,
+  renewalDiscountCents,
+  renewalIdempotencyKey,
+  renewalOffer,
+  renewalOfferFromSettings,
+} from "../_shared/packageRenewal.ts";
 import { discountCents as couponDiscountCents, firstChargeSentence, membershipFirstCharge, ongoingDiscountCents } from "../_shared/billingAnchor.mjs";
 import { stripeCouponDuration } from "../_shared/couponDuration.mjs";
 
@@ -105,7 +111,7 @@ serve(async (req) => {
     const stripeMethodTypes = ["card", "us_bank_account"];
     const allowedMethods = { card: true, ach: true, applePay: isPackage };
 
-    const { data: settingsRow } = await admin.from("platform_settings").select("data").eq("id", "global").maybeSingle();
+    const { data: settingsRow, error: settingsErr } = await admin.from("platform_settings").select("data").eq("id", "global").maybeSingle();
     const paymentSettings = settingsRow?.data?.payments || {};
     const method = paymentMethod === "ach" ? "ach" : "card";
     const feeConfig = method === "ach" ? paymentSettings.achFee : paymentSettings.cardFee;
@@ -150,6 +156,7 @@ serve(async (req) => {
     let stripeCouponId: string | null = null;
     let renewalKey: string | null = null;
     let renewalOfferName: "discount" | "full" | null = null;
+    let renewalConfig: ReturnType<typeof renewalOfferFromSettings> | null = null;
     const renewalStart = typeof renewalEnrollmentStart === "string" ? renewalEnrollmentStart.slice(0, 10) : "";
 
     const rawCode = typeof couponCode === "string" ? couponCode.trim() : "";
@@ -205,11 +212,15 @@ serve(async (req) => {
         .eq("plan_id", planId)
         .eq("enrollment_start", renewalStart)
         .maybeSingle();
-      const offer = renewalOffer(remaining, maxSessions, priceCents, discountNotice?.forfeited === true, false);
+      // The percent is read here. A percent on the request is ignored.
+      if (settingsErr) throw new Error("Couldn't read the renewal offer. Please try again.");
+      renewalConfig = renewalOfferFromSettings(settingsRow?.data);
+      const offer = renewalOffer(remaining, maxSessions, priceCents, discountNotice?.forfeited === true, false, renewalConfig);
       if (offer === "none") throw new Error("This package does not have a renewal offer right now.");
-      if (offer === "discount") discountCents = renewalDiscountCents(priceCents);
+      if (offer === "discount") discountCents = renewalDiscountCents(priceCents, renewalConfig.percent);
       renewalOfferName = offer;
       renewalKey = renewalIdempotencyKey(buyerId, planId, renewalStart, offer);
+      const expectedAmount = Math.max(0, priceCents - discountCents) + feeCents + referralSurchargeCents;
 
       const { data: started } = await admin.from("package_renewal_charges")
         .select("payment_intent_id, attempt")
@@ -229,7 +240,21 @@ serve(async (req) => {
             paymentIntentId: prev.id,
           }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
         }
-        if (prev.status === "canceled") {
+        // A retry of the same offer reuses this key. If the owner changed
+        // the discount after a charge was started, that old amount is
+        // cancelled and a new charge is opened at the saved price.
+        const staleAmount = prev.amount !== expectedAmount;
+        if (prev.status === "canceled" || staleAmount) {
+          if (staleAmount && prev.status !== "canceled") {
+            if (prev.status === "processing") {
+              throw new Error("A renewal payment is already in progress.");
+            }
+            try {
+              await stripe.paymentIntents.cancel(prev.id);
+            } catch {
+              throw new Error("A renewal payment is already in progress.");
+            }
+          }
           const attempt = Number(started.attempt || 1) + 1;
           renewalKey = renewalIdempotencyKey(buyerId, planId, renewalStart, offer, attempt);
         }
@@ -267,7 +292,12 @@ serve(async (req) => {
       ...(referringTrainerId ? { referring_trainer_id: referringTrainerId, surcharge_cents: String(referralSurchargeCents) } : {}),
       ...(buyerId !== user.id ? { purchased_by: user.id } : {}),
       ...(accessExpiresAt ? { access_expires_at: String(accessExpiresAt) } : {}),
-      ...(renewalOfferName ? { renewal_offer: renewalOfferName, enrollment_start: renewalStart, renewal_key: renewalKey || "" } : {}),
+      ...(renewalOfferName ? {
+        renewal_offer: renewalOfferName,
+        enrollment_start: renewalStart,
+        renewal_key: renewalKey || "",
+        ...(renewalOfferName === "discount" && renewalConfig ? { renewal_percent: String(renewalConfig.percent) } : {}),
+      } : {}),
     };
 
     const ephemeralKey = await stripe.ephemeralKeys.create(

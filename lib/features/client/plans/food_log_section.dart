@@ -1,9 +1,13 @@
 import "dart:convert";
+import "dart:math" as math;
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
+import "../../../core/nutrition/food_log_view.dart";
+import "../../../core/nutrition/quick_add_macros.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/food_catalog.dart";
@@ -18,26 +22,34 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "restaurant_sheet.dart";
 
-/// The client's own food log for one day, next to the meal plan. Nothing
-/// here changes a meal a coach or the owner uploaded.
+/// The client's own food log for one day: the ring and the meal rows.
+/// Nothing here changes a meal a coach or the owner uploaded.
+///
+/// The date and the training/rest choice belong to the nutrition page, so
+/// this section does not draw its own arrows or a second day toggle.
 class FoodLogSection extends ConsumerStatefulWidget {
-  const FoodLogSection({super.key});
+  const FoodLogSection({super.key, required this.day, required this.dayType});
+
+  final DateTime day;
+
+  /// "training" or "rest", shared with the targets above.
+  final String dayType;
 
   @override
   ConsumerState<FoodLogSection> createState() => _FoodLogSectionState();
 }
 
 class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
-  DateTime _day = DateTime.now();
-  String _dayType = "training";
-
-  String get _date => foodLogDate(_day);
+  String get _date => foodLogDate(widget.day);
+  String get _dayType => widget.dayType;
 
   SlotBudget _slotBudget(String slot) {
     final n = ref.read(clientRecordProvider).nutrition;
     if (n == null) return const SlotBudget();
     final targets = _dayType == "training" ? n.trainingTargets : n.restTargets;
-    final budgets = _dayType == "training" ? n.mealBudgets.training : n.mealBudgets.rest;
+    final budgets = _dayType == "training"
+        ? n.mealBudgets.training
+        : n.mealBudgets.rest;
     return SlotBudget.forSlot(
       slotCalories: int.tryParse(budgets[slot] ?? ""),
       proteinPct: targets.protein,
@@ -55,7 +67,9 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
 
   Future<void> _save(FoodLog next) async {
     final id = ref.read(clientInfoProvider).id;
-    ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(foodLog: next));
+    ref
+        .read(clientRecordProvider.notifier)
+        .update((r) => r.copyWith(foodLog: next));
     try {
       await SupabaseService.updateClientFoodLog(id, next);
       try {
@@ -65,9 +79,15 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
     } catch (e) {
       if (!mounted) return;
       final text = e.toString().replaceFirst("Exception: ", "");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(text.toLowerCase().contains("ai") ? "Couldn't save that. Try again." : text),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            text.toLowerCase().contains("ai")
+                ? "Couldn't save that. Try again."
+                : text,
+          ),
+        ),
+      );
     }
   }
 
@@ -76,54 +96,58 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
     await _save(log.add(_date, slot, item));
   }
 
+  /// Calories allotted to a meal row. Snacks and smoothies share one row, so
+  /// that row's budget is the two allotments added together. The reference
+  /// budget card still shows the snacks box on its own.
+  int? _slotCalories(NutritionPlan? n, String slot) {
+    if (n == null) return null;
+    final budgets = _dayType == "training"
+        ? n.mealBudgets.training
+        : n.mealBudgets.rest;
+    int read(String key) => int.tryParse(budgets[key] ?? "") ?? 0;
+    final total = slot == "snacks"
+        ? read("snacks") + read("smoothies")
+        : read(slot);
+    return total > 0 ? total : null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final record = ref.watch(clientRecordProvider);
     final log = record.foodLog;
     final totals = log.totalsFor(_date);
     final daily = _dailyCalories;
-    final left = daily > 0 ? (daily - totals.calories) : null;
     final macros = _macroTargets();
-    final label = "${_day.month}/${_day.day}";
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: () => setState(() => _day = _day.subtract(const Duration(days: 1))),
-              icon: Icon(Icons.chevron_left, color: AppColors.txt),
-            ),
-            Expanded(
-              child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.txt)),
-            ),
-            IconButton(
-              onPressed: () => setState(() => _day = _day.add(const Duration(days: 1))),
-              icon: Icon(Icons.chevron_right, color: AppColors.txt),
-            ),
-          ],
+        AppCard(
+          child: Column(
+            children: [
+              _CalorieRing(
+                consumed: totals.calories,
+                target: daily,
+                selectionKey: "$_date|$_dayType",
+              ),
+              const SizedBox(height: 14),
+              _MacroBar(
+                label: "Protein",
+                grams: totals.protein,
+                target: macros.$1,
+              ),
+              _MacroBar(label: "Carbs", grams: totals.carbs, target: macros.$2),
+              _MacroBar(label: "Fat", grams: totals.fats, target: macros.$3),
+            ],
+          ),
         ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _DayChip(label: "Training", selected: _dayType == "training", onTap: () => setState(() => _dayType = "training")),
-            const SizedBox(width: 8),
-            _DayChip(label: "Rest", selected: _dayType == "rest", onTap: () => setState(() => _dayType = "rest")),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Center(child: _CalorieRing(left: left, consumed: totals.calories, target: daily)),
-        const SizedBox(height: 18),
-        _MacroBar(label: "Protein", grams: totals.protein, target: macros.$1),
-        _MacroBar(label: "Carbs", grams: totals.carbs, target: macros.$2),
-        _MacroBar(label: "Fat", grams: totals.fats, target: macros.$3),
-        const SizedBox(height: 8),
         for (final slot in const [
-          ("breakfast", "Breakfast"),
-          ("lunch", "Lunch"),
-          ("dinner", "Dinner"),
-          ("snacks", "Snacks"),
+          ("breakfast", "Breakfast", "Breakfast"),
+          ("lunch", "Lunch", "Lunch"),
+          ("dinner", "Dinner", "Dinner"),
+          // The row combines both slots. The sheet still opens as Snacks,
+          // which is the slot the log writes to.
+          ("snacks", "Snacks & Smoothies", "Snacks"),
         ])
           _MealRow(
             label: slot.$2,
@@ -131,10 +155,17 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
               ...log.lines(_date, slot.$1),
               if (slot.$1 == "snacks") ...log.lines(_date, "smoothies"),
             ],
-            calories: log.totalsForSlot(_date, slot.$1).calories + (slot.$1 == "snacks" ? log.totalsForSlot(_date, "smoothies").calories : 0),
-            onAdd: () => _openAdd(slot.$1, slot.$2),
+            calories:
+                log.totalsForSlot(_date, slot.$1).calories +
+                (slot.$1 == "snacks"
+                    ? log.totalsForSlot(_date, "smoothies").calories
+                    : 0),
+            budget: _slotCalories(record.nutrition, slot.$1),
+            onAdd: () => _openAdd(slot.$1, slot.$3),
             onRemove: (id) {
-              final inSnacks = log.lines(_date, slot.$1).any((line) => line.id == id);
+              final inSnacks = log
+                  .lines(_date, slot.$1)
+                  .any((line) => line.id == id);
               final key = inSnacks ? slot.$1 : "smoothies";
               _save(log.remove(_date, key, id));
             },
@@ -155,7 +186,11 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
       return calories * (p / 100) / per;
     }
 
-    return (grams(targets.protein, 4), grams(targets.carbs, 4), grams(targets.fats, 9));
+    return (
+      grams(targets.protein, 4),
+      grams(targets.carbs, 4),
+      grams(targets.fats, 9),
+    );
   }
 
   Future<void> _openAdd(String slot, String label) async {
@@ -173,38 +208,53 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (ctx) => AddFoodSheet(
         mealLabel: label,
         mealSlot: slot == "smoothies" ? "snacks" : slot,
         recents: record.foodLog.recents,
         savedMeals: saved,
         onSnap: () => _snap(ctx),
-        onRestaurant: () => showRestaurantSheet(ctx, slot: slot, label: label, budget: _slotBudget(slot)),
+        onRestaurant: () => showRestaurantSheet(
+          ctx,
+          slot: slot,
+          label: label,
+          budget: _slotBudget(slot),
+        ),
       ),
     );
     if (item != null) await _add(slot, item);
   }
 
   List<NutritionMeal> _uploaded(NutritionPlan n, String slot) => switch (slot) {
-        "breakfast" => n.breakfast,
-        "lunch" => n.lunch,
-        "dinner" => n.dinner,
-        "snacks" => n.snacks,
-        _ => n.smoothies,
-      };
+    "breakfast" => n.breakfast,
+    "lunch" => n.lunch,
+    "dinner" => n.dinner,
+    "snacks" => n.snacks,
+    _ => n.smoothies,
+  };
 
   Future<FoodLogItem?> _snap(BuildContext context) async {
     final source = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(title: const Text("Take a pic"), onTap: () => Navigator.pop(ctx, true)),
-            ListTile(title: const Text("Choose a photo"), onTap: () => Navigator.pop(ctx, false)),
+            ListTile(
+              title: const Text("Take a pic"),
+              onTap: () => Navigator.pop(ctx, true),
+            ),
+            ListTile(
+              title: const Text("Choose a photo"),
+              onTap: () => Navigator.pop(ctx, false),
+            ),
           ],
         ),
       ),
@@ -215,7 +265,8 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      builder: (ctx) =>
+          const Center(child: CircularProgressIndicator(strokeWidth: 2)),
     );
     Map<String, dynamic> res;
     try {
@@ -223,14 +274,20 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
     } catch (e) {
       if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_plain(e))));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_plain(e))));
       }
       return null;
     }
     if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
     if (res["ok"] != true) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_plain(res["error"] ?? "Couldn't make an estimate."))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_plain(res["error"] ?? "Couldn't make an estimate.")),
+          ),
+        );
       }
       return null;
     }
@@ -239,7 +296,9 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
         child: _EstimateConfirm(estimate: res),
@@ -249,97 +308,313 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
 
   String _plain(Object e) {
     final text = e.toString().replaceFirst("Exception: ", "");
-    if (text.toLowerCase().contains("ai")) return "Couldn't make an estimate. Try again.";
+    if (text.toLowerCase().contains("ai")) {
+      return "Couldn't make an estimate. Try again.";
+    }
     return text;
   }
 }
 
-class _DayChip extends StatelessWidget {
-  const _DayChip({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+class _RingMetrics {
+  const _RingMetrics({
+    required this.progress,
+    required this.over,
+    required this.number,
+    required this.isOver,
+  });
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.txt : AppColors.bg,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? AppColors.txt : AppColors.line),
-        ),
-        child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: selected ? AppColors.bg : AppColors.mute)),
-      ),
+  final double progress;
+  final double over;
+  final int number;
+  final bool isOver;
+
+  static _RingMetrics of(int consumed, int target) {
+    if (target <= 0) {
+      return _RingMetrics(
+        progress: 0,
+        over: 0,
+        number: consumed,
+        isOver: false,
+      );
+    }
+    if (consumed > target) {
+      final extra = consumed - target;
+      return _RingMetrics(
+        progress: 1,
+        over: (extra / target).clamp(0.0, 1.0),
+        number: extra,
+        isOver: true,
+      );
+    }
+    return _RingMetrics(
+      progress: consumed / target,
+      over: 0,
+      number: target - consumed,
+      isOver: false,
     );
   }
 }
 
-class _CalorieRing extends StatelessWidget {
-  const _CalorieRing({required this.left, required this.consumed, required this.target});
-  final int? left;
+/// White progress ring. A log change eases the arc and the center number
+/// from the previous value. The first paint, and a change of day, jump.
+class _CalorieRing extends StatefulWidget {
+  const _CalorieRing({
+    required this.consumed,
+    required this.target,
+    required this.selectionKey,
+  });
+
   final int consumed;
   final int target;
 
+  /// Date plus training/rest. Changing it snaps the ring instead of animating,
+  /// so paging to another day does not play the log animation.
+  final String selectionKey;
+
+  @override
+  State<_CalorieRing> createState() => _CalorieRingState();
+}
+
+class _CalorieRingState extends State<_CalorieRing>
+    with TickerProviderStateMixin {
+  static const _moveDuration = Duration(milliseconds: 800);
+  static const _glowDuration = Duration(milliseconds: 600);
+
+  late final AnimationController _move;
+  late final AnimationController _glow;
+  double _fromProgress = 0;
+  double _toProgress = 0;
+  double _fromOver = 0;
+  double _toOver = 0;
+  int _fromNumber = 0;
+  int _toNumber = 0;
+  bool _showOver = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _move = AnimationController(vsync: this, duration: _moveDuration);
+    _glow = AnimationController(vsync: this, duration: _glowDuration);
+    _snap(_RingMetrics.of(widget.consumed, widget.target), listen: false);
+    _move.addListener(_tick);
+    _glow.addListener(_tick);
+  }
+
+  @override
+  void didUpdateWidget(_CalorieRing old) {
+    super.didUpdateWidget(old);
+    final next = _RingMetrics.of(widget.consumed, widget.target);
+    final dayChanged = widget.selectionKey != old.selectionKey;
+    if (dayChanged) {
+      _snap(next);
+      return;
+    }
+    if (widget.consumed == old.consumed && widget.target == old.target) return;
+    final skipMotion = MediaQuery.of(context).disableAnimations;
+    if (skipMotion) {
+      _snap(next);
+      if (widget.consumed > old.consumed) HapticFeedback.lightImpact();
+      return;
+    }
+    // Drop the listener before resetting the controller. Setting the value
+    // notifies listeners, and a setState from didUpdateWidget is illegal.
+    _move.removeListener(_tick);
+    _glow.removeListener(_tick);
+    _fromProgress = _shown(_fromProgress, _toProgress);
+    _fromOver = _shown(_fromOver, _toOver);
+    _fromNumber = _shown(_fromNumber.toDouble(), _toNumber.toDouble()).round();
+    _toProgress = next.progress;
+    _toOver = next.over;
+    _toNumber = next.number;
+    _showOver = next.isOver;
+    _move.value = 0;
+    _glow.value = 0;
+    _move.addListener(_tick);
+    _glow.addListener(_tick);
+    _move.forward();
+    _glow.forward();
+    if (widget.consumed > old.consumed) HapticFeedback.lightImpact();
+  }
+
+  void _snap(_RingMetrics next, {bool listen = true}) {
+    if (listen) {
+      _move.removeListener(_tick);
+      _glow.removeListener(_tick);
+    }
+    _move.stop();
+    _glow.stop();
+    _fromProgress = _toProgress = next.progress;
+    _fromOver = _toOver = next.over;
+    _fromNumber = _toNumber = next.number;
+    _showOver = next.isOver;
+    _move.value = 1;
+    _glow.value = 0;
+    if (listen) {
+      _move.addListener(_tick);
+      _glow.addListener(_tick);
+    }
+  }
+
+  void _tick() {
+    if (mounted) setState(() {});
+  }
+
+  double get _t => Curves.easeOutCubic.transform(_move.value.clamp(0.0, 1.0));
+
+  double _shown(double from, double to) => from + (to - from) * _t;
+
+  @override
+  void dispose() {
+    _move.removeListener(_tick);
+    _glow.removeListener(_tick);
+    _move.dispose();
+    _glow.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final progress = target <= 0 ? 0.0 : (consumed / target).clamp(0.0, 1.0);
-    final number = left == null ? _commas(consumed) : _commas(left! < 0 ? 0 : left!);
-    final caption = left == null ? "logged" : "left";
-    return SizedBox(
-      width: 168,
-      height: 168,
-      child: CustomPaint(
-        painter: _RingPainter(progress: progress),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(number, style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: AppColors.txt)),
-            Text(caption, style: TextStyle(fontSize: 13, color: AppColors.mute)),
-          ],
+    final number = _shown(_fromNumber.toDouble(), _toNumber.toDouble()).round();
+    final caption = widget.target <= 0
+        ? "logged"
+        : (_showOver ? "over" : "left");
+    final numberColor = _showOver ? AppColors.mute : AppColors.txt;
+    final eaten = widget.target > 0
+        ? "Eaten ${_commas(widget.consumed)} of ${_commas(widget.target)} kcal"
+        : "Eaten ${_commas(widget.consumed)} kcal";
+    return Column(
+      children: [
+        SizedBox(
+          width: 168,
+          height: 168,
+          child: CustomPaint(
+            painter: _RingPainter(
+              progress: _shown(_fromProgress, _toProgress),
+              over: _shown(_fromOver, _toOver),
+              glow: math.sin(math.pi * _glow.value.clamp(0.0, 1.0)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  _commas(number),
+                  key: const Key("calorie-ring-center"),
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.w800,
+                    color: numberColor,
+                  ),
+                ),
+                Text(
+                  caption,
+                  style: TextStyle(fontSize: 13, color: AppColors.mute),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
+        const SizedBox(height: 8),
+        Text(
+          eaten,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: AppColors.mute),
+        ),
+      ],
     );
   }
 }
 
 class _RingPainter extends CustomPainter {
-  _RingPainter({required this.progress});
+  _RingPainter({
+    required this.progress,
+    required this.over,
+    required this.glow,
+  });
+
   final double progress;
+  final double over;
+
+  /// 0 at rest, 1 at the middle of the one-shot pulse.
+  final double glow;
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 8;
+    // Inset enough that the blurred stroke stays inside the box.
+    final radius = size.width / 2 - 16;
     final track = Paint()
       ..color = AppColors.line
       ..style = PaintingStyle.stroke
       ..strokeWidth = 8;
-    final arc = Paint()
-      ..color = AppColors.txt
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
-      ..strokeCap = StrokeCap.round;
     canvas.drawCircle(center, radius, track);
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius), -1.5708, 6.28318 * progress, false, arc);
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    const start = -math.pi / 2;
+    if (progress > 0) {
+      final glowPaint = Paint()
+        ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.35 + 0.5 * glow)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 12
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3 + 5 * glow);
+      final arc = Paint()
+        ..color = const Color(0xFFFFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round;
+      canvas.drawArc(
+        rect,
+        start,
+        math.pi * 2 * progress.clamp(0.0, 1.0),
+        false,
+        glowPaint,
+      );
+      canvas.drawArc(
+        rect,
+        start,
+        math.pi * 2 * progress.clamp(0.0, 1.0),
+        false,
+        arc,
+      );
+    }
+    if (over > 0) {
+      final overPaint = Paint()
+        ..color = AppColors.mute
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round;
+      canvas.drawArc(
+        rect,
+        start,
+        math.pi * 2 * over.clamp(0.0, 1.0),
+        false,
+        overPaint,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_RingPainter old) => old.progress != progress;
+  bool shouldRepaint(_RingPainter old) =>
+      old.progress != progress || old.over != over || old.glow != glow;
 }
 
 class _MacroBar extends StatelessWidget {
-  const _MacroBar({required this.label, required this.grams, required this.target});
+  const _MacroBar({
+    required this.label,
+    required this.grams,
+    required this.target,
+  });
   final String label;
   final double grams;
   final double? target;
 
   @override
   Widget build(BuildContext context) {
-    final fraction = target == null || target! <= 0 ? (grams > 0 ? 1.0 : 0.0) : (grams / target!).clamp(0.0, 1.0);
-    final detail = target == null ? "${fmtQty(grams)}g" : "${fmtQty(grams)} / ${fmtQty(target)}g";
+    final fraction = target == null || target! <= 0
+        ? (grams > 0 ? 1.0 : 0.0)
+        : (grams / target!).clamp(0.0, 1.0);
+    final detail = target == null
+        ? "${fmtQty(grams)}g"
+        : "${fmtQty(grams)} / ${fmtQty(target)}g";
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -347,8 +622,20 @@ class _MacroBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              Expanded(child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.txt))),
-              Text(detail, style: TextStyle(fontSize: 12, color: AppColors.mute)),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.txt,
+                  ),
+                ),
+              ),
+              Text(
+                detail,
+                style: TextStyle(fontSize: 12, color: AppColors.mute),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -368,12 +655,28 @@ class _MacroBar extends StatelessWidget {
 }
 
 class _MealRow extends StatelessWidget {
-  const _MealRow({required this.label, required this.lines, required this.calories, required this.onAdd, required this.onRemove});
+  const _MealRow({
+    required this.label,
+    required this.lines,
+    required this.calories,
+    required this.budget,
+    required this.onAdd,
+    required this.onRemove,
+  });
   final String label;
   final List<FoodLogItem> lines;
   final int calories;
+  final int? budget;
   final VoidCallback onAdd;
   final ValueChanged<String> onRemove;
+
+  String get _summary {
+    final count = lines.length == 1 ? "1 item" : "${lines.length} items";
+    final kcal = budget != null
+        ? "$calories of $budget kcal"
+        : "$calories kcal";
+    return "$kcal · $count";
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -386,33 +689,60 @@ class _MealRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.txt)),
-                if (lines.isEmpty)
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.txt,
+                  ),
+                ),
+                if (lines.isEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text("Nothing logged", style: TextStyle(fontSize: 12, color: AppColors.mute)),
-                  )
-                else
-                  ...lines.map((line) => Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                "${line.name} · ${line.calories} kcal${foodLogEntryIsEstimated(line) ? " · Estimated" : ""}",
-                                style: TextStyle(fontSize: 13, color: AppColors.txt),
+                    child: Text(
+                      "Nothing logged",
+                      style: TextStyle(fontSize: 12, color: AppColors.mute),
+                    ),
+                  ),
+                  if (budget != null)
+                    Text(
+                      "$budget kcal budget",
+                      style: TextStyle(fontSize: 12, color: AppColors.mute),
+                    ),
+                ] else ...[
+                  ...lines.map(
+                    (line) => Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              "${line.name} · ${line.calories} kcal${foodLogEntryIsEstimated(line) ? " · Estimated" : ""}",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: AppColors.txt,
                               ),
                             ),
-                            IconButton(
-                              onPressed: () => onRemove(line.id),
-                              icon: Icon(Icons.close, size: 16, color: AppColors.mute),
-                              visualDensity: VisualDensity.compact,
+                          ),
+                          IconButton(
+                            onPressed: () => onRemove(line.id),
+                            icon: Icon(
+                              Icons.close,
+                              size: 16,
+                              color: AppColors.mute,
                             ),
-                          ],
-                        ),
-                      )),
-                if (lines.isNotEmpty)
-                  Text("$calories kcal", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _summary,
+                    style: TextStyle(fontSize: 12, color: AppColors.mute),
+                  ),
+                ],
               ],
             ),
           ),
@@ -425,7 +755,10 @@ class _MealRow extends StatelessWidget {
                 width: 36,
                 height: 36,
                 alignment: Alignment.center,
-                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AppColors.txt)),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.txt),
+                ),
                 child: Icon(Icons.add, size: 18, color: AppColors.txt),
               ),
             ),
@@ -436,7 +769,12 @@ class _MealRow extends StatelessWidget {
   }
 }
 
-bool foodLogEntryIsEstimated(FoodLogItem item) => item.id.startsWith("snap-") || item.unit.trim().toLowerCase() == "plate";
+String _relogId(FoodLogItem line) {
+  final stamp = DateTime.now().microsecondsSinceEpoch;
+  if (line.unit.trim().toLowerCase() == "plate" || line.id.startsWith("snap-")) return "snap-$stamp";
+  if (line.id.startsWith("est-")) return "est-$stamp";
+  return "log-$stamp";
+}
 
 String _commas(int n) {
   final raw = n.abs().toString();
@@ -459,6 +797,7 @@ class AddFoodSheet extends ConsumerStatefulWidget {
     required this.savedMeals,
     required this.onSnap,
     required this.onRestaurant,
+    this.estimateMacros,
   });
 
   final String mealLabel;
@@ -469,6 +808,10 @@ class AddFoodSheet extends ConsumerStatefulWidget {
   final List<NutritionMeal> savedMeals;
   final Future<FoodLogItem?> Function() onSnap;
   final Future<FoodLogItem?> Function() onRestaurant;
+
+  /// Quick add calls this when the food is not on the search list.
+  /// Empty means the signed-in estimate on the server.
+  final Future<Map<String, dynamic>> Function(String name, int calories)? estimateMacros;
 
   @override
   ConsumerState<AddFoodSheet> createState() => _AddFoodSheetState();
@@ -485,7 +828,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
     "Search foods and meals. Filter by a diet, or by breakfast, lunch, dinner, or snacks.",
     "Take a picture of your plate. You can correct the estimate, and the log labels it Estimated.",
     "Look up a restaurant and log something from the menu. The numbers are an estimate.",
-    "Type a name and the calories yourself when the food is not in the list.",
+    "Type a name and the calories. If you leave protein, carbs, or fat blank, those get estimated. Numbers you type stay as you entered them.",
   ];
 
   @override
@@ -587,7 +930,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
       case 3:
         return _TakePicTab(label: "Find a restaurant", onPressed: () => _finish(widget.onRestaurant));
       case 4:
-        return const _QuickAddSheet();
+        return _QuickAddSheet(estimateMacros: widget.estimateMacros);
       default:
         return ListView(
           padding: const EdgeInsets.all(18),
@@ -603,7 +946,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
                     contentPadding: EdgeInsets.zero,
                     title: Text(line.name, style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
                     subtitle: Text("${line.calories} kcal", style: TextStyle(color: AppColors.mute)),
-                    onTap: () => Navigator.pop(context, line.copyWith(id: "log-${DateTime.now().microsecondsSinceEpoch}")),
+                    onTap: () => Navigator.pop(context, line.copyWith(id: _relogId(line))),
                   )),
             const SizedBox(height: 8),
             Text("Saved", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
@@ -855,7 +1198,9 @@ class _FoodSearchSheetState extends State<_FoodSearchSheet> {
 }
 
 class _QuickAddSheet extends StatefulWidget {
-  const _QuickAddSheet();
+  const _QuickAddSheet({this.estimateMacros});
+
+  final Future<Map<String, dynamic>> Function(String name, int calories)? estimateMacros;
 
   @override
   State<_QuickAddSheet> createState() => _QuickAddSheetState();
@@ -867,6 +1212,10 @@ class _QuickAddSheetState extends State<_QuickAddSheet> {
   final _p = TextEditingController();
   final _c = TextEditingController();
   final _f = TextEditingController();
+  bool _busy = false;
+  bool _failed = false;
+  bool _review = false;
+  String? _notice;
 
   @override
   void dispose() {
@@ -878,54 +1227,170 @@ class _QuickAddSheetState extends State<_QuickAddSheet> {
     super.dispose();
   }
 
+  void _pop(QuickAddMacros macros) {
+    final name = _name.text.trim();
+    final calories = int.tryParse(_cal.text.trim());
+    if (name.isEmpty || calories == null) return;
+    Navigator.pop(
+      context,
+      foodLogItemFromQuickAdd(
+        name: name,
+        calories: calories,
+        macros: macros,
+        idSuffix: "${DateTime.now().microsecondsSinceEpoch}",
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    final name = _name.text.trim();
+    final calories = int.tryParse(_cal.text.trim());
+    if (name.isEmpty || calories == null) return;
+    final protein = readQuickAddMacro(_p.text);
+    final carbs = readQuickAddMacro(_c.text);
+    final fats = readQuickAddMacro(_f.text);
+    final local = localQuickAddMacros(name: name, calories: calories, protein: protein, carbs: carbs, fats: fats);
+    if (local != null && !local.estimated) {
+      _pop(local);
+      return;
+    }
+    if (local != null) {
+      _showEstimate(local);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _failed = false;
+      _review = false;
+      _notice = null;
+    });
+    try {
+      final response = await (widget.estimateMacros ?? _serverEstimate)(name, calories);
+      final merged = macrosFromServerEstimate(
+        calories: calories,
+        protein: protein,
+        carbs: carbs,
+        fats: fats,
+        response: response,
+      );
+      if (!mounted) return;
+      if (merged == null) {
+        _fail();
+        return;
+      }
+      _showEstimate(merged);
+    } catch (_) {
+      if (!mounted) return;
+      _fail();
+    }
+  }
+
+  Future<Map<String, dynamic>> _serverEstimate(String name, int calories) {
+    return SupabaseService.estimateFoodMacros(name: name, calories: calories);
+  }
+
+  void _showEstimate(QuickAddMacros macros) {
+    if (readQuickAddMacro(_p.text) == null) _p.text = formatQuickAddGrams(macros.protein);
+    if (readQuickAddMacro(_c.text) == null) _c.text = formatQuickAddGrams(macros.carbs);
+    if (readQuickAddMacro(_f.text) == null) _f.text = formatQuickAddGrams(macros.fats);
+    setState(() {
+      _busy = false;
+      _failed = false;
+      _review = true;
+      _notice = null;
+    });
+  }
+
+  void _fail() {
+    setState(() {
+      _busy = false;
+      _failed = true;
+      _review = false;
+      _notice = quickAddEstimateFailedMessage;
+    });
+  }
+
+  void _logReviewed() {
+    _pop(QuickAddMacros(
+      protein: readQuickAddMacro(_p.text) ?? 0,
+      carbs: readQuickAddMacro(_c.text) ?? 0,
+      fats: readQuickAddMacro(_f.text) ?? 0,
+      estimated: true,
+    ));
+  }
+
+  void _logAsEntered() {
+    if (_busy) return;
+    _pop(QuickAddMacros(
+      protein: readQuickAddMacro(_p.text) ?? 0,
+      carbs: readQuickAddMacro(_c.text) ?? 0,
+      fats: readQuickAddMacro(_f.text) ?? 0,
+      estimated: false,
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionLabel("Quick add"),
-            AppField(kind: FieldKind.name, controller: _name, placeholder: "Name"),
-            const SizedBox(height: 8),
-            AppField(controller: _cal, placeholder: "Calories", keyboardType: TextInputType.number),
-            const SizedBox(height: 8),
-            Row(
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionLabel(_review ? "Estimate" : "Quick add"),
+          if (_review) ...[
+            Text(
+              "Check the numbers and change anything that looks off, then log it. The log labels this Estimated.",
+              style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.35),
+            ),
+            const SizedBox(height: 10),
+          ],
+          IgnorePointer(
+            ignoring: _busy,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: AppField(controller: _p, placeholder: "Protein g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
-                const SizedBox(width: 6),
-                Expanded(child: AppField(controller: _c, placeholder: "Carbs g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
-                const SizedBox(width: 6),
-                Expanded(child: AppField(controller: _f, placeholder: "Fat g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                AppField(kind: FieldKind.name, controller: _name, placeholder: "Name"),
+                const SizedBox(height: 8),
+                AppField(controller: _cal, placeholder: "Calories", keyboardType: TextInputType.number),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(child: AppField(controller: _p, placeholder: "Protein g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                    const SizedBox(width: 6),
+                    Expanded(child: AppField(controller: _c, placeholder: "Carbs g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                    const SizedBox(width: 6),
+                    Expanded(child: AppField(controller: _f, placeholder: "Fat g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                  ],
+                ),
               ],
             ),
-            const SizedBox(height: 12),
-            BtnGold(
-              full: true,
-              onPressed: () {
-                final name = _name.text.trim();
-                final calories = int.tryParse(_cal.text.trim());
-                if (name.isEmpty || calories == null) return;
-                Navigator.pop(
-                  context,
-                  FoodLogItem(
-                    id: "log-${DateTime.now().microsecondsSinceEpoch}",
-                    name: name,
-                    qty: 1,
-                    unit: "serving",
-                    calories: calories,
-                    protein: double.tryParse(_p.text.trim()) ?? 0,
-                    carbs: double.tryParse(_c.text.trim()) ?? 0,
-                    fats: double.tryParse(_f.text.trim()) ?? 0,
-                  ),
-                );
-              },
-              child: const Text("Log"),
+          ),
+          if (_notice != null) ...[
+            const SizedBox(height: 10),
+            Text(_notice!, style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.35)),
+          ],
+          if (_busy) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.txt)),
+                const SizedBox(width: 8),
+                Expanded(child: Text("Estimating the missing numbers.", style: TextStyle(fontSize: 13, color: AppColors.mute))),
+              ],
             ),
           ],
-        ),
+          const SizedBox(height: 12),
+          BtnGold(
+            full: true,
+            onPressed: _busy ? null : (_review ? _logReviewed : _submit),
+            child: Text(_review ? "Log this estimate" : "Log"),
+          ),
+          if (_failed && !_busy) ...[
+            const SizedBox(height: 8),
+            BtnGhost(full: true, onPressed: _logAsEntered, child: const Text("Log what I entered")),
+          ],
+        ],
       ),
     );
   }
