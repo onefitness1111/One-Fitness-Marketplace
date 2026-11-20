@@ -19,6 +19,7 @@ import "../dashboard/live_workouts_card.dart";
 import "../programs/nutrition_builder_screen.dart";
 import "../programs/program_builder_screen.dart";
 import "../schedule/client_search_picker.dart";
+import "client_food_log_view.dart";
 
 /// Mirrors PlansArea.jsx — 3 sub-tabs: Training (ProgramBuilder, shown
 /// inline — no separate "build" gate), Nutrition (NutritionBuilder),
@@ -44,6 +45,35 @@ class PlansTab extends ConsumerStatefulWidget {
 
 class _PlansTabState extends ConsumerState<PlansTab> {
   String get _sub => widget.sub;
+
+  Widget _planTabs() {
+    const tabs = [("training", "Training"), ("nutrition", "Nutrition"), ("programs", "Programs"), ("food", "Food log")];
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        children: [
+          for (final t in tabs)
+            Expanded(
+              child: TapHighlight(
+                onTap: () => widget.onSubChanged(t.$1),
+                borderRadius: BorderRadius.circular(7),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: _sub == t.$1 ? AppColors.txt : Colors.transparent, borderRadius: BorderRadius.circular(7)),
+                  child: Text(
+                    t.$2,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _sub == t.$1 ? AppColors.bg : AppColors.mute),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,11 +107,12 @@ class _PlansTabState extends ConsumerState<PlansTab> {
     );
     // Logging a workout is not editing the program. The button stays even
     // when a coach is not allowed to build or assign programs.
-    if (!canEdit) {
+    if (!canEdit && _sub != "food") {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           logButton,
+          _planTabs(),
           const Expanded(
             child: Padding(
               padding: EdgeInsets.all(18),
@@ -100,31 +131,13 @@ class _PlansTabState extends ConsumerState<PlansTab> {
         logButton,
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-          child: Container(
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(color: AppColors.card, border: Border.all(color: AppColors.line), borderRadius: BorderRadius.circular(10)),
-            child: Row(
-              children: [("training", "Training"), ("nutrition", "Nutrition"), ("programs", "Programs")]
-                  .map((t) => Expanded(
-                        child: TapHighlight(
-                          onTap: () => widget.onSubChanged(t.$1),
-                          borderRadius: BorderRadius.circular(7),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(color: _sub == t.$1 ? AppColors.gold : Colors.transparent, borderRadius: BorderRadius.circular(7)),
-                            child: Text(t.$2, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _sub == t.$1 ? AppColors.onGold : AppColors.mute)),
-                          ),
-                        ),
-                      ))
-                  .toList(),
-            ),
-          ),
+          child: _planTabs(),
         ),
         Expanded(
           child: switch (_sub) {
             "training" => ProgramBuilderScreen(clientId: widget.clientId),
             "nutrition" => NutritionBuilderScreen(clientId: widget.clientId, existing: record.nutrition),
+            "food" => ClientFoodLogView(clientId: widget.clientId),
             _ => SingleChildScrollView(
                 padding: const EdgeInsets.all(18),
                 child: _ProgramsPanel(
