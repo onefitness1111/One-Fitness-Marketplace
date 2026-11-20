@@ -67,6 +67,20 @@ class TrainerClientRecordsNotifier extends Notifier<Map<String, ClientRecord>> {
 
   void setAll(Map<String, ClientRecord> next) => state = next;
 
+  /// Adds records that are not loaded yet. A record already on screen stays,
+  /// so a late background fill cannot wipe an edit made after sign-in.
+  void mergeAbsent(Map<String, ClientRecord> incoming) {
+    if (incoming.isEmpty) return;
+    final next = {...state};
+    var changed = false;
+    for (final entry in incoming.entries) {
+      if (next.containsKey(entry.key)) continue;
+      next[entry.key] = entry.value;
+      changed = true;
+    }
+    if (changed) state = next;
+  }
+
   /// Folds chat threads (from the `messages` table) into the matching
   /// records, newest first. Keyed by message id, so a message that's
   /// already present — from the record's own older `comms`, or put there by

@@ -5,6 +5,7 @@ import "package:supabase_flutter/supabase_flutter.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/notifications/push_service.dart";
 import "../../core/supabase/supabase_service.dart";
+import "../../core/utils/date_utils.dart";
 import "../models/booking.dart";
 import "../models/challenge.dart";
 import "../models/charge.dart";
@@ -361,16 +362,17 @@ void _subscribeRealtimeUpdates(Ref ref) {
 /// trainer_auth_screen.dart / the signup screens.
 ///
 /// Two phases, so signing in doesn't wait on the whole database:
-///  * Awaited — what the first screen and the role restore need: roster,
-///    trainers, bookings, membership plans, waivers, platform settings,
-///    client records and the session profile. The returned Future completes
-///    once these are in, and the caller's shell opens.
-///  * Background — everything else (points, badges, challenges, charges,
-///    chat, libraries, catalogs …). Every request is fired at the start, so
-///    these are already in flight; each one is applied as soon as it lands,
-///    independently, so one slow or failing table doesn't hold up the rest.
-///    Providers whose built-in default is sample data are emptied first, so
-///    a real account never sees a fake charge or badge while they arrive.
+///  * Awaited — only what the first screen needs. Everyone waits for the
+///    session profile (one shared directory) and platform settings. A client
+///    also waits for their own row, their bookings, their record, plans,
+///    waivers, and coach names. A coach or the owner also waits for the
+///    roster, trainers, bookings, and the client records on today's board.
+///  * Background — the long lists, started only after that phase finishes,
+///    plus the rest of the client records for staff. Pay rates wait until a
+///    pay screen opens. Each result is applied on its own, so one slow table
+///    doesn't hold up the rest. Providers whose built-in default is sample
+///    data are emptied first, so a real account never sees a fake charge or
+///    badge while they arrive.
 ///
 /// Takes `dynamic` rather than `Ref` on purpose: Riverpod's `Ref` (used by
 /// providers) and `WidgetRef` (used by widgets, e.g. a ConsumerState's
@@ -383,65 +385,81 @@ void _subscribeRealtimeUpdates(Ref ref) {
 /// the ProviderScope.
 Future<void> loadAndSeedCoreData(dynamic ref) async {
   final generation = ++_loadGeneration;
+  _payGeneration = -1;
 
-  // ── Fire every request now ──
-  final rosterF = SupabaseService.loadRoster();
-  final trainersF = SupabaseService.loadTrainers();
+  // Everyone needs these, so they start before the role is known. The
+  // directory is fetched once and reused below.
+  final directoryF = SupabaseService.directoryWithContacts();
   final bookingsF = SupabaseService.loadBookings();
-  final plansF = SupabaseService.loadMembershipPlans();
-  final waiversF = SupabaseService.loadWaiverDocs();
   final platformSettingsF = SupabaseService.loadPlatformSettings();
-  final profileF = SupabaseService.getSessionProfile();
-  // Awaited one after another below; ignore() only stops a later one's
-  // error counting as unhandled if an earlier one fails first.
-  for (final f in [trainersF, bookingsF, plansF, waiversF, platformSettingsF, profileF]) {
+  for (final f in [bookingsF, platformSettingsF]) {
     f.ignore();
   }
 
-  // Background ones — the same ignore() reasoning; `later` still sees the
-  // result or the error.
-  final pointsLedgerF = SupabaseService.loadPointsLedgerAll()..ignore();
-  final badgesF = SupabaseService.loadMeritBadgesAll()..ignore();
-  final blockedTimeF = SupabaseService.loadBlockedTime()..ignore();
-  final productsF = SupabaseService.loadProducts()..ignore();
-  final couponsF = SupabaseService.loadCoupons()..ignore();
-  final programsLibraryF = SupabaseService.loadProgramsLibrary()..ignore();
-  final nutritionLibraryF = SupabaseService.loadNutritionLibrary()..ignore();
-  final customMealsF = SupabaseService.loadCustomMeals()..ignore();
-  final exercisesF = SupabaseService.loadExercises()..ignore();
-  final challengesF = SupabaseService.loadChallenges()..ignore();
-  final challengeTemplatesF = SupabaseService.loadChallengeTemplates()..ignore();
-  final squadsF = SupabaseService.loadSquads()..ignore();
-  final chargesF = SupabaseService.loadCharges()..ignore();
-  final waitlistF = SupabaseService.loadWaitlist()..ignore();
-  final packageCategoriesF = SupabaseService.loadPackageCategories()..ignore();
-  final equipmentF = SupabaseService.loadEquipment()..ignore();
-  final intakeFormsF = SupabaseService.loadIntakeFormTemplates()..ignore();
-  final coachMeritBadgesF = SupabaseService.loadCoachMeritBadges()..ignore();
-  final coachPrEventsF = SupabaseService.loadCoachPrEvents()..ignore();
-  final messagesF = SupabaseService.loadAllMessages()..ignore();
+  final List<Map<String, dynamic>> directory;
+  try {
+    directory = await directoryF;
+  } catch (e, st) {
+    // ignore: avoid_print
+    print("[loadAndSeedCoreData] core fetch failed: $e\n$st");
+    return;
+  }
+  final profile = SupabaseService.sessionProfileIn(directory);
+  final role = profile?["role"] as String?;
+  final isClient = role == "client";
 
-  // ── Awaited phase ──
   final List<ClientInfo> roster;
   final List<Trainer> trainers;
   final List<Booking> bookings;
-  final List<MembershipPlan> plans;
-  final List<WaiverDoc> waivers;
   final PlatformSettings? platformSettings;
-  final Map<String, ClientRecord> clientRecords;
-  final Map<String, dynamic>? profile;
+  Map<String, ClientRecord> clientRecords = const {};
+  List<MembershipPlan> plans = const [];
+  List<WaiverDoc> waivers = const [];
+  var deferPlans = false;
   try {
-    roster = await rosterF;
-    // Needs the roster's ids, so it's the one request that can't start
-    // with the rest; it overlaps with the remaining awaits below.
-    final clientRecordsF = SupabaseService.loadClientRecords(roster.map((c) => c.id).toList())..ignore();
-    trainers = await trainersF;
-    bookings = await bookingsF;
-    plans = await plansF;
-    waivers = await waiversF;
-    platformSettings = await platformSettingsF;
-    clientRecords = await clientRecordsF;
-    profile = await profileF;
+    if (isClient) {
+      final id = profile!["id"] as String;
+      final trainersF = SupabaseService.trainersFromDirectory(directory, includePay: false);
+      final plansF = SupabaseService.loadMembershipPlans();
+      final waiversF = SupabaseService.loadWaiverDocs();
+      final ownF = SupabaseService.clientFromDirectory(directory, id);
+      final recordF = SupabaseService.loadClientRecord(id);
+      for (final f in [trainersF, plansF, waiversF, ownF, recordF]) {
+        f.ignore();
+      }
+      final own = await ownF;
+      trainers = await trainersF;
+      bookings = await bookingsF;
+      plans = await plansF;
+      waivers = await waiversF;
+      platformSettings = await platformSettingsF;
+      final record = await recordF;
+      roster = own == null ? const [] : [own];
+      clientRecords = {id: record};
+    } else {
+      deferPlans = true;
+      final trainersF = SupabaseService.trainersFromDirectory(directory, includePay: false);
+      final rosterF = SupabaseService.rosterFromDirectory(directory);
+      trainersF.ignore();
+      rosterF.ignore();
+      roster = await rosterF;
+      trainers = await trainersF;
+      bookings = await bookingsF;
+      platformSettings = await platformSettingsF;
+      final today = isoToday();
+      final rosterIds = roster.map((c) => c.id).toSet();
+      final signedInId = profile?["id"] as String?;
+      final todayIds = <String>[
+        for (final b in bookings)
+          if (b.date == today &&
+              rosterIds.contains(b.clientId) &&
+              (role == "owner" || b.trainerId == signedInId))
+            b.clientId,
+      ].toSet().toList();
+      if (todayIds.isNotEmpty) {
+        clientRecords = await SupabaseService.loadClientRecords(todayIds);
+      }
+    }
   } catch (e, st) {
     // Network unavailable, or RLS blocked one of these outright — leave
     // what's there rather than blanking every screen out.
@@ -460,8 +478,6 @@ Future<void> loadAndSeedCoreData(dynamic ref) async {
   // defined its own — signup relies on the default waiver being there.
   if (plans.isNotEmpty) ref.read(membershipPlansProvider.notifier).setAll(plans);
   if (waivers.isNotEmpty) ref.read(waiversProvider.notifier).setAll(waivers);
-  // Re-bound to a plain local: Dart doesn't carry the null-promotion of a
-  // declared-then-assigned-in-try variable into the closure below.
   final resolvedSettings = platformSettings;
   if (resolvedSettings != null) {
     ref.read(platformSettingsProvider.notifier).update((_) => resolvedSettings);
@@ -494,6 +510,8 @@ Future<void> loadAndSeedCoreData(dynamic ref) async {
   final CoachPrEventsNotifier coachPrEventsN = ref.read(coachPrEventsProvider.notifier);
   final TrainerClientRecordsNotifier clientRecordsN = ref.read(trainerClientRecordsProvider.notifier);
   final ClientRecordNotifier ownRecordN = ref.read(clientRecordProvider.notifier);
+  final MembershipPlansNotifier plansN = ref.read(membershipPlansProvider.notifier);
+  final WaiversNotifier waiversN = ref.read(waiversProvider.notifier);
 
   // ── Restore who's signed in from the current Supabase Auth session ──
   String? ownClientId;
@@ -552,6 +570,8 @@ Future<void> loadAndSeedCoreData(dynamic ref) async {
   // Each result only applies if no newer load (a sign-out then a different
   // sign-in) has started since — a slow reply from the previous session
   // must not land on top of the next one's data.
+  Map<String, List<CommMessage>>? arrivedChat;
+
   void later<T>(Future<T> f, String what, void Function(T) apply) {
     unawaited(f.then((v) {
       if (generation == _loadGeneration) apply(v);
@@ -561,33 +581,52 @@ Future<void> loadAndSeedCoreData(dynamic ref) async {
     }));
   }
 
-  later(pointsLedgerF, "points", pointsLedgerN.setAll);
-  later(badgesF, "badges", badgesN.setAll);
-  later(challengesF, "challenges", challengesN.setAll);
-  later(challengeTemplatesF, "challenge_templates", challengeTemplatesN.setAll);
-  later(chargesF, "charges", chargesN.setAll);
-  later(blockedTimeF, "blocked time", blockedTimesN.setAll);
-  later(productsF, "products", productsN.setAll);
-  later(couponsF, "coupons", couponsN.setAll);
-  later(programsLibraryF, "programs", programsLibraryN.setAll);
-  later(nutritionLibraryF, "nutrition", nutritionLibraryN.setAll);
-  later(customMealsF, "custom meals", customMealsN.setAll);
+  // Started here, not with the first screen, so those requests don't compete.
+  later(SupabaseService.loadPointsLedgerAll(), "points", pointsLedgerN.setAll);
+  later(SupabaseService.loadMeritBadgesAll(), "badges", badgesN.setAll);
+  later(SupabaseService.loadChallenges(), "challenges", challengesN.setAll);
+  later(SupabaseService.loadChallengeTemplates(), "challenge_templates", challengeTemplatesN.setAll);
+  later(SupabaseService.loadCharges(), "charges", chargesN.setAll);
+  later(SupabaseService.loadBlockedTime(), "blocked time", blockedTimesN.setAll);
+  later(SupabaseService.loadProducts(), "products", productsN.setAll);
+  later(SupabaseService.loadCoupons(), "coupons", couponsN.setAll);
+  later(SupabaseService.loadProgramsLibrary(), "programs", programsLibraryN.setAll);
+  later(SupabaseService.loadNutritionLibrary(), "nutrition", nutritionLibraryN.setAll);
+  later(SupabaseService.loadCustomMeals(), "custom meals", customMealsN.setAll);
   // Keep the curated catalog until a gym has entered exercises of its own.
-  later(exercisesF, "exercises", (List<ExerciseDef> v) {
+  later(SupabaseService.loadExercises(), "exercises", (List<ExerciseDef> v) {
     if (v.isNotEmpty) exercisesN.setAll(v);
   });
-  later(squadsF, "squads", squadsN.setAll);
-  later(waitlistF, "waitlist", waitlistN.setAll);
-  later(packageCategoriesF, "package categories", packageCategoriesN.setAll);
-  later(equipmentF, "equipment", equipmentN.setAll);
-  later(intakeFormsF, "intake forms", intakeFormsN.setAll);
-  later(coachMeritBadgesF, "coach badges", coachMeritBadgesN.setAll);
-  later(coachPrEventsF, "coach PR events", coachPrEventsN.setAll);
+  later(SupabaseService.loadSquads(), "squads", squadsN.setAll);
+  later(SupabaseService.loadWaitlist(), "waitlist", waitlistN.setAll);
+  later(SupabaseService.loadPackageCategories(), "package categories", packageCategoriesN.setAll);
+  later(SupabaseService.loadEquipment(), "equipment", equipmentN.setAll);
+  later(SupabaseService.loadIntakeFormTemplates(), "intake forms", intakeFormsN.setAll);
+  later(SupabaseService.loadCoachMeritBadges(), "coach badges", coachMeritBadgesN.setAll);
+  later(SupabaseService.loadCoachPrEvents(), "coach PR events", coachPrEventsN.setAll);
+  if (deferPlans) {
+    later(SupabaseService.loadMembershipPlans(), "plans", (List<MembershipPlan> v) {
+      if (v.isNotEmpty) plansN.setAll(v);
+    });
+    later(SupabaseService.loadWaiverDocs(), "waivers", (List<WaiverDoc> v) {
+      if (v.isNotEmpty) waiversN.setAll(v);
+    });
+    final have = clientRecords.keys.toSet();
+    final restIds = [for (final c in roster) if (!have.contains(c.id)) c.id];
+    if (restIds.isNotEmpty) {
+      later(SupabaseService.loadClientRecords(restIds), "client records", (Map<String, ClientRecord> rest) {
+        clientRecordsN.mergeAbsent(rest);
+        final chat = arrivedChat;
+        if (chat != null) clientRecordsN.mergeComms(chat);
+      });
+    }
+  }
   // Chat lives in the `messages` table, not the record's jsonb; older
   // entries still in `comms` are kept and merged. The table's own policy
   // has already dropped blocked users' rows.
   final own = ownClientId;
-  later(messagesF, "messages", (Map<String, List<CommMessage>> byClient) {
+  later(SupabaseService.loadAllMessages(), "messages", (Map<String, List<CommMessage>> byClient) {
+    arrivedChat = byClient;
     clientRecordsN.mergeComms(byClient);
     final thread = own == null ? null : byClient[own];
     if (thread != null) {
@@ -601,6 +640,33 @@ Future<void> loadAndSeedCoreData(dynamic ref) async {
 
 /// Bumped by every [loadAndSeedCoreData] call; see `later` inside it.
 int _loadGeneration = 0;
+
+/// Matches [_loadGeneration] once pay rates for that sign-in have been read.
+int _payGeneration = -1;
+
+/// Pay rates stay off the sign-in path. A pay screen calls this; the owner
+/// sees every coach, and a coach sees their own row. A second call in the
+/// same sign-in does not ask again.
+Future<void> ensureTrainerPay(dynamic ref) async {
+  if (_payGeneration == _loadGeneration) return;
+  try {
+    if (SupabaseService.currentUser == null) return;
+  } catch (_) {
+    return;
+  }
+  final generation = _loadGeneration;
+  _payGeneration = generation;
+  try {
+    final trainers = List<Trainer>.from(ref.read(trainersProvider) as List<Trainer>);
+    final updated = await SupabaseService.attachTrainerPay(trainers);
+    if (generation != _loadGeneration) return;
+    ref.read(trainersProvider.notifier).setAll(updated);
+  } catch (e) {
+    if (generation == _loadGeneration) _payGeneration = -1;
+    // ignore: avoid_print
+    print("[ensureTrainerPay] $e");
+  }
+}
 
 /// Re-reads membership state — plan, freeze, cancellation — from the
 /// server so a change made on another device shows here. A signed-in

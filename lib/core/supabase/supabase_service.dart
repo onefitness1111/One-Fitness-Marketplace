@@ -99,20 +99,8 @@ class SupabaseService {
   /// { id, role, name, email, phone, photo_url } or null if signed out /
   /// the account's app-side row was removed.
   static Future<Map<String, dynamic>?> getSessionProfile() async {
-    final user = currentUser;
-    if (user == null) return null;
-    final directory = await loadProfileDirectory();
-    Map<String, dynamic>? row;
-    for (final p in directory) {
-      if (p["id"] == user.id) {
-        row = p;
-        break;
-      }
-    }
-    if (row == null) return null;
-    final profile = Map<String, dynamic>.from(row);
-    await _attachContacts([profile]);
-    return profile;
+    if (currentUser == null) return null;
+    return sessionProfileIn(await directoryWithContacts());
   }
 
   static Future<void> signIn(String email, String password) async {
@@ -517,6 +505,25 @@ class SupabaseService {
     return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
   }
 
+  /// One directory read plus one contact read. Sign-in reuses this list for
+  /// the session profile, the roster, and the coach names.
+  static Future<List<Map<String, dynamic>>> directoryWithContacts() async {
+    final directory = await loadProfileDirectory();
+    final copies = [for (final p in directory) Map<String, dynamic>.from(p)];
+    await _attachContacts(copies);
+    return copies;
+  }
+
+  /// The signed-in row inside a directory that already has contact fields.
+  static Map<String, dynamic>? sessionProfileIn(List<Map<String, dynamic>> directory) {
+    final user = currentUser;
+    if (user == null) return null;
+    for (final p in directory) {
+      if (p["id"] == user.id) return p;
+    }
+    return null;
+  }
+
   static Future<List<dynamic>> _rpcList(String name, Map<String, dynamic> params) async {
     try {
       final rows = await client.rpc(name, params: params);
@@ -580,7 +587,11 @@ class SupabaseService {
   /// client doesn't need the whole-gym roster fetched first just to find
   /// their own row in it.
   static Future<ClientInfo?> loadClientById(String id) async {
-    final directory = await loadProfileDirectory();
+    return clientFromDirectory(await directoryWithContacts(), id);
+  }
+
+  /// One client's row from a directory that already has contact fields.
+  static Future<ClientInfo?> clientFromDirectory(List<Map<String, dynamic>> directory, String id) async {
     Map<String, dynamic>? profile;
     for (final p in directory) {
       if (p["id"] == id) {
@@ -588,9 +599,7 @@ class SupabaseService {
         break;
       }
     }
-    if (profile == null) return null;
-    final profileRow = Map<String, dynamic>.from(profile);
-    await _attachContacts([profileRow]);
+    if (profile == null || profile["role"] != "client") return null;
     final c = await client
         .from("clients")
         .select(_clientColumns)
@@ -598,14 +607,19 @@ class SupabaseService {
         .maybeSingle();
     final clientRow = Map<String, dynamic>.from(c ?? const {});
     if (c != null) await _attachBilling([clientRow]);
-    return _clientInfoFromRow(profileRow, clientRow);
+    return _clientInfoFromRow(profile, clientRow);
   }
 
   static Future<List<ClientInfo>> loadRoster() async {
-    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "client").toList();
-    if (profiles.isEmpty) return [];
-    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
-    await _attachContacts(profileRows);
+    return rosterFromDirectory(await directoryWithContacts());
+  }
+
+  static Future<List<ClientInfo>> rosterFromDirectory(List<Map<String, dynamic>> directory) async {
+    final profileRows = [
+      for (final p in directory)
+        if (p["role"] == "client") Map<String, dynamic>.from(p),
+    ];
+    if (profileRows.isEmpty) return [];
     final ids = profileRows.map((p) => p["id"] as String).toList();
     final clients = await client
         .from("clients")
@@ -620,22 +634,78 @@ class SupabaseService {
     );
   }
 
-  static Future<List<Trainer>> loadTrainers() async {
-    final profiles = (await loadProfileDirectory()).where((p) => p["role"] == "coach").toList();
-    if (profiles.isEmpty) return [];
-    final profileRows = [for (final p in profiles) Map<String, dynamic>.from(p as Map)];
-    await _attachContacts(profileRows);
+  static Future<List<Trainer>> loadTrainers({bool includePay = true}) async {
+    return trainersFromDirectory(await directoryWithContacts(), includePay: includePay);
+  }
+
+  /// Coach names from a directory that already has contact fields.
+  /// [includePay] is false at sign-in; pay loads when a pay screen opens.
+  static Future<List<Trainer>> trainersFromDirectory(
+    List<Map<String, dynamic>> directory, {
+    bool includePay = true,
+  }) async {
+    final profileRows = [
+      for (final p in directory)
+        if (p["role"] == "coach") Map<String, dynamic>.from(p),
+    ];
+    if (profileRows.isEmpty) return [];
     final ids = profileRows.map((p) => p["id"] as String).toList();
     final trainers = await client
         .from("trainers")
         .select(_trainerColumns)
         .inFilter("profile_id", ids);
     final trainerRows = [for (final t in trainers) Map<String, dynamic>.from(t as Map)];
-    await _attachPay(trainerRows);
+    if (includePay) await _attachPay(trainerRows);
     final byId = {for (final t in trainerRows) t["profile_id"] as String: t};
     final withRow = profileRows.where((p) => byId.containsKey(p["id"]));
     return _safeMap(withRow, (p) => _trainerFromRow(p, byId[p["id"]]!));
   }
+
+  /// Pay rates for coaches the caller is allowed to see (their own row, or
+  /// every coach when the caller is the owner). Other fields stay as they are.
+  static Future<List<Trainer>> attachTrainerPay(List<Trainer> trainers) async {
+    if (trainers.isEmpty) return trainers;
+    final ids = trainers.map((t) => t.id).toList();
+    final rows = await _rpcList("trainer_pay_for", {"p_ids": ids});
+    final byId = <String, Map<String, dynamic>>{
+      for (final raw in rows)
+        if (raw is Map && raw["profile_id"] is String)
+          raw["profile_id"] as String: raw.cast<String, dynamic>(),
+    };
+    return [
+      for (final t in trainers)
+        byId[t.id] == null ? t : _trainerWithPay(t, byId[t.id]!),
+    ];
+  }
+
+  static Trainer _trainerWithPay(Trainer t, Map<String, dynamic> pay) => Trainer(
+        id: t.id,
+        name: t.name,
+        title: t.title,
+        photo: t.photo,
+        phone: t.phone,
+        email: t.email,
+        locationName: t.locationName,
+        locationAddress: t.locationAddress,
+        locations: t.locations,
+        bio: t.bio,
+        beforeAfters: t.beforeAfters,
+        availability: t.availability,
+        commissionRate: (pay["commission_rate"] as num?) ?? t.commissionRate,
+        disciplines: t.disciplines,
+        sessionTypes: t.sessionTypes,
+        reviewedByOwner: t.reviewedByOwner,
+        signupAt: t.signupAt,
+        payoutMode: pay["payout_mode"] as String? ?? t.payoutMode,
+        payoutRateCents: _asInt(pay["payout_rate_cents"]) ?? t.payoutRateCents,
+        referralCommissionPercent: (pay["referral_commission_percent"] as num?) ?? t.referralCommissionPercent,
+        coachCode: t.coachCode,
+        unavailability: t.unavailability,
+        coachName: t.coachName,
+        secondaryCoachName: t.secondaryCoachName,
+        firstName: t.firstName,
+        lastName: t.lastName,
+      );
 
   static Future<List<Booking>> loadBookings() async {
     final rows = await client.from("bookings").select();
@@ -3713,12 +3783,17 @@ class SupabaseService {
   /// of coaches — and RLS already narrows it to the caller's own sessions
   /// plus any they're booked into.
   static Future<List<LiveSession>> loadLiveSessions() async {
-    try {
-      // Finishes runs whose clock ended recently. Older stuck rows are
-      // left alone. A missing function (not deployed yet) is ignored.
-      await client.rpc("close_recent_expired_session_runs");
-    } catch (_) {}
-    final rows = await client.from("session_runs").select().isFilter("ended_at", null);
+    // The close and the read are independent enough to share the wait.
+    // A run that expires during this overlap can show as live until the
+    // next refresh; the close still runs.
+    final close = () async {
+      try {
+        await client.rpc("close_recent_expired_session_runs");
+      } catch (_) {}
+    }();
+    final rowsFuture = client.from("session_runs").select().isFilter("ended_at", null);
+    await close;
+    final rows = await rowsFuture;
     return rows
         .map((r) => LiveSession.fromJson(r.cast<String, dynamic>()))
         .whereType<LiveSession>()
