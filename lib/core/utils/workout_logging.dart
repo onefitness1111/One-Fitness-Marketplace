@@ -146,6 +146,8 @@ double? _bestWeight(List<LoggedSet> sets) {
   return best;
 }
 
+double? bestLoggedWeightNamed(List<WorkoutLogEntry> logs, String exerciseName) => _bestEver(logs, exerciseName);
+
 double? _bestEver(List<WorkoutLogEntry> logs, String exerciseName) {
   final name = exerciseName.trim().toLowerCase();
   double? best;

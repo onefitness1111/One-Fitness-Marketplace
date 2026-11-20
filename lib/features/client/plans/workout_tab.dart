@@ -7,6 +7,8 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/source_citations.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/program_utils.dart";
+import "../../../core/motion/motion.dart";
+import "../../../core/motion/stagger_in.dart";
 import "../../../core/utils/workout_week.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/comm_message.dart";
@@ -295,8 +297,9 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
   @override
   Widget build(BuildContext context) {
     final client = ref.watch(clientRecordProvider);
+    final Widget page;
     if (_loggingDayId != null) {
-      return Column(
+      page = Column(
         children: [
           Align(
             alignment: Alignment.centerLeft,
@@ -327,8 +330,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
           ),
         ],
       );
-    }
-
+    } else {
     final programs = client.savedPrograms.where((p) => p.status == "active" && p.programDays.isNotEmpty).toList();
     final days = programs.isEmpty ? const <ProgramDay>[] : programs.first.programDays;
     final today = dateOnly(DateTime.now());
@@ -336,7 +338,7 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     final selected = programDayOn(days, _shown);
     final isToday = dateOnly(_shown) == today;
 
-    return ListView(
+    page = ListView(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
       children: [
         Row(
@@ -388,8 +390,10 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
             ),
           ),
           const SizedBox(height: 16),
-          for (final exercise in selected.exercises)
-            Padding(
+          for (var i = 0; i < selected.exercises.length; i++)
+            StaggerIn(
+              index: i,
+              child: Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Container(
                 width: double.infinity,
@@ -401,18 +405,24 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(exercise.name, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.txt)),
+                    Text(selected.exercises[i].name, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.txt)),
                     const SizedBox(height: 2),
                     Text(
-                      "${exercise.sets} sets · ${exercise.reps} reps${(exercise.weight ?? "").isEmpty ? "" : " · ${exercise.weight}"}",
+                      "${selected.exercises[i].sets} sets · ${selected.exercises[i].reps} reps${(selected.exercises[i].weight ?? "").isEmpty ? "" : " · ${selected.exercises[i].weight}"}",
                       style: TextStyle(fontSize: 12, color: AppColors.mute),
                     ),
                   ],
                 ),
               ),
             ),
+            ),
         ],
       ],
+    );
+    }
+    return AnimatedSwitcher(
+      duration: reduceMotionOf(context) ? const Duration(milliseconds: 80) : motionExpand,
+      child: KeyedSubtree(key: ValueKey(_loggingDayId ?? "plan"), child: page),
     );
   }
 }

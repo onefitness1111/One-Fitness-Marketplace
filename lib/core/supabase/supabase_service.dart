@@ -2422,6 +2422,18 @@ class SupabaseService {
   /// Replaces only the keys in [patch], under a row lock, so a nutrition
   /// save and a measurements save cannot wipe each other out.
   /// Falls back to a full rewrite if the database function is not deployed yet.
+  static Future<List<String>?> loadWorkoutCompleteSeen(String profileId) async {
+    final row = await client.from("client_records").select("data").eq("profile_id", profileId).maybeSingle();
+    final data = row?["data"];
+    if (data is! Map || !data.containsKey("workoutCompleteSeen")) return null;
+    final list = data["workoutCompleteSeen"];
+    if (list is! List) return const [];
+    return list.map((e) => e.toString()).toList();
+  }
+
+  static Future<void> saveWorkoutCompleteSeen(String profileId, List<String> ids) =>
+      patchClientRecord(profileId, {"workoutCompleteSeen": ids});
+
   static Future<void> patchClientRecord(
     String profileId,
     Map<String, dynamic> patch,

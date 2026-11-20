@@ -421,7 +421,24 @@ export async function expireGymCitizen(admin: any, clientId: string): Promise<nu
   return expired.length;
 }
 
+export async function awardRecordBreaker(admin: any, clientId: string) {
+  const { data: existing } = await admin.from("merit_badges")
+    .select("id").eq("client_id", clientId).eq("badge_key", "record_breaker").is("revoked_at", null).maybeSingle();
+  if (existing) return { outcome: "unchanged", awarded: [] as string[] };
+  const { error } = await admin.from("merit_badges").insert({
+    client_id: clientId,
+    badge_key: "record_breaker",
+    earned_method: "automatic",
+  });
+  if (error) {
+    if (error.code === "23505") return { outcome: "unchanged", awarded: [] as string[] };
+    throw error;
+  }
+  return { outcome: "awarded", awarded: ["record_breaker"] };
+}
+
 export async function runBadgeEvent(admin: any, clientId: string, eventOrKey: string, sourceRefId?: string | null) {
+  if (eventOrKey === "record_breaker") return awardRecordBreaker(admin, clientId);
   if (eventOrKey === "champion") {
     if (!sourceRefId) throw new Error("sourceRefId (challenge id) is required.");
     return awardChampion(admin, clientId, sourceRefId);

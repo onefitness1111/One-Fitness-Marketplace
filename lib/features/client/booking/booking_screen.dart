@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/motion/booked_screen.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/late_fee_notice.dart";
@@ -259,7 +260,14 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       SupabaseService.clientNotify("booking-confirmed", {
         "when": "${niceDate(_date)} at ${fmtSlot(slot)}",
       });
-      _showError("You're booked — ${niceDate(_date)} at ${fmtSlot(slot)}. A receipt is on its way to your email.");
+      if (mounted) {
+        await BookedScreen.show(
+          context,
+          when: "${niceDate(_date)} at ${fmtSlot(slot)}",
+          coach: t.displayTitle,
+          place: saved?.locationName ?? "",
+        );
+      }
       _loadCredits();
       return;
     }
@@ -838,6 +846,15 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         SupabaseService.clientNotify("booking-confirmed", {
           "when": "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
         });
+        if (mounted) {
+          final place = _pickLocation(pick)?.name ?? "";
+          await BookedScreen.show(
+            context,
+            when: "${niceDate(_date)} at ${fmtSlot(pick.slot)}",
+            coach: pick.trainer.displayTitle,
+            place: place,
+          );
+        }
         notifyClientAndCoach(
           clientId: info.id,
           coachId: pick.trainer.id,
