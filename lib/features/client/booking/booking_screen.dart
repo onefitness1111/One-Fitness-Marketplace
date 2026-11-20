@@ -5,7 +5,9 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/theme/app_colors.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "../../../core/utils/booking_location.dart";
+import "../../../core/utils/booking_places.dart";
 import "../../../core/utils/session_places.dart";
 import "../../../core/utils/booking_pitch.dart";
 import "../../../core/utils/booking_utils.dart";
@@ -38,6 +40,7 @@ import "booking_cancel_screen.dart";
 import "booking_picking_screen.dart";
 import "date_strip.dart";
 import "location_picker.dart";
+import "booking_location_switcher.dart";
 import "upcoming_session_card.dart";
 import "waitlist_offer_banner.dart";
 
@@ -86,6 +89,23 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   /// Which held plan the pending pick will be charged to — decided by
   /// canBookOffering when the slot was tapped, written onto the booking.
   String? _pickPlanId;
+
+  Future<void> _loadSavedPlace() async {
+    final id = ref.read(clientInfoProvider).id;
+    if (id.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(bookingPlacePrefKey(id));
+    if (!mounted) return;
+    setState(() => _savedPlaceId = (saved == null || saved == bookingPlaceAll) ? null : saved);
+  }
+
+  Future<void> _rememberPlace(String? placeId) async {
+    setState(() => _savedPlaceId = placeId);
+    final id = ref.read(clientInfoProvider).id;
+    if (id.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(bookingPlacePrefKey(id), placeId ?? bookingPlaceAll);
+  }
 
   /// "Change Location" — becomes this client's booking location from now
   /// on (not a one-off filter). Applied locally first so the slot list
@@ -423,10 +443,15 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
 
   String _waitlistKey(String trainerId, String date, int slot) => "$trainerId|$date|$slot";
 
+  /// The place picked in the Location switcher. Null is every location.
+  /// Loaded from this phone, not from the account.
+  String? _savedPlaceId;
+
   @override
   void initState() {
     super.initState();
     _loadCredits();
+    _loadSavedPlace();
     if (ref.read(pendingSingleResumeProvider) != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _resumePending());
     }
@@ -929,6 +954,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final info = ref.watch(clientInfoProvider);
     final bookings = ref.watch(clientBookingsProvider);
     final trainers = ref.watch(trainersProvider);
+    final places = bookablePlaces(
+      trainers: trainers,
+      gymLocations: ref.watch(platformSettingsProvider).allLocations,
+    );
+    final selectedPlace = places.where((place) => place.id == _savedPlaceId).firstOrNull;
 
     if (_cancelTarget != null) {
       return LocalBackScope(
@@ -1021,6 +1051,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           // line: an offer is time-limited and passes to someone else if
           // missed, so nothing on this page is more urgent.
           const WaitlistOfferBanner(),
+          BookingLocationSwitcher(
+            places: places,
+            selectedId: selectedPlace?.id,
+            onSelect: _rememberPlace,
+          ),
           // Above the upcoming-sessions grid, not below it: how many sessions
           // are left is the thing that decides whether booking another one is
           // even possible, so it shouldn't sit under a list the client has to
@@ -1251,6 +1286,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                         waitlistBusyKeys: _waitlistBusyKeys,
                         semiPrivateCap: ref.watch(platformSettingsProvider).semiPrivateCap,
                         locationFilter: effectiveBookingLocation(ref, info),
+                        coachPlace: selectedPlace,
                         locationDistances: bookingLocationDistances(ref, info),
                         placeDistances: ref.watch(placeDistancesProvider),
                         onLocationChange: _changeBookingLocation,
@@ -1707,6 +1743,7 @@ class _StepThree extends StatefulWidget {
     required this.semiPrivateCap,
     required this.gymLocationName,
     required this.locationFilter,
+    this.coachPlace,
     required this.locationDistances,
     required this.placeDistances,
     required this.onLocationChange,
@@ -1716,8 +1753,11 @@ class _StepThree extends StatefulWidget {
   /// location of their own.
   final String gymLocationName;
 
-  /// Only show sessions at this location; null shows them all.
+  /// Only show sessions at this gym-site name; null shows them all.
   final String? locationFilter;
+
+  /// Coach training location chosen in the switcher. Null shows every place.
+  final BookablePlace? coachPlace;
 
   /// Metres from the client's booking location to each gym location, by
   /// name — orders each time's sessions nearest first.
@@ -1804,6 +1844,8 @@ class _StepThreeState extends State<_StepThree> {
           final where = o.locationName ?? widget.gymLocationName;
           final wanted = widget.locationFilter;
           if (wanted != null && where != wanted) continue;
+          final place = widget.coachPlace;
+          if (place != null && !offeringAtPlace(t, o, place, gymDefaultName: widget.gymLocationName)) continue;
           bySlot.putIfAbsent(o.slot, () => []).add(_SlotAvailability(trainer: t, open: cap - used, cap: cap, mine: mine, locationName: o.locationName));
         }
       }
@@ -1869,6 +1911,14 @@ class _StepThreeState extends State<_StepThree> {
             sessionType: chosenType,
             discipline: chosenDisc,
             locationName: widget.locationFilter,
+            keep: widget.coachPlace == null
+                ? null
+                : (trainer, offering) => offeringAtPlace(
+                      trainer,
+                      offering,
+                      widget.coachPlace!,
+                      gymDefaultName: widget.gymLocationName,
+                    ),
             gymLocationName: widget.gymLocationName,
             semiPrivateCap: widget.semiPrivateCap,
             skipStarted: true,
