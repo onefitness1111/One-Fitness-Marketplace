@@ -25,17 +25,16 @@ void main() {
     person(id: "c", coach: "pat", phone: "5553334444", email: "c@gym.test", smsOptIn: true),
   ];
 
-  test("only app, app plus text, or email alone are allowed", () {
-    expect(broadcastChannelFromSet({"inapp"}), BroadcastChannel.app);
-    expect(broadcastChannelFromSet({"inapp", "sms"}), BroadcastChannel.appSms);
-    expect(broadcastChannelFromSet({"email"}), BroadcastChannel.email);
-
-    expect(broadcastChannelFromSet({"sms"}), isNull);
-    expect(broadcastChannelFromSet({"email", "inapp"}), isNull);
-    expect(broadcastChannelFromSet({"email", "sms"}), isNull);
-    expect(broadcastChannelFromSet({"inapp", "sms", "email"}), isNull);
-    expect(broadcastChannelFromSet({}), isNull);
-    expect(broadcastChannelAllowed({"sms"}), isFalse);
+  test("any mix of in app, text, and email is allowed, and empty is not", () {
+    expect(broadcastWaysFromSet({"inapp"}), const BroadcastWays(app: true));
+    expect(broadcastWaysFromSet({"inapp", "sms"}), const BroadcastWays(app: true, sms: true));
+    expect(broadcastWaysFromSet({"email"}), const BroadcastWays(email: true));
+    expect(broadcastWaysFromSet({"sms"}), const BroadcastWays(sms: true));
+    expect(broadcastWaysFromSet({"email", "inapp"}), const BroadcastWays(app: true, email: true));
+    expect(broadcastWaysFromSet({"inapp", "sms", "email"}), const BroadcastWays(app: true, sms: true, email: true));
+    expect(broadcastWaysAllowed(const {}), isFalse);
+    expect(broadcastLegacyWire(const BroadcastWays(app: true, sms: true)), "app_sms");
+    expect(broadcastLegacyWire(const BroadcastWays(app: true, email: true)), isNull);
   });
 
   test("a coach reaches only their own clients", () {
@@ -74,7 +73,7 @@ void main() {
 
   test("texts are counted only when the person can be texted, and quiet hours skip them", () {
     final open = previewBroadcast(
-      channel: BroadcastChannel.appSms,
+      ways: const BroadcastWays(app: true, sms: true),
       recipients: clients.where((c) => c.primaryTrainerId == "chris").toList(),
       nowUtc: DateTime.utc(2026, 1, 15, 18),
     );
@@ -84,7 +83,7 @@ void main() {
     expect(open.email, 0);
 
     final quiet = previewBroadcast(
-      channel: BroadcastChannel.appSms,
+      ways: const BroadcastWays(app: true, sms: true),
       recipients: [clients.first],
       nowUtc: DateTime.utc(2026, 1, 15, 15),
     );
@@ -93,7 +92,7 @@ void main() {
     expect(quiet.skippedQuietHours, 1);
 
     final mail = previewBroadcast(
-      channel: BroadcastChannel.email,
+      ways: const BroadcastWays(email: true),
       recipients: [
         clients[1],
         person(id: "d", coach: "chris"),
@@ -103,11 +102,19 @@ void main() {
     expect(mail.app, 0);
     expect(mail.email, 1);
     expect(mail.skippedNoEmail, 1);
+
+    final both = previewBroadcast(
+      ways: const BroadcastWays(app: true, email: true),
+      recipients: [clients[1]],
+      nowUtc: DateTime.utc(2026, 1, 15, 18),
+    );
+    expect(both.app, 1);
+    expect(both.email, 1);
   });
 
   test("someone who opted out is not texted, and the app chat still counts", () {
     final stopped = previewBroadcast(
-      channel: BroadcastChannel.appSms,
+      ways: const BroadcastWays(app: true, sms: true),
       recipients: [
         person(id: "a", coach: "chris", phone: "555", smsOptIn: true, smsOptedOut: true),
       ],

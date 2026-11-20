@@ -1,44 +1,55 @@
 /// Who a broadcast may reach, and which channels are allowed.
 ///
-/// The only combinations are app chat, app chat plus a text, or email by
-/// itself. A text is never sent on its own, and email is never mixed with
-/// the other two. A coach reaches only their own clients. The owner reaches
-/// every client. The server applies the same rules again before anything
-/// is sent.
+/// In app, SMS, and Email can be combined. A text still goes out only when
+/// that client can receive one. Email is its own send. A coach reaches only
+/// their own clients. The owner reaches every client. The server applies the
+/// same rules again before anything is sent.
 
-enum BroadcastChannel { app, appSms, email }
+/// One mix of the three send chips. Empty is not a send.
+class BroadcastWays {
+  const BroadcastWays({this.app = false, this.sms = false, this.email = false});
 
-const broadcastChannelWire = {
-  BroadcastChannel.app: "app",
-  BroadcastChannel.appSms: "app_sms",
-  BroadcastChannel.email: "email",
-};
+  final bool app;
+  final bool sms;
+  final bool email;
 
-const broadcastChannelLabel = {
-  BroadcastChannel.app: "App chat only",
-  BroadcastChannel.appSms: "App chat and text",
-  BroadcastChannel.email: "Email only",
-};
+  bool get isEmpty => !app && !sms && !email;
 
-/// Null when the choice is not one of the three allowed combinations.
-BroadcastChannel? broadcastChannelFromWire(String? raw) {
-  final value = (raw ?? "").trim();
-  for (final entry in broadcastChannelWire.entries) {
-    if (entry.value == value) return entry.key;
-  }
-  return null;
+  static const appOnly = BroadcastWays(app: true);
+
+  @override
+  bool operator ==(Object other) =>
+      other is BroadcastWays && other.app == app && other.sms == sms && other.email == email;
+
+  @override
+  int get hashCode => Object.hash(app, sms, email);
+
+  List<String> get wire => [
+        if (app) "inapp",
+        if (sms) "sms",
+        if (email) "email",
+      ];
 }
 
-/// A set of chat chips is a broadcast only for the three allowed shapes.
-BroadcastChannel? broadcastChannelFromSet(Set<String> channels) {
+BroadcastWays broadcastWaysFromSet(Set<String> channels) {
   final names = channels.map((c) => c.trim()).where((c) => c.isNotEmpty).toSet();
-  if (names.length == 1 && names.contains("inapp")) return BroadcastChannel.app;
-  if (names.length == 2 && names.contains("inapp") && names.contains("sms")) return BroadcastChannel.appSms;
-  if (names.length == 1 && names.contains("email")) return BroadcastChannel.email;
-  return null;
+  return BroadcastWays(
+    app: names.contains("inapp"),
+    sms: names.contains("sms"),
+    email: names.contains("email"),
+  );
 }
 
-bool broadcastChannelAllowed(Set<String> channels) => broadcastChannelFromSet(channels) != null;
+bool broadcastWaysAllowed(Set<String> channels) => !broadcastWaysFromSet(channels).isEmpty;
+
+/// The older single-value wire, when the mix is exactly one of those three.
+/// Mixed selections travel as the chip names instead.
+String? broadcastLegacyWire(BroadcastWays ways) {
+  if (ways.app && !ways.sms && !ways.email) return "app";
+  if (ways.app && ways.sms && !ways.email) return "app_sms";
+  if (!ways.app && !ways.sms && ways.email) return "email";
+  return null;
+}
 
 class BroadcastClient {
   const BroadcastClient({
@@ -129,7 +140,7 @@ class BroadcastPreview {
 }
 
 BroadcastPreview previewBroadcast({
-  required BroadcastChannel channel,
+  required BroadcastWays ways,
   required List<BroadcastClient> recipients,
   required DateTime nowUtc,
   int refused = 0,
@@ -142,15 +153,7 @@ BroadcastPreview previewBroadcast({
   var noEmail = 0;
   final quietNow = smsQuietHours(nowUtc);
   for (final person in recipients) {
-    if (channel == BroadcastChannel.email) {
-      if (person.hasEmail) {
-        email++;
-      } else {
-        noEmail++;
-      }
-      continue;
-    }
-    if (channel == BroadcastChannel.appSms) {
+    if (ways.sms) {
       if (!person.hasPhone) {
         noPhone++;
       } else if (!person.smsOptIn || person.smsOptedOut) {
@@ -161,8 +164,15 @@ BroadcastPreview previewBroadcast({
         sms++;
       }
     }
+    if (ways.email) {
+      if (person.hasEmail) {
+        email++;
+      } else {
+        noEmail++;
+      }
+    }
   }
-  final app = channel == BroadcastChannel.email ? 0 : recipients.length;
+  final app = ways.app ? recipients.length : 0;
   return BroadcastPreview(
     recipients: recipients.length,
     app: app,

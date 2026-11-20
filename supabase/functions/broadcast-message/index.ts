@@ -1,7 +1,7 @@
 // One message to many clients, each in their own chat with the sender.
 //
 // The owner reaches every client. A coach reaches only their own clients.
-// Channels are app chat, app chat plus a text, or email alone.
+// Channels are any mix of app chat, a text, and email.
 // A text uses the same Twilio number and the same opt-out checks as a
 // normal chat text. It is not sent before 8:00am or from 9:00pm Pacific.
 // Saving the chat message opens the usual 6-hour reply window.
@@ -20,7 +20,7 @@ import {
   json,
   requireStaff,
 } from "../_shared/messagingGuard.ts";
-import { broadcastChannel, smsQuietHours } from "../_shared/broadcastRules.mjs";
+import { broadcastWays, smsQuietHours } from "../_shared/broadcastRules.mjs";
 import { publicCoachName } from "../_shared/coachName.ts";
 
 const BATCH = 20;
@@ -30,10 +30,10 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const channel = broadcastChannel(body.channel);
-    if (!channel) throw new Error("Pick app chat, app chat and text, or email.");
-    const text = clip(body.text, channel === "email" ? 8000 : 1000, "Message");
-    const subject = channel === "email"
+    const ways = broadcastWays(body);
+    if (!ways) throw new Error("Pick at least one way to send.");
+    const text = clip(body.text, ways.app || ways.sms ? 1000 : 8000, "Message");
+    const subject = ways.email
       ? clip(body.subject, 200, "Subject")
       : String(body.subject ?? "").trim();
     const all = body.all === true;
@@ -61,9 +61,15 @@ serve(async (req) => {
     const quiet = smsQuietHours(new Date());
     const label = await senderLabel(admin, userId, role);
 
+    const channels = [
+      ...(ways.app ? ["inapp"] : []),
+      ...(ways.sms ? ["sms"] : []),
+      ...(ways.email ? ["email"] : []),
+    ];
     const result = {
       ok: true,
-      channel,
+      channel: channels.join(","),
+      channels,
       app: { sent: 0, failed: 0 },
       sms: { sent: 0, skipped: 0, failed: 0, skippedNoPhone: 0, skippedOptOut: 0, skippedQuietHours: 0 },
       email: { sent: 0, skipped: 0, failed: 0, skippedNoEmail: 0 },
@@ -77,38 +83,39 @@ serve(async (req) => {
       for (const person of chunk) {
         if (budget <= 0) {
           result.rateLimited += 1;
-          if (channel === "email") result.email.failed += 1;
-          else result.app.failed += 1;
+          if (ways.app) result.app.failed += 1;
+          if (ways.email) result.email.failed += 1;
           continue;
         }
         try {
-          await enforceRateLimit(admin, userId, channel === "email" ? "email" : "broadcast");
+          await enforceRateLimit(admin, userId, ways.app || ways.sms ? "broadcast" : "email");
           budget -= 1;
         } catch {
           budget = 0;
           result.rateLimited += 1;
-          if (channel === "email") result.email.failed += 1;
-          else result.app.failed += 1;
+          if (ways.app) result.app.failed += 1;
+          if (ways.email) result.email.failed += 1;
           continue;
         }
 
-        if (channel === "email") {
+        if (ways.email) {
           if (!person.email) {
             result.email.skipped += 1;
             result.email.skippedNoEmail += 1;
-            continue;
+          } else {
+            try {
+              await sendEmailOrThrow(person.email, subject, `${label}: ${text}`);
+              result.email.sent += 1;
+            } catch {
+              result.email.failed += 1;
+            }
           }
-          try {
-            await sendEmailOrThrow(person.email, subject, `${label}: ${text}`);
-            result.email.sent += 1;
-          } catch {
-            result.email.failed += 1;
-          }
-          continue;
         }
 
+        if (!ways.app && !ways.sms) continue;
+
         let includeSms = false;
-        if (channel === "app_sms") {
+        if (ways.sms) {
           if (!person.phone) {
             result.sms.skipped += 1;
             result.sms.skippedNoPhone += 1;
@@ -123,23 +130,28 @@ serve(async (req) => {
           }
         }
 
+        if (!ways.app && !includeSms) continue;
+
+        const savedChannel = [ways.app ? "inapp" : null, includeSms ? "sms" : null].filter(Boolean).join(",");
         const { error } = await admin.from("messages").insert({
           client_id: person.id,
           trainer_id: userId,
           sender_id: userId,
           who: "trainer",
           body: text,
-          channel: includeSms ? "inapp,sms" : "inapp",
+          channel: savedChannel,
           read_by_coach: true,
         });
         if (error) {
-          result.app.failed += 1;
+          if (ways.app) result.app.failed += 1;
           if (includeSms) result.sms.failed += 1;
           continue;
         }
-        result.app.sent += 1;
+        if (ways.app) {
+          result.app.sent += 1;
+          await notify(admin, person.id, label, text);
+        }
         if (includeSms) result.sms.sent += 1;
-        await notify(admin, person.id, label, text);
       }
     }
 

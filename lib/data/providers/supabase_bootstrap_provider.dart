@@ -434,6 +434,14 @@ Future<void> _loadFresh(_Hold hold, int generation, String? userId, {required bo
     return;
   }
   if (generation != _loadGeneration) return;
+  hold.owners.setAll([
+    for (final p in directory)
+      if (p["role"] == "owner" && p["id"] is String)
+        OwnerContact(
+          id: p["id"] as String,
+          name: ((p["name"] as String?) ?? "").trim(),
+        ),
+  ]);
   final profile = SupabaseService.sessionProfileIn(directory);
   final isClient = profile?["role"] == "client";
   final id = profile?["id"] as String?;
@@ -745,7 +753,8 @@ class _Hold {
         equipment = ref.read(equipmentProvider.notifier),
         forms = ref.read(intakeFormTemplatesProvider.notifier),
         coachBadges = ref.read(coachMeritBadgesProvider.notifier),
-        prEvents = ref.read(coachPrEventsProvider.notifier);
+        prEvents = ref.read(coachPrEventsProvider.notifier),
+        owners = ref.read(ownerDirectoryProvider.notifier);
 
   final TrainerRosterNotifier roster;
   final TrainersNotifier trainers;
@@ -781,6 +790,7 @@ class _Hold {
   final IntakeFormTemplatesNotifier forms;
   final CoachMeritBadgesNotifier coachBadges;
   final CoachPrEventsNotifier prEvents;
+  final OwnerDirectory owners;
 
   bool payReady = false;
   List<Trainer> paintedTrainers = const [];

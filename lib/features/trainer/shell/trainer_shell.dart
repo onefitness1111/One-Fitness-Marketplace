@@ -52,7 +52,6 @@ const _bottomItemsBase = [
   _NavItem("chat", "Chat", LucideIcons.messageSquare),
   _NavItem("schedule", "Schedule", LucideIcons.calendar),
 ];
-const _requestsBottomItem = _NavItem("requests", "Requests", LucideIcons.clipboardList);
 const _staffBottomItem = _NavItem("staff", "Staff", LucideIcons.user);
 
 const _titles = {
@@ -222,7 +221,6 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
 
     final bottomItems = [
       ..._bottomItemsBase,
-      if (!isOwner) _requestsBottomItem,
       if (isOwner) _staffBottomItem,
     ];
 
@@ -333,6 +331,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       screenKey: mode,
                       child: switch (mode) {
                       "waitlist" => const WaitlistScreen(),
+                      "requests" => const RequestsScreen(),
                       "exercises" => const ExercisesScreen(),
                       "equipment" => const EquipmentLibraryScreen(),
                       "builderWorkout" => const ProgramLibraryPage(kind: LibraryKind.workout),
@@ -443,7 +442,6 @@ class _KeptTabsState extends State<_KeptTabs> {
       "clients": const ClientsScreen(),
       "chat": const CoachChatScreen(),
       "schedule": const ScheduleScreen(),
-      if (!widget.isOwner) "requests": const RequestsScreen(),
       if (widget.isOwner) "staff": const StaffScreen(),
     };
     final keys = tabs.keys.toList();
@@ -500,7 +498,6 @@ class _TrainerDrawer extends ConsumerWidget {
         ? [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
             _DrawerEntry(LucideIcons.clipboardList, "Requests", "requests", true),
-            _DrawerEntry(LucideIcons.messageSquare, "Chat", "chat", true),
             _DrawerEntry(
               LucideIcons.clipboardList,
               "Build Workout Program",
@@ -537,16 +534,12 @@ class _TrainerDrawer extends ConsumerWidget {
           ]
         : [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
-            _DrawerEntry(LucideIcons.users, "Clients", "clients", true),
             _DrawerEntry(LucideIcons.clipboardList, "Requests", "requests", true),
-            _DrawerEntry(LucideIcons.calendar, "Schedule", "schedule", true),
             _DrawerEntry(LucideIcons.clock, "Waitlist", "waitlist", true),
             _DrawerEntry(LucideIcons.dumbbell, "Exercises", "exercises", true),
             _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
             _DrawerEntry(LucideIcons.trophy, "Challenges", "challenges", true),
-            _DrawerEntry(LucideIcons.messageSquare, "Chat", "chat", true),
             _DrawerEntry(LucideIcons.user, "My Profile", "myprofile", true),
-            _DrawerEntry(LucideIcons.calendar, "Calendar Sync", "calendarsync", true),
             _DrawerEntry(LucideIcons.award, "Merit Badges", "coachbadges", true),
             _DrawerEntry(LucideIcons.clipboardCheck, "My Pay", "mypay", true),
             _DrawerEntry(LucideIcons.phone, "Support", "support", true),

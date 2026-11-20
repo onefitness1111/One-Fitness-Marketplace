@@ -8,9 +8,10 @@ import "../../../core/utils/chat_channels.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 
-/// Team Chat: owner <-> coaches, coach <-> coach, and anyone on staff to the
-/// business contact (ONE Fitness Marketplace). Marketplace messages reach the
-/// owner and go by In app or Email only, never SMS.
+/// Team Chat: coaches message each other and the business contact
+/// (ONE Fitness Marketplace). Marketplace messages reach the owner and go
+/// by In app or Email only, never SMS. A coach does not get a separate
+/// owner person in this list. The owner still messages coaches directly.
 /// Staff talking to each other may see a legal name when no coach name is set.
 /// A client never uses this. Client screens use [coachPublicName] only.
 String staffLabel(Map<String, dynamic>? p) {
@@ -24,6 +25,44 @@ String staffLabel(Map<String, dynamic>? p) {
   final name = ((p?["name"] as String?) ?? "").trim();
   if (name.isEmpty) return "Teammate";
   return name;
+}
+
+/// People offered when starting a new staff chat.
+///
+/// A coach keeps the business contact and other coaches. They do not get a
+/// separate tile for an owner profile (`role == "owner"`). That person is
+/// reached through ONE Fitness Marketplace (`id` "market", no recipient).
+/// The owner still sees every other owner and every coach.
+///
+/// This list is only the new-chat picker. A direct thread that already
+/// exists with the owner stays in chat history and can still be opened.
+List<Map<String, dynamic>> staffNewChatChoices(
+  Iterable<Map<String, dynamic>> people, {
+  required bool viewerIsOwner,
+}) {
+  return [
+    for (final p in people)
+      if (viewerIsOwner || p["role"] != "owner") p,
+  ];
+}
+
+/// Messages already in one staff thread, in the order they were loaded.
+///
+/// "market" is the business contact (`recipient_id` null). Any other id is
+/// the direct thread with that profile. A past direct thread with the owner
+/// stays on the owner's id. Those rows are not copied onto Marketplace.
+List<Map<String, dynamic>> staffThreadMessages({
+  required String key,
+  required String me,
+  required bool viewerIsOwner,
+  required Iterable<Map<String, dynamic>> messages,
+}) {
+  if (key == "market") {
+    return messages.where((m) => m["recipient_id"] == null && (viewerIsOwner || m["sender_id"] == me)).toList();
+  }
+  return messages
+      .where((m) => (m["sender_id"] == me && m["recipient_id"] == key) || (m["sender_id"] == key && m["recipient_id"] == me))
+      .toList();
 }
 
 class TeamChatScreen extends StatefulWidget {
@@ -137,15 +176,12 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
 
   bool get _iAmOwner => _person(_me)?["role"] == "owner";
 
-  List<Map<String, dynamic>> _thread(String key) {
-    if (key == "market") {
-      return _messages.where((m) => m["recipient_id"] == null && (_iAmOwner || m["sender_id"] == _me)).toList();
-    }
-    return _messages
-        .where((m) =>
-            (m["sender_id"] == _me && m["recipient_id"] == key) || (m["sender_id"] == key && m["recipient_id"] == _me))
-        .toList();
-  }
+  List<Map<String, dynamic>> _thread(String key) => staffThreadMessages(
+        key: key,
+        me: _me,
+        viewerIsOwner: _iAmOwner,
+        messages: _messages,
+      );
 
   Future<void> _send() async {
     final key = _open;
@@ -229,7 +265,10 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
       );
 
   Widget _list() {
-    final others = _people.where((p) => p["id"] != _me).toList()
+    final others = staffNewChatChoices(
+      _people.where((p) => p["id"] != _me),
+      viewerIsOwner: _iAmOwner,
+    ).toList()
       ..sort((a, b) => ((a["name"] as String?) ?? "").compareTo((b["name"] as String?) ?? ""));
     return ListView(
       padding: const EdgeInsets.all(18),

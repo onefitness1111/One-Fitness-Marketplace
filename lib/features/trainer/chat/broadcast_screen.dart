@@ -3,7 +3,9 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/broadcast.dart";
+import "../../../core/utils/chat_channels.dart";
 import "../../../core/utils/coach_names.dart";
+import "../../../core/widgets/send_via_chips.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/providers/client_providers.dart";
@@ -24,7 +26,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
   final _subject = TextEditingController();
   bool _all = true;
   final Set<String> _picked = {};
-  BroadcastChannel _channel = BroadcastChannel.app;
+  Set<ChatChannel> _channels = {ChatChannel.inapp};
   bool _reviewing = false;
   bool _sending = false;
   String? _error;
@@ -64,18 +66,22 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     );
   }
 
+  BroadcastWays get _ways => broadcastWaysFromSet(_channels.map((c) => c.name).toSet());
+
   Future<void> _send(BroadcastScope scope) async {
     setState(() {
       _sending = true;
       _error = null;
     });
+    final ways = _ways;
     try {
       final result = await SupabaseService.sendBroadcast(
         text: _message.text.trim(),
-        channel: broadcastChannelWire[_channel]!,
+        channel: broadcastLegacyWire(ways) ?? ways.wire.join(","),
+        channels: ways.wire,
         allClients: _all,
         clientIds: scope.allowed.map((c) => c.id).toList(),
-        subject: _channel == BroadcastChannel.email ? _subject.text.trim() : null,
+        subject: ways.email ? _subject.text.trim() : null,
       );
       if (!mounted) return;
       setState(() => _result = result);
@@ -98,8 +104,9 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
         ? "ONE Fitness Marketplace"
         : (sender.isNotEmpty ? sender.first.displayTitle : coachPublicName());
     final scope = _scope(mine, isOwner, senderId);
+    final ways = _ways;
     final preview = previewBroadcast(
-      channel: _channel,
+      ways: ways,
       recipients: scope.allowed,
       nowUtc: DateTime.now().toUtc(),
       refused: scope.refused.length,
@@ -111,7 +118,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     if (_reviewing) {
       return _Review(
         from: from,
-        channel: _channel,
+        ways: ways,
         preview: preview,
         busy: _sending,
         error: _error,
@@ -124,7 +131,8 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     final shown = mine.where((c) => query.isEmpty || c.name.toLowerCase().contains(query)).toList();
     final canReview = _message.text.trim().isNotEmpty &&
         scope.allowed.isNotEmpty &&
-        (_channel != BroadcastChannel.email || _subject.text.trim().isNotEmpty);
+        broadcastWaysAllowed(_channels.map((c) => c.name).toSet()) &&
+        (!ways.email || _subject.text.trim().isNotEmpty);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -187,16 +195,12 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
             ),
         ],
         const SizedBox(height: 16),
-        const _Label("How it goes out"),
-        for (final channel in BroadcastChannel.values)
-          _Choice(
-            label: broadcastChannelLabel[channel]!,
-            detail: _channelDetail(channel),
-            selected: _channel == channel,
-            onTap: () => setState(() => _channel = channel),
-          ),
+        SendViaChips(
+          channels: _channels,
+          onChanged: (next) => setState(() => _channels = next),
+        ),
         const SizedBox(height: 16),
-        if (_channel == BroadcastChannel.email) ...[
+        if (ways.email) ...[
           const _Label("Subject"),
           AppField(controller: _subject, kind: FieldKind.text, placeholder: "Subject", onChanged: (_) => setState(() {})),
           const SizedBox(height: 12),
@@ -219,23 +223,12 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
       ],
     );
   }
-
-  String _channelDetail(BroadcastChannel channel) {
-    switch (channel) {
-      case BroadcastChannel.app:
-        return "Their chat with you. No text.";
-      case BroadcastChannel.appSms:
-        return "Chat, plus a text when they can receive one.";
-      case BroadcastChannel.email:
-        return "Email only. Nothing is added to the chat.";
-    }
-  }
 }
 
 class _Review extends StatelessWidget {
   const _Review({
     required this.from,
-    required this.channel,
+    required this.ways,
     required this.preview,
     required this.busy,
     required this.error,
@@ -244,7 +237,7 @@ class _Review extends StatelessWidget {
   });
 
   final String from;
-  final BroadcastChannel channel;
+  final BroadcastWays ways;
   final BroadcastPreview preview;
   final bool busy;
   final String? error;
@@ -255,8 +248,8 @@ class _Review extends StatelessWidget {
   Widget build(BuildContext context) {
     final lines = <String>[
       "From $from",
-      if (channel != BroadcastChannel.email) "App chat: ${preview.app}",
-      if (channel == BroadcastChannel.appSms) ...[
+      if (ways.app) "App chat: ${preview.app}",
+      if (ways.sms) ...[
         "Text: ${preview.sms}",
         if (preview.skippedNoPhone > 0) "Skipped, no phone: ${preview.skippedNoPhone}",
         if (preview.skippedNoPhone == 0 && preview.sms == 0)
@@ -264,7 +257,7 @@ class _Review extends StatelessWidget {
         if (preview.skippedOptOut > 0) "Skipped, no text permission: ${preview.skippedOptOut}",
         if (preview.skippedQuietHours > 0) "Skipped, quiet hours: ${preview.skippedQuietHours}",
       ],
-      if (channel == BroadcastChannel.email) ...[
+      if (ways.email) ...[
         "Email: ${preview.email}",
         if (preview.skippedNoEmail > 0) "Skipped, no email: ${preview.skippedNoEmail}",
       ],
@@ -314,19 +307,36 @@ class _Result extends StatelessWidget {
     return value is num ? value.toInt() : 0;
   }
 
+  Set<String> _asked(Map<String, dynamic> result) {
+    final list = result["channels"];
+    if (list is List && list.isNotEmpty) {
+      return list.map((e) => e.toString()).toSet();
+    }
+    switch (result["channel"]?.toString()) {
+      case "app":
+        return {"inapp"};
+      case "app_sms":
+        return {"inapp", "sms"};
+      case "email":
+        return {"email"};
+      default:
+        return const {};
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final channel = result["channel"]?.toString() ?? "";
+    final asked = _asked(result);
     final lines = <String>[
       "From $from",
-      if (channel != "email") "App chat sent: ${_n("app", "sent")}",
-      if (channel != "email" && _n("app", "failed") > 0) "App chat failed: ${_n("app", "failed")}",
-      if (channel == "app_sms") ...[
+      if (asked.contains("inapp")) "App chat sent: ${_n("app", "sent")}",
+      if (asked.contains("inapp") && _n("app", "failed") > 0) "App chat failed: ${_n("app", "failed")}",
+      if (asked.contains("sms")) ...[
         "Texts sent: ${_n("sms", "sent")}",
         if (_n("sms", "skipped") > 0) "Texts skipped: ${_n("sms", "skipped")}",
         if (_n("sms", "failed") > 0) "Texts failed: ${_n("sms", "failed")}",
       ],
-      if (channel == "email") ...[
+      if (asked.contains("email")) ...[
         "Emails sent: ${_n("email", "sent")}",
         if (_n("email", "skipped") > 0) "Emails skipped: ${_n("email", "skipped")}",
         if (_n("email", "failed") > 0) "Emails failed: ${_n("email", "failed")}",
