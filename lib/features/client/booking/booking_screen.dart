@@ -13,6 +13,7 @@ import "../../../core/utils/booking_places.dart";
 import "../../../core/utils/session_places.dart";
 import "../../../core/utils/booking_pitch.dart";
 import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/unavailability.dart";
 import "../../../core/utils/schedule_day_fill.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -1845,15 +1846,22 @@ class _StepThreeState extends State<_StepThree> {
     final sunday = isSunday(date);
 
     final bySlot = <int, List<_SlotAvailability>>{};
+    final offeredBy = <String, Trainer>{};
+    final visibleCoach = <String>{};
+    final blockedByTimeOff = <String>{};
     {
       for (final t in trainers) {
-        if (fallsInUnavailability(t, date)) continue;
         for (final o in trainerOfferingsOn(t, date)) {
           // The weekly pattern never runs on Sunday; a session the owner
           // created on a Sunday date deliberately does.
           if (sunday && !o.oneOff) continue;
           if (o.sessionType != chosenType || o.discipline != chosenDisc) continue;
-          if (fallsInBlockedTime(widget.blockedTimes, t.id, date, o.slot)) continue;
+          offeredBy[t.id] = t;
+          if (fallsInUnavailability(t, date, slot: o.slot, sessionLen: o.durationMin)) {
+            blockedByTimeOff.add(t.id);
+            continue;
+          }
+          if (fallsInBlockedTime(widget.blockedTimes, t.id, date, o.slot, sessionLen: o.durationMin)) continue;
           final used = bookedCount(bookings, t.id, date, o.slot);
           final cap = capFor(o.sessionType, semiPrivateCap: widget.semiPrivateCap);
           final mine = bookings.any((b) => b.clientId == info.id && b.trainerId == t.id && b.date == date && b.slot == o.slot);
@@ -1864,6 +1872,7 @@ class _StepThreeState extends State<_StepThree> {
           if (wanted != null && where != wanted) continue;
           final place = widget.coachPlace;
           if (place != null && !offeringAtPlace(t, o, place, gymDefaultName: widget.gymLocationName)) continue;
+          visibleCoach.add(t.id);
           bySlot.putIfAbsent(o.slot, () => []).add(_SlotAvailability(trainer: t, open: cap - used, cap: cap, mine: mine, locationName: o.locationName));
         }
       }
@@ -1890,6 +1899,8 @@ class _StepThreeState extends State<_StepThree> {
       bySlot.removeWhere((slot, _) => sessionHasStarted(date, slot));
     }
     final slots = bySlot.keys.toList()..sort();
+    final fullyOff = offeredBy.values.where((t) => blockedByTimeOff.contains(t.id) && !visibleCoach.contains(t.id)).toList()
+      ..sort((a, b) => a.displayTitle.compareTo(b.displayTitle));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1971,9 +1982,14 @@ class _StepThreeState extends State<_StepThree> {
           const HintBox(text: "ONE Fitness is closed on Sundays. Pick another day.")
         else if (trainers.isEmpty)
           const HintBox(text: "No trainers set up yet.")
-        else if (slots.isEmpty)
+        else if (slots.isEmpty && fullyOff.isEmpty)
           HintBox(text: "No ${sessionTypeLabel(chosenType).toLowerCase()} ${disciplineLabel(chosenDisc)} sessions available on this day yet.")
-        else
+        else ...[
+          if (fullyOff.isNotEmpty)
+            ...fullyOff.map((t) => _UnavailableCoachCard(trainer: t, date: date)),
+          if (slots.isEmpty)
+            const SizedBox.shrink()
+          else
           ...slots.map((slot) {
             final avail = bySlot[slot]!;
             return Padding(
@@ -2049,6 +2065,14 @@ class _StepThreeState extends State<_StepThree> {
                                             padding: const EdgeInsets.only(top: 2),
                                             child: Text(a.trainer.displayTitle, style: TextStyle(fontSize: 12, color: AppColors.txt)),
                                           ),
+                                          if (clientUnavailabilityLine(a.trainer, date) != null)
+                                            Padding(
+                                              padding: const EdgeInsets.only(top: 3),
+                                              child: Text(
+                                                clientUnavailabilityLine(a.trainer, date)!,
+                                                style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.3),
+                                              ),
+                                            ),
                                           Padding(
                                             padding: const EdgeInsets.only(top: 3),
                                             child: TapHighlight(
@@ -2178,7 +2202,52 @@ class _StepThreeState extends State<_StepThree> {
               ),
             );
           }),
+        ],
       ],
+    );
+  }
+}
+
+/// Shown when every session this coach offered that day is inside their
+/// time off, so there is no open slot card left to carry the reason.
+class _UnavailableCoachCard extends StatelessWidget {
+  const _UnavailableCoachCard({required this.trainer, required this.date});
+
+  final Trainer trainer;
+  final String date;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = clientUnavailabilityLine(trainer, date);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          border: Border.all(color: AppColors.line),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Avatar(src: trainer.photo, name: trainer.displayTitle, size: 38),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(trainer.displayTitle, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  if (line != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(line, style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.3)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

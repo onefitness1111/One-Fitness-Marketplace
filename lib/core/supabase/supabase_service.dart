@@ -845,7 +845,7 @@ class SupabaseService {
   }
 
   static List<Booking> bookingsFromRows(List<Map<String, dynamic>> rows) =>
-      _safeMap(rows, _bookingFromRow);
+      _safeMap(rows, _bookingFromRow).where((b) => b.status != "cancelled").toList();
 
   static Future<List<Booking>> loadBookings() async =>
       bookingsFromRows(await fetchBookingRows());
@@ -2346,6 +2346,32 @@ class SupabaseService {
     }
   }
 
+  /// Saves one unavailability block and cancels the sessions it covers.
+  ///
+  /// The database does the write, the cancellations, and the credit restore
+  /// in one transaction, then this function asks the edge function to push
+  /// and, for a client who already opted in, text. A retry of the same
+  /// entry id does not cancel, credit, or notify a second time.
+  static Future<Map<String, dynamic>> saveCoachUnavailability({
+    required String trainerId,
+    required TrainerUnavailability entry,
+  }) =>
+      _invokeFunction("save-coach-unavailability", {
+        "trainerId": trainerId,
+        "entry": entry.toJson(),
+      });
+
+  /// Removes one block. Sessions already cancelled stay cancelled.
+  static Future<void> removeCoachUnavailability({
+    required String trainerId,
+    required String entryId,
+  }) async {
+    await client.rpc("remove_coach_unavailability", params: {
+      "p_trainer_id": trainerId,
+      "p_entry_id": entryId,
+    });
+  }
+
   /// Owner-only — Delete/Archive Behavior spec: a deleted coach is "fully
   /// removed; must sign up and register again from step one as a new
   /// profile." Runs server-side (delete-coach-account, service-role): nulls
@@ -2385,13 +2411,7 @@ class SupabaseService {
     if (b.right != null) "right": b.right,
   };
 
-  static Map<String, dynamic> _unavailabilityToJson(TrainerUnavailability u) =>
-      {
-        "id": u.id,
-        "startDate": u.startDate,
-        "endDate": u.endDate,
-        if (u.note != null) "note": u.note,
-      };
+  static Map<String, dynamic> _unavailabilityToJson(TrainerUnavailability u) => u.toJson();
 
   static Map<String, dynamic> _availabilityToJson(AvailabilityBlock b) => {
     "sessionType": b.sessionType,
@@ -6326,18 +6346,7 @@ class SupabaseService {
 
   static List<TrainerUnavailability> _unavailabilityFromJson(dynamic raw) {
     if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map(
-          (e) => TrainerUnavailability(
-            id: (e["id"] as String?) ?? "",
-            startDate: (e["startDate"] as String?) ?? "",
-            endDate:
-                (e["endDate"] as String?) ?? (e["startDate"] as String?) ?? "",
-            note: e["note"] as String?,
-          ),
-        )
-        .toList();
+    return raw.whereType<Map>().map(TrainerUnavailability.fromJson).toList();
   }
 
   static List<AvailabilityBlock> _availabilityFromJson(dynamic raw) {
@@ -6415,6 +6424,7 @@ class SupabaseService {
       planId: row["plan_id"] as String?,
       durationMin: _asInt(row["duration_min"]) ?? 60,
       countsTowardPay: row["counts_toward_pay"] as bool? ?? true,
+      status: row["cancelled_at"] != null ? "cancelled" : "confirmed",
     );
   }
 

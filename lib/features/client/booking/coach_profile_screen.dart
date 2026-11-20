@@ -8,6 +8,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/address_utils.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/unavailability.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/trainer.dart";
@@ -135,6 +136,14 @@ class _CoachProfileScreenState extends ConsumerState<CoachProfileScreen> {
                             Text(trainer.displayTitle, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                             if (_place.isNotEmpty)
                               Text(_place, style: TextStyle(color: AppColors.mute, fontSize: 13)),
+                            for (final u in upcomingUnavailability(trainer, isoToday()))
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  clientUnavailabilityText(u),
+                                  style: TextStyle(color: AppColors.mute, fontSize: 13, height: 1.3),
+                                ),
+                              ),
                           ],
                         ),
                       ),

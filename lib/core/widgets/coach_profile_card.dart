@@ -8,6 +8,8 @@ import "../utils/gym_location_link.dart";
 import "../../data/providers/platform_settings_provider.dart";
 import "../utils/domain_labels.dart";
 import "../../data/models/trainer.dart";
+import "../utils/date_utils.dart";
+import "../utils/unavailability.dart";
 import "avatar.dart";
 import "tag.dart";
 
@@ -63,6 +65,14 @@ class CoachProfileCard extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(trainer.displayTitle, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+                      for (final u in upcomingUnavailability(trainer, isoToday()))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            clientUnavailabilityText(u),
+                            style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.3),
+                          ),
+                        ),
                       if (disciplines.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),

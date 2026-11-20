@@ -68,19 +68,100 @@ bool sameBeforeAfters(List<TrainerBeforeAfter> a, List<TrainerBeforeAfter> b) {
   return true;
 }
 
-/// A block of time this coach won't be working — a single day
-/// (startDate == endDate) or a range, with an optional note. Stored on the
-/// trainer's `unavailability` jsonb column. Doesn't affect existing
-/// bookings inside the window (Coach Availability Tab spec, deliberate
-/// scope boundary) — only blocks NEW ones from being made, see
-/// booking_utils.dart's `fallsInUnavailability`.
+/// A block of time this coach won't be working. Stored on the trainer's
+/// `unavailability` jsonb column.
+///
+/// A blank end date is stored as the same day as [startDate]. Entries written
+/// before times existed have no [startMin]/[endMin] and cover the whole day,
+/// and their [note] is the reason clients see.
+///
+/// [allDay] true, or no times at all, blocks every slot that day. Otherwise
+/// the minutes apply on each day from [startDate] through [endDate]:
+/// a start with no end runs through the end of that day, and a start plus
+/// an end is that same range on every day.
 class TrainerUnavailability {
-  const TrainerUnavailability({required this.id, required this.startDate, required this.endDate, this.note});
+  const TrainerUnavailability({
+    required this.id,
+    required this.startDate,
+    required this.endDate,
+    this.note,
+    this.allDay,
+    this.startMin,
+    this.endMin,
+    this.reason,
+    this.clientNote,
+  });
 
   final String id;
   final String startDate; // ISO yyyy-MM-dd
   final String endDate; // ISO yyyy-MM-dd — same as startDate for a single day
+
+  /// Older rows stored the reason here. New rows still write it so an old
+  /// build keeps showing something, and also write [reason].
   final String? note;
+
+  /// Null on rows saved before the time toggle existed.
+  final bool? allDay;
+
+  /// Minutes from midnight. Null with [endMin] null means the whole day.
+  final int? startMin;
+
+  /// Null when the block runs from [startMin] through the end of the day.
+  final int? endMin;
+
+  /// Short reason clients see. Falls back to [note] on older rows.
+  final String? reason;
+
+  /// What the coach says in chat to clients whose sessions were cancelled.
+  /// Not a legal name, and not shown on the public coach card.
+  final String? clientNote;
+
+  /// Whole calendar days. A legacy row (no times) is all day even when
+  /// [allDay] was never stored.
+  bool get blocksWholeDay {
+    if (allDay == true) return true;
+    if (startMin == null && endMin == null) return true;
+    return false;
+  }
+
+  /// The reason a client is allowed to see. Blank when the coach left none.
+  String get displayReason {
+    final chosen = (reason ?? "").trim();
+    if (chosen.isNotEmpty) return chosen;
+    return (note ?? "").trim();
+  }
+
+  factory TrainerUnavailability.fromJson(Map<dynamic, dynamic> e) {
+    final start = (e["startDate"] ?? "").toString();
+    return TrainerUnavailability(
+      id: (e["id"] ?? "").toString(),
+      startDate: start,
+      endDate: (e["endDate"] ?? start).toString(),
+      note: e["note"] as String?,
+      allDay: e["allDay"] is bool ? e["allDay"] as bool : null,
+      startMin: (e["startMin"] as num?)?.toInt(),
+      endMin: (e["endMin"] as num?)?.toInt(),
+      reason: e["reason"] as String?,
+      clientNote: e["clientNote"] as String?,
+    );
+  }
+
+  /// Only the fields clients and the next save need. [note] repeats the
+  /// reason so an older app still has a label. No legal name is written.
+  Map<String, dynamic> toJson() {
+    final why = displayReason;
+    return {
+      "id": id,
+      "startDate": startDate,
+      "endDate": endDate,
+      "allDay": blocksWholeDay,
+      if (!blocksWholeDay && startMin != null) "startMin": startMin,
+      if (!blocksWholeDay && endMin != null) "endMin": endMin,
+      if (why.isNotEmpty) "note": why,
+      if (why.isNotEmpty) "reason": why,
+      if ((clientNote ?? "").trim().isNotEmpty) "clientNote": clientNote!.trim(),
+    };
+  }
 }
 
 /// Mirrors a trainer/coach record (App.jsx `trainers`) — trimmed to the
@@ -169,7 +250,10 @@ class Trainer {
   /// Only availability is routinely replaced in place (the owner creating
   /// a one-off session, a coach editing their week); everything else goes
   /// through the full edit form, which rebuilds the whole object.
-  Trainer copyWith({List<AvailabilityBlock>? availability}) => Trainer(
+  Trainer copyWith({
+    List<AvailabilityBlock>? availability,
+    List<TrainerUnavailability>? unavailability,
+  }) => Trainer(
         id: id,
         name: name,
         title: title,
@@ -191,7 +275,7 @@ class Trainer {
         payoutRateCents: payoutRateCents,
         referralCommissionPercent: referralCommissionPercent,
         coachCode: coachCode,
-        unavailability: unavailability,
+        unavailability: unavailability ?? this.unavailability,
         coachName: coachName,
         secondaryCoachName: secondaryCoachName,
         firstName: firstName,
@@ -252,9 +336,10 @@ class Trainer {
   final List<AvailabilityBlock> availability;
 
   /// Time off — see [TrainerUnavailability]. Distinct from [availability]'s
-  /// weekly recurring blocks: this is calendar-date-specific, blocks new
-  /// bookings only (never touches existing ones), and is checked separately
-  /// at slot-generation time (booking_utils.dart's fallsInUnavailability).
+  /// weekly recurring blocks: calendar dates, and on a partial day only the
+  /// minutes that overlap. Saving a new entry cancels sessions that overlap
+  /// it. Checked at slot-generation time (booking_utils.dart's
+  /// fallsInUnavailability).
   final List<TrainerUnavailability> unavailability;
 
   /// Percent (e.g. 20 = 20%) of session revenue paid to this coach — legacy

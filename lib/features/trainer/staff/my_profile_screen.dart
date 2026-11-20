@@ -132,7 +132,6 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
                   // Only when they changed — they're most of the request.
                   beforeAfters: sameBeforeAfters(matches.first.beforeAfters, t.beforeAfters) ? null : t.beforeAfters,
                   availability: t.availability,
-                  unavailability: t.unavailability,
                 );
               } catch (e) {
                 // ignore: avoid_print

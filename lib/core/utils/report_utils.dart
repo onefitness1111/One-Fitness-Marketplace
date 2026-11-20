@@ -158,9 +158,9 @@ TrainerUtilization trainerUtilizationInRange(Trainer trainer, List<Booking> book
   var capacity = 0;
   for (var d = start; !d.isAfter(end); d = d.add(const Duration(days: 1))) {
     final date = isoDate(d);
-    if (fallsInUnavailability(trainer, date)) continue;
     final weekday = d.weekday % 7;
     for (final o in trainerOfferings(trainer, weekday)) {
+      if (fallsInUnavailability(trainer, date, slot: o.slot, sessionLen: o.durationMin)) continue;
       capacity += capFor(o.sessionType, semiPrivateCap: semiPrivateCap);
     }
   }

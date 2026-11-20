@@ -36,7 +36,6 @@ ScheduleDayFill? scheduleDayFill({
   final counted = <String>{};
 
   for (final t in trainers) {
-    if (fallsInUnavailability(t, date)) continue;
     for (final o in trainerOfferingsOn(t, date)) {
       if (sunday && !o.oneOff) continue;
       if (sessionType != null && o.sessionType != sessionType) continue;
@@ -44,7 +43,8 @@ ScheduleDayFill? scheduleDayFill({
       final where = o.locationName ?? gymLocationName;
       if (locationName != null && where != locationName) continue;
       if (keep != null && !keep(t, o)) continue;
-      if (fallsInBlockedTime(blocked, t.id, date, o.slot)) continue;
+      if (fallsInUnavailability(t, date, slot: o.slot, sessionLen: o.durationMin)) continue;
+      if (fallsInBlockedTime(blocked, t.id, date, o.slot, sessionLen: o.durationMin)) continue;
       if (skipStarted && sessionHasStarted(date, o.slot)) continue;
       hadOffering = true;
       final cap = capFor(o.sessionType, semiPrivateCap: semiPrivateCap);

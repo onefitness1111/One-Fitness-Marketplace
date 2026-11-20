@@ -10,6 +10,7 @@ import "../../data/models/waiver_doc.dart";
 import "../theme/app_colors.dart";
 import "date_utils.dart";
 import "membership_utils.dart";
+import "unavailability.dart";
 import "merge_token_utils.dart";
 import "offered_catalog.dart";
 import "platform_settings.dart";
@@ -92,14 +93,20 @@ List<Offering> trainerOfferingsOn(Trainer t, String dateIso) {
   ];
 }
 
-/// Coach Availability Tab spec's Unavailability check — true when [date]
-/// (ISO yyyy-MM-dd) falls inside any of this trainer's marked time-off
-/// windows (inclusive both ends). Callers should treat a `true` result
-/// exactly like a fully-booked day — no slots offered, not an error — and
-/// check this BEFORE calling [trainerOfferings] for that date, since
-/// `trainerOfferings` only knows the weekday, not the actual calendar date.
-bool fallsInUnavailability(Trainer t, String date) =>
-    t.unavailability.any((u) => date.compareTo(u.startDate) >= 0 && date.compareTo(u.endDate) <= 0);
+/// True when this coach is unavailable for [date].
+///
+/// With no [slot], this is only an all-day block (including a legacy entry
+/// that has no times). A partial-day block does not blank the day. Pass
+/// [slot] and [sessionLen] to ask about one session: an all-day block still
+/// covers it, and a partial block covers it only when the minutes overlap.
+bool fallsInUnavailability(Trainer t, String date, {int? slot, int sessionLen = kSessionLen}) {
+  if (slot == null) {
+    return t.unavailability.any((u) => dateInUnavailability(u, date) && u.blocksWholeDay);
+  }
+  return t.unavailability.any(
+    (u) => unavailabilityOverlapsSlot(u, date, slot, sessionLen: sessionLen),
+  );
+}
 
 /// Delete/Archive Behavior spec, "Session availability": a coach's ad-hoc
 /// Block Time entries (block_time_sheet.dart) must actually stop those
