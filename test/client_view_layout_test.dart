@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 
+import "package:onefitness/data/providers/trainer_providers.dart";
 import "package:onefitness/features/trainer/clients/trainer_view.dart";
 
 void main() {
@@ -60,6 +61,7 @@ void main() {
       "Notes",
       "Squad",
       "Points",
+      "Merit Badges",
     ]) {
       expect(
         find.descendant(of: more, matching: find.text(label)),
@@ -70,10 +72,6 @@ void main() {
       find.descendant(of: more, matching: find.text("Photos")),
       findsNothing,
     );
-    expect(
-      find.descendant(of: more, matching: find.text("Badges")),
-      findsNothing,
-    );
 
     await tester.tap(
       find.descendant(of: tabs, matching: find.text("Progress")),
@@ -82,7 +80,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text("PROGRESS PHOTOS"), findsOneWidget);
     expect(find.text("MEASUREMENTS"), findsOneWidget);
-    expect(find.textContaining("MERIT BADGES"), findsWidgets);
+    expect(find.text("AWARD A BADGE"), findsNothing);
+    expect(find.text("ALL MERIT BADGES — REFERENCE"), findsNothing);
 
     await tester.tap(find.descendant(of: tabs, matching: find.text("More")));
     await tester.pump();
@@ -96,6 +95,53 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(const Key("client-more")), findsNothing);
+
+    await tester.tap(find.descendant(of: tabs, matching: find.text("More")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text("Merit Badges"));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text("AWARD A BADGE"), findsOneWidget);
+    expect(find.textContaining("ACTIVE ("), findsOneWidget);
+    expect(find.text("ALL MERIT BADGES — REFERENCE"), findsOneWidget);
+    expect(find.text("OWNER OVERRIDE — ASSIGN ANY BADGE"), findsNothing);
+  });
+
+  testWidgets("the owner override stays on the merit badges screen", (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    Future<void> openAs(String auth) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          key: ValueKey(auth),
+          overrides: [
+            trainerAuthProvider.overrideWith(() => _FixedAuth(auth)),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: TrainerView(clientId: "demo-jordan")),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text("More"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text("Merit Badges"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    await openAs("owner");
+    expect(find.text("OWNER OVERRIDE — ASSIGN ANY BADGE"), findsOneWidget);
+    expect(find.text("AWARD A BADGE"), findsOneWidget);
+
+    await openAs("coach-1");
+    expect(find.text("OWNER OVERRIDE — ASSIGN ANY BADGE"), findsNothing);
+    expect(find.text("AWARD A BADGE"), findsOneWidget);
   });
 
   testWidgets("quick actions scroll away with the page", (tester) async {
@@ -135,4 +181,13 @@ void main() {
       expect(bottom, lessThanOrEqualTo(nestedTop + 1));
     }
   });
+}
+
+class _FixedAuth extends TrainerAuthNotifier {
+  _FixedAuth(this.value);
+
+  final String value;
+
+  @override
+  String? build() => value;
 }

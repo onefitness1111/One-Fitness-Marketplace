@@ -2,11 +2,10 @@ import "package:flutter/material.dart";
 
 import "../../../core/theme/app_colors.dart";
 import "coach_measurements_tab.dart";
-import "merit_badges_tab.dart";
 import "photos_tab.dart";
 
-/// Photos, measurements, and badges on one page. Each section is the same
-/// tab it used to be, stacked so nothing is dropped.
+/// Photos and measurements on one page. Merit badges have their own
+/// entry under More.
 class ProgressTab extends StatelessWidget {
   const ProgressTab({super.key, required this.clientId});
 
@@ -20,8 +19,6 @@ class ProgressTab extends StatelessWidget {
         PhotosTab(clientId: clientId, embedded: true),
         const _SectionRule(),
         CoachMeasurementsTab(clientId: clientId, embedded: true),
-        const _SectionRule(),
-        MeritBadgesTab(clientId: clientId, embedded: true),
       ],
     );
   }

@@ -15,6 +15,7 @@ import {
   oneYearQualifies,
   packageWindowQualifies,
   pacificToday,
+  bundleKeys,
   perfectAttendanceQualifies,
   sessionMilestoneHits,
   timeWindowQualifies,
@@ -126,8 +127,13 @@ test("habit streak uses calendar days, not a UTC shift", () => {
 
 test("session milestones and the first session", () => {
   assert.deepEqual(sessionMilestoneHits(0), []);
-  assert.deepEqual(sessionMilestoneHits(1), ["first_session"]);
-  assert.deepEqual(sessionMilestoneHits(10), ["first_session", "sessions_10"]);
+  const one = sessionMilestoneHits(1);
+  const ten = sessionMilestoneHits(10);
+  assert.deepEqual(one, []);
+  assert.deepEqual(ten, ["sessions_10"]);
+  assert.equal(one.includes("first_session"), false);
+  assert.equal(ten.includes("first_session"), false);
+  assert.equal(bundleKeys("after_session").includes("first_session"), false);
   assert.ok(sessionMilestoneHits(100).includes("sessions_100"));
 });
 

@@ -1,6 +1,8 @@
 /// Display names for the Merit Badge catalog. Earning and removing a badge
 /// happens in the award-merit-badge function, which reads the live records
-/// and writes merit_badges. This list is what the app shows.
+/// and writes merit_badges. This list is what the app shows, awards, and
+/// celebrates. `first_session` was retired and is not here. An old row with
+/// that key, or any other unknown key, is ignored.
 class MeritBadgeDef {
   const MeritBadgeDef({required this.key, required this.name, required this.category, required this.description});
 
@@ -76,12 +78,6 @@ const kMeritBadges = <MeritBadgeDef>[
     name: "Gym Citizen",
     category: "coach",
     description: "Awarded to clients who consistently demonstrate outstanding gym etiquette, come prepared, respect the facility, and positively contribute to the One Fitness community.",
-  ),
-  MeritBadgeDef(
-    key: "first_session",
-    name: "First Session",
-    category: "automatic",
-    description: "Completed your first session. It stays.",
   ),
   MeritBadgeDef(
     key: "sessions_10",
