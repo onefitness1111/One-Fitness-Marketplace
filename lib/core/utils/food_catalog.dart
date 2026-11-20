@@ -135,6 +135,122 @@ FoodItem? matchFood(String name, {String? unit}) {
 
 IngredientMacros? macrosForNamedFood(String name, String unit) => matchFood(name, unit: unit)?.perUnit;
 
+/// A food the client named closely enough to use its macro ratio.
+///
+/// Exact names and unique aliases win, including a leading amount
+/// ("2 eggs") or a cooking word ("grilled chicken breast"). A mix of
+/// foods ("chicken and rice") returns null.
+FoodItem? matchFoodClosely(String name) {
+  final q = _normFoodQuery(name);
+  if (q.isEmpty) return null;
+  for (final candidate in _foodQueryCandidates(q)) {
+    final hit = _foodByNameOrAlias(candidate);
+    if (hit != null) return hit;
+  }
+  return null;
+}
+
+const _foodFillerWords = {
+  "grilled",
+  "baked",
+  "cooked",
+  "fresh",
+  "raw",
+  "plain",
+  "large",
+  "small",
+  "medium",
+  "sliced",
+  "chopped",
+  "steamed",
+  "roasted",
+  "boiled",
+  "fried",
+  "organic",
+  "boneless",
+  "skinless",
+  "whole",
+  "half",
+  "big",
+  "mini",
+};
+
+final _foodQtyPrefix = RegExp(r"^(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+");
+
+String _normFoodQuery(String raw) {
+  return raw.trim().toLowerCase().replaceAll(RegExp(r"[^a-z0-9]+"), " ").replaceAll(RegExp(r"\s+"), " ").trim();
+}
+
+List<String> _foodQueryCandidates(String q) {
+  final out = <String>[];
+  void add(String? value) {
+    final next = value?.trim() ?? "";
+    if (next.isEmpty || out.contains(next)) return;
+    out.add(next);
+  }
+
+  String? withoutQty(String value) {
+    final stripped = value.replaceFirst(_foodQtyPrefix, "").trim();
+    return stripped == value ? null : stripped;
+  }
+
+  String? withoutFiller(String value) {
+    final parts = value.split(" ").where((word) => word.isNotEmpty && !_foodFillerWords.contains(word)).toList();
+    if (parts.isEmpty) return null;
+    final next = parts.join(" ");
+    return next == value ? null : next;
+  }
+
+  String? singular(String value) {
+    if (value.length < 4 || !value.endsWith("s") || value.endsWith("ss")) return null;
+    if (value.endsWith("oes")) return value.substring(0, value.length - 2);
+    return value.substring(0, value.length - 1);
+  }
+
+  add(q);
+  add(withoutQty(q));
+  add(withoutFiller(q));
+  final qty = withoutQty(q);
+  if (qty != null) add(withoutFiller(qty));
+  final filler = withoutFiller(q);
+  if (filler != null) add(withoutQty(filler));
+  for (final candidate in List<String>.from(out)) {
+    add(singular(candidate));
+    final stripped = withoutQty(candidate);
+    if (stripped != null) add(singular(stripped));
+    final plain = withoutFiller(candidate);
+    if (plain != null) add(singular(plain));
+  }
+  return out;
+}
+
+FoodItem? _foodByNameOrAlias(String q) {
+  final byName = kFoods.where((food) => _normFoodQuery(food.name) == q).toList();
+  if (byName.isNotEmpty) return _sameMacroRatio(byName) ? byName.first : null;
+  final byAlias = kFoods.where((food) => food.aliases.any((alias) => _normFoodQuery(alias) == q)).toList();
+  if (byAlias.isEmpty) return null;
+  final names = byAlias.map((food) => _normFoodQuery(food.name)).toSet();
+  if (names.length != 1) return null;
+  return byAlias.first;
+}
+
+bool _sameMacroRatio(List<FoodItem> foods) {
+  if (foods.length <= 1) return true;
+  final base = foods.first;
+  final baseSum = base.protein + base.carbs + base.fats;
+  if (baseSum <= 0) {
+    return foods.every((food) => food.protein + food.carbs + food.fats <= 0);
+  }
+  for (final food in foods.skip(1)) {
+    final sum = food.protein + food.carbs + food.fats;
+    if (sum <= 0) return false;
+    if ((food.protein / sum - base.protein / baseSum).abs() > 0.02) return false;
+    if ((food.carbs / sum - base.carbs / baseSum).abs() > 0.02) return false;
+    if ((food.fats / sum - base.fats / baseSum).abs() > 0.02) return false;
+  }
+  return true;
+}
+
 const _glutenWords = [
   "wheat",
   "bread",

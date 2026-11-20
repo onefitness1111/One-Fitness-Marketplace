@@ -4,6 +4,8 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
+import "../../../core/nutrition/food_log_view.dart";
+import "../../../core/nutrition/quick_add_macros.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/food_catalog.dart";
@@ -436,7 +438,12 @@ class _MealRow extends StatelessWidget {
   }
 }
 
-bool foodLogEntryIsEstimated(FoodLogItem item) => item.id.startsWith("snap-") || item.unit.trim().toLowerCase() == "plate";
+String _relogId(FoodLogItem line) {
+  final stamp = DateTime.now().microsecondsSinceEpoch;
+  if (line.unit.trim().toLowerCase() == "plate" || line.id.startsWith("snap-")) return "snap-$stamp";
+  if (line.id.startsWith("est-")) return "est-$stamp";
+  return "log-$stamp";
+}
 
 String _commas(int n) {
   final raw = n.abs().toString();
@@ -459,6 +466,7 @@ class AddFoodSheet extends ConsumerStatefulWidget {
     required this.savedMeals,
     required this.onSnap,
     required this.onRestaurant,
+    this.estimateMacros,
   });
 
   final String mealLabel;
@@ -469,6 +477,10 @@ class AddFoodSheet extends ConsumerStatefulWidget {
   final List<NutritionMeal> savedMeals;
   final Future<FoodLogItem?> Function() onSnap;
   final Future<FoodLogItem?> Function() onRestaurant;
+
+  /// Quick add calls this when the food is not on the search list.
+  /// Empty means the signed-in estimate on the server.
+  final Future<Map<String, dynamic>> Function(String name, int calories)? estimateMacros;
 
   @override
   ConsumerState<AddFoodSheet> createState() => _AddFoodSheetState();
@@ -485,7 +497,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
     "Search foods and meals. Filter by a diet, or by breakfast, lunch, dinner, or snacks.",
     "Take a picture of your plate. You can correct the estimate, and the log labels it Estimated.",
     "Look up a restaurant and log something from the menu. The numbers are an estimate.",
-    "Type a name and the calories yourself when the food is not in the list.",
+    "Type a name and the calories. If you leave protein, carbs, or fat blank, those get estimated. Numbers you type stay as you entered them.",
   ];
 
   @override
@@ -587,7 +599,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
       case 3:
         return _TakePicTab(label: "Find a restaurant", onPressed: () => _finish(widget.onRestaurant));
       case 4:
-        return const _QuickAddSheet();
+        return _QuickAddSheet(estimateMacros: widget.estimateMacros);
       default:
         return ListView(
           padding: const EdgeInsets.all(18),
@@ -603,7 +615,7 @@ class _AddFoodSheetState extends ConsumerState<AddFoodSheet> {
                     contentPadding: EdgeInsets.zero,
                     title: Text(line.name, style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700)),
                     subtitle: Text("${line.calories} kcal", style: TextStyle(color: AppColors.mute)),
-                    onTap: () => Navigator.pop(context, line.copyWith(id: "log-${DateTime.now().microsecondsSinceEpoch}")),
+                    onTap: () => Navigator.pop(context, line.copyWith(id: _relogId(line))),
                   )),
             const SizedBox(height: 8),
             Text("Saved", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
@@ -855,7 +867,9 @@ class _FoodSearchSheetState extends State<_FoodSearchSheet> {
 }
 
 class _QuickAddSheet extends StatefulWidget {
-  const _QuickAddSheet();
+  const _QuickAddSheet({this.estimateMacros});
+
+  final Future<Map<String, dynamic>> Function(String name, int calories)? estimateMacros;
 
   @override
   State<_QuickAddSheet> createState() => _QuickAddSheetState();
@@ -867,6 +881,10 @@ class _QuickAddSheetState extends State<_QuickAddSheet> {
   final _p = TextEditingController();
   final _c = TextEditingController();
   final _f = TextEditingController();
+  bool _busy = false;
+  bool _failed = false;
+  bool _review = false;
+  String? _notice;
 
   @override
   void dispose() {
@@ -878,54 +896,170 @@ class _QuickAddSheetState extends State<_QuickAddSheet> {
     super.dispose();
   }
 
+  void _pop(QuickAddMacros macros) {
+    final name = _name.text.trim();
+    final calories = int.tryParse(_cal.text.trim());
+    if (name.isEmpty || calories == null) return;
+    Navigator.pop(
+      context,
+      foodLogItemFromQuickAdd(
+        name: name,
+        calories: calories,
+        macros: macros,
+        idSuffix: "${DateTime.now().microsecondsSinceEpoch}",
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    final name = _name.text.trim();
+    final calories = int.tryParse(_cal.text.trim());
+    if (name.isEmpty || calories == null) return;
+    final protein = readQuickAddMacro(_p.text);
+    final carbs = readQuickAddMacro(_c.text);
+    final fats = readQuickAddMacro(_f.text);
+    final local = localQuickAddMacros(name: name, calories: calories, protein: protein, carbs: carbs, fats: fats);
+    if (local != null && !local.estimated) {
+      _pop(local);
+      return;
+    }
+    if (local != null) {
+      _showEstimate(local);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _failed = false;
+      _review = false;
+      _notice = null;
+    });
+    try {
+      final response = await (widget.estimateMacros ?? _serverEstimate)(name, calories);
+      final merged = macrosFromServerEstimate(
+        calories: calories,
+        protein: protein,
+        carbs: carbs,
+        fats: fats,
+        response: response,
+      );
+      if (!mounted) return;
+      if (merged == null) {
+        _fail();
+        return;
+      }
+      _showEstimate(merged);
+    } catch (_) {
+      if (!mounted) return;
+      _fail();
+    }
+  }
+
+  Future<Map<String, dynamic>> _serverEstimate(String name, int calories) {
+    return SupabaseService.estimateFoodMacros(name: name, calories: calories);
+  }
+
+  void _showEstimate(QuickAddMacros macros) {
+    if (readQuickAddMacro(_p.text) == null) _p.text = formatQuickAddGrams(macros.protein);
+    if (readQuickAddMacro(_c.text) == null) _c.text = formatQuickAddGrams(macros.carbs);
+    if (readQuickAddMacro(_f.text) == null) _f.text = formatQuickAddGrams(macros.fats);
+    setState(() {
+      _busy = false;
+      _failed = false;
+      _review = true;
+      _notice = null;
+    });
+  }
+
+  void _fail() {
+    setState(() {
+      _busy = false;
+      _failed = true;
+      _review = false;
+      _notice = quickAddEstimateFailedMessage;
+    });
+  }
+
+  void _logReviewed() {
+    _pop(QuickAddMacros(
+      protein: readQuickAddMacro(_p.text) ?? 0,
+      carbs: readQuickAddMacro(_c.text) ?? 0,
+      fats: readQuickAddMacro(_f.text) ?? 0,
+      estimated: true,
+    ));
+  }
+
+  void _logAsEntered() {
+    if (_busy) return;
+    _pop(QuickAddMacros(
+      protein: readQuickAddMacro(_p.text) ?? 0,
+      carbs: readQuickAddMacro(_c.text) ?? 0,
+      fats: readQuickAddMacro(_f.text) ?? 0,
+      estimated: false,
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionLabel("Quick add"),
-            AppField(kind: FieldKind.name, controller: _name, placeholder: "Name"),
-            const SizedBox(height: 8),
-            AppField(controller: _cal, placeholder: "Calories", keyboardType: TextInputType.number),
-            const SizedBox(height: 8),
-            Row(
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionLabel(_review ? "Estimate" : "Quick add"),
+          if (_review) ...[
+            Text(
+              "Check the numbers and change anything that looks off, then log it. The log labels this Estimated.",
+              style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.35),
+            ),
+            const SizedBox(height: 10),
+          ],
+          IgnorePointer(
+            ignoring: _busy,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: AppField(controller: _p, placeholder: "Protein g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
-                const SizedBox(width: 6),
-                Expanded(child: AppField(controller: _c, placeholder: "Carbs g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
-                const SizedBox(width: 6),
-                Expanded(child: AppField(controller: _f, placeholder: "Fat g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                AppField(kind: FieldKind.name, controller: _name, placeholder: "Name"),
+                const SizedBox(height: 8),
+                AppField(controller: _cal, placeholder: "Calories", keyboardType: TextInputType.number),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(child: AppField(controller: _p, placeholder: "Protein g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                    const SizedBox(width: 6),
+                    Expanded(child: AppField(controller: _c, placeholder: "Carbs g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                    const SizedBox(width: 6),
+                    Expanded(child: AppField(controller: _f, placeholder: "Fat g", keyboardType: const TextInputType.numberWithOptions(decimal: true))),
+                  ],
+                ),
               ],
             ),
-            const SizedBox(height: 12),
-            BtnGold(
-              full: true,
-              onPressed: () {
-                final name = _name.text.trim();
-                final calories = int.tryParse(_cal.text.trim());
-                if (name.isEmpty || calories == null) return;
-                Navigator.pop(
-                  context,
-                  FoodLogItem(
-                    id: "log-${DateTime.now().microsecondsSinceEpoch}",
-                    name: name,
-                    qty: 1,
-                    unit: "serving",
-                    calories: calories,
-                    protein: double.tryParse(_p.text.trim()) ?? 0,
-                    carbs: double.tryParse(_c.text.trim()) ?? 0,
-                    fats: double.tryParse(_f.text.trim()) ?? 0,
-                  ),
-                );
-              },
-              child: const Text("Log"),
+          ),
+          if (_notice != null) ...[
+            const SizedBox(height: 10),
+            Text(_notice!, style: TextStyle(fontSize: 13, color: AppColors.txt, height: 1.35)),
+          ],
+          if (_busy) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.txt)),
+                const SizedBox(width: 8),
+                Expanded(child: Text("Estimating the missing numbers.", style: TextStyle(fontSize: 13, color: AppColors.mute))),
+              ],
             ),
           ],
-        ),
+          const SizedBox(height: 12),
+          BtnGold(
+            full: true,
+            onPressed: _busy ? null : (_review ? _logReviewed : _submit),
+            child: Text(_review ? "Log this estimate" : "Log"),
+          ),
+          if (_failed && !_busy) ...[
+            const SizedBox(height: 8),
+            BtnGhost(full: true, onPressed: _logAsEntered, child: const Text("Log what I entered")),
+          ],
+        ],
       ),
     );
   }

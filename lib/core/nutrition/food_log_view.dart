@@ -10,10 +10,13 @@ const foodLogSlots = <(String, String)>[
   ("smoothies", "Smoothies"),
 ];
 
-/// A plate photo the client estimated. The log stores that as an id starting
-/// with "snap-" and a unit of "plate".
+/// A logged line whose numbers were estimated.
+///
+/// A plate photo is stored with an id starting with "snap-" and a unit of
+/// "plate". Quick add stores an id starting with "est-" when a macro was
+/// left blank and then filled in. Typing all three macros uses "log-".
 bool foodLogEntryIsEstimated(FoodLogItem item) =>
-    item.id.startsWith("snap-") || item.unit.trim().toLowerCase() == "plate";
+    item.id.startsWith("snap-") || item.id.startsWith("est-") || item.unit.trim().toLowerCase() == "plate";
 
 class FoodLogTargets {
   const FoodLogTargets({required this.calories, this.protein, this.carbs, this.fats});

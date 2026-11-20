@@ -3611,6 +3611,16 @@ class SupabaseService {
   static Future<Map<String, dynamic>> estimatePlate(String jpegBase64) =>
       _invokeFunction("estimate-plate", {"image": jpegBase64});
 
+  /// Protein, carbs, and fat for a food name at a calorie count the client
+  /// already typed. No photo. Same function as [estimatePlate]. The phone
+  /// never sends a key, and the response does not say how the numbers
+  /// were produced.
+  static Future<Map<String, dynamic>> estimateFoodMacros({
+    required String name,
+    required int calories,
+  }) =>
+      _invokeFunction("estimate-plate", {"name": name, "calories": calories});
+
   /// Restaurant name search and menu suggestions for one meal slot.
   static Future<Map<String, dynamic>> recommendRestaurant(Map<String, dynamic> body) =>
       _invokeFunction("recommend-restaurant", body);
