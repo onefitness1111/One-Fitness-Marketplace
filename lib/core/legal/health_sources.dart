@@ -5,8 +5,10 @@
 /// citations, such as links to sources for this information... The
 /// citations to the sources should be easy for the user to find."
 ///
-/// So these are shown directly beneath the generated guidelines, on the
-/// same screen, not buried in a legal page.
+/// The nutrition page keeps the first sources and [kNutritionDisclaimer]
+/// on screen with no extra tap, at the bottom of that same page. The rest
+/// of the sources expand in place under them. They are not moved off to a
+/// separate legal screen.
 ///
 /// Every link was checked to be live and open-access before shipping. One
 /// earlier candidate turned out to be a paper on fish vaccines, and two
@@ -49,7 +51,8 @@ const List<HealthSource> kNutritionSources = [
   ),
   HealthSource(
     topic: "Creatine and supplements",
-    title: "ISSN Position Stand: Safety and Efficacy of Creatine Supplementation",
+    title:
+        "ISSN Position Stand: Safety and Efficacy of Creatine Supplementation",
     publisher: "Journal of the International Society of Sports Nutrition",
     year: "2017",
     url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC5469049/",
@@ -59,7 +62,8 @@ const List<HealthSource> kNutritionSources = [
     title: "Dietary Supplements for Exercise and Athletic Performance",
     publisher: "NIH Office of Dietary Supplements",
     year: "Updated regularly",
-    url: "https://ods.od.nih.gov/factsheets/ExerciseAndAthleticPerformance-Consumer/",
+    url:
+        "https://ods.od.nih.gov/factsheets/ExerciseAndAthleticPerformance-Consumer/",
   ),
   HealthSource(
     topic: "Calories, fluids and overall diet",
@@ -86,7 +90,8 @@ const List<HealthSource> kTrainingSources = [
     title: "Physical Activity Guidelines for Americans, 2nd edition",
     publisher: "U.S. Department of Health and Human Services",
     year: "2018",
-    url: "https://odphp.health.gov/our-work/nutrition-physical-activity/physical-activity-guidelines",
+    url:
+        "https://odphp.health.gov/our-work/nutrition-physical-activity/physical-activity-guidelines",
   ),
   HealthSource(
     topic: "Protein and recovery",
