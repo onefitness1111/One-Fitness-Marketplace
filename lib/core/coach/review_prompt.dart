@@ -39,3 +39,18 @@ String? nextSessionToRate({
 }
 
 bool reviewTextAllowed(int stars) => stars >= 1 && stars <= 5;
+
+/// Booking ids from `my_rated_booking_ids`.
+///
+/// The function returns a list of ids. A row-shaped payload is accepted
+/// only for its booking id, so a name or review body never becomes state.
+Set<String> ratedBookingIds(dynamic rows) {
+  if (rows is! List) return const {};
+  return {
+    for (final row in rows)
+      if (row is String && row.isNotEmpty)
+        row
+      else if (row is Map && row["booking_id"] != null)
+        row["booking_id"].toString(),
+  };
+}
