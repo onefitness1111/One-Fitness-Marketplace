@@ -2510,13 +2510,10 @@ class SupabaseService {
   static Future<({Set<String> reviewed, List<ReviewDeferral> deferred})> loadReviewState() async {
     final me = currentUser?.id;
     if (me == null) return (reviewed: <String>{}, deferred: const <ReviewDeferral>[]);
-    final reviews = await client.from("coach_reviews").select("booking_id").eq("client_id", me);
+    final reviews = await client.rpc("my_rated_booking_ids");
     final prompts = await client.from("review_prompts").select("booking_id, deferred_on").eq("client_id", me);
     return (
-      reviewed: {
-        for (final row in reviews as List)
-          if (row is Map && row["booking_id"] != null) row["booking_id"].toString(),
-      },
+      reviewed: ratedBookingIds(reviews),
       deferred: [
         for (final row in prompts as List)
           if (row is Map)

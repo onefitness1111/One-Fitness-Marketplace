@@ -1,3 +1,5 @@
+import "dart:io";
+
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:onefitness/core/coach/coach_public_stats.dart";
@@ -61,6 +63,34 @@ void main() {
       today: "2026-11-20",
     );
     expect(id, "new");
+  });
+
+  test("rated booking ids keep the id and drop reviewer fields", () {
+    expect(ratedBookingIds(["b1", "b2", ""]), {"b1", "b2"});
+    expect(
+      ratedBookingIds([
+        {"booking_id": "b1", "client_id": "someone-else", "body": "great coach"},
+      ]),
+      {"b1"},
+    );
+    expect(ratedBookingIds(null), isEmpty);
+  });
+
+  test("the app asks for its own rated ids and the table stays closed", () {
+    final sql = File("supabase/migrations/20261120185110_my_rated_booking_ids.sql").readAsStringSync();
+    expect(sql, contains("security definer"));
+    expect(sql, contains("set search_path to 'public'"));
+    expect(sql, contains("select r.booking_id"));
+    expect(sql, contains("r.client_id = (select auth.uid())"));
+    expect(sql, isNot(contains("select *")));
+    expect(sql.toLowerCase(), isNot(contains("for select")));
+    expect(sql, contains("revoke all on function public.my_rated_booking_ids() from public, anon"));
+    expect(sql, contains("grant execute on function public.my_rated_booking_ids() to authenticated"));
+    expect(RegExp(r"my_rated_booking_ids\s*\([^)]+\)").hasMatch(sql), isFalse);
+
+    final app = File("lib/core/supabase/supabase_service.dart").readAsStringSync();
+    expect(app, contains('rpc("my_rated_booking_ids")'));
+    expect(app, isNot(contains('from("coach_reviews").select')));
   });
 
   test("a note is only allowed after stars are chosen", () {
