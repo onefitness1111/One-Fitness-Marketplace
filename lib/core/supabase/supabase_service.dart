@@ -7,6 +7,8 @@ import "../../data/cache/bootstrap_cache.dart";
 import "streamed_upload.dart";
 import "../utils/coach_merit_badge_utils.dart";
 import "../utils/image_shrink.dart";
+import "../coach/coach_public_stats.dart";
+import "../coach/review_prompt.dart";
 import "../utils/date_utils.dart";
 import "../../data/models/activity_entry.dart";
 import "../../data/models/availability_block.dart";
@@ -2433,6 +2435,95 @@ class SupabaseService {
 
   static Future<void> saveWorkoutCompleteSeen(String profileId, List<String> ids) =>
       patchClientRecord(profileId, {"workoutCompleteSeen": ids});
+
+  static Future<CoachReviewSummary> coachReviewSummary(String trainerId) async {
+    final data = await client.rpc("coach_review_summary", params: {"p_trainer": trainerId});
+    final map = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+    final stars = map["stars"];
+    var one = 0, two = 0, three = 0, four = 0, five = 0;
+    if (stars is Map) {
+      one = (stars["1"] as num?)?.toInt() ?? 0;
+      two = (stars["2"] as num?)?.toInt() ?? 0;
+      three = (stars["3"] as num?)?.toInt() ?? 0;
+      four = (stars["4"] as num?)?.toInt() ?? 0;
+      five = (stars["5"] as num?)?.toInt() ?? 0;
+    }
+    return CoachReviewSummary(
+      stars: StarCounts(one: one, two: two, three: three, four: four, five: five),
+      rebookPercent: (map["rebookPercent"] as num?)?.toInt(),
+    );
+  }
+
+  static Future<List<CoachReviewLine>> coachReviewsPage({
+    required String trainerId,
+    int? stars,
+    int offset = 0,
+  }) async {
+    final rows = await client.rpc("coach_reviews_page", params: {
+      "p_trainer": trainerId,
+      "p_stars": stars,
+      "p_offset": offset,
+      "p_limit": 20,
+    });
+    if (rows is! List) return const [];
+    return [
+      for (final raw in rows)
+        if (raw is Map)
+          CoachReviewLine(
+            stars: (raw["stars"] as num?)?.toInt() ?? 0,
+            body: raw["body"]?.toString(),
+            createdAt: DateTime.tryParse(raw["created_at"]?.toString() ?? ""),
+          ),
+    ];
+  }
+
+  static Future<void> submitCoachReview({
+    required String bookingId,
+    required String trainerId,
+    required int stars,
+    String? body,
+  }) async {
+    final me = currentUser?.id;
+    if (me == null) return;
+    await client.from("coach_reviews").upsert({
+      "booking_id": bookingId,
+      "client_id": me,
+      "trainer_id": trainerId,
+      "stars": stars,
+      "body": (body ?? "").trim().isEmpty ? null : body!.trim(),
+      "updated_at": DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: "booking_id");
+  }
+
+  static Future<void> deferReview(String bookingId, String trainerId) async {
+    final me = currentUser?.id;
+    if (me == null) return;
+    await client.from("review_prompts").upsert({
+      "booking_id": bookingId,
+      "client_id": me,
+      "trainer_id": trainerId,
+      "deferred_on": isoDate(DateTime.now()),
+      "updated_at": DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  static Future<({Set<String> reviewed, List<ReviewDeferral> deferred})> loadReviewState() async {
+    final me = currentUser?.id;
+    if (me == null) return (reviewed: <String>{}, deferred: const <ReviewDeferral>[]);
+    final reviews = await client.from("coach_reviews").select("booking_id").eq("client_id", me);
+    final prompts = await client.from("review_prompts").select("booking_id, deferred_on").eq("client_id", me);
+    return (
+      reviewed: {
+        for (final row in reviews as List)
+          if (row is Map && row["booking_id"] != null) row["booking_id"].toString(),
+      },
+      deferred: [
+        for (final row in prompts as List)
+          if (row is Map)
+            ReviewDeferral(bookingId: row["booking_id"].toString(), deferredOn: row["deferred_on"]?.toString()),
+      ],
+    );
+  }
 
   static Future<void> patchClientRecord(
     String profileId,
