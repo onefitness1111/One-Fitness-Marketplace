@@ -125,8 +125,6 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
   String _tab = "profile"; // "profile" | "availability"
   _BlockEditRequest? _editingBlock;
   String? _error;
-  bool _resetBusy = false;
-  bool _resetSent = false;
 
   @override
   void dispose() {
@@ -174,32 +172,6 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           : _sessionTypes.add(st);
       _error = null;
     });
-  }
-
-  Future<void> _sendPasswordReset() async {
-    final email = _email.text.trim();
-    if (email.isEmpty) {
-      setState(
-        () => _error = "An email is required before sending a reset link.",
-      );
-      return;
-    }
-    setState(() {
-      _resetBusy = true;
-      _error = null;
-    });
-    try {
-      await SupabaseService.sendPasswordReset(email);
-      if (mounted) setState(() => _resetSent = true);
-    } catch (e) {
-      if (mounted)
-        setState(
-          () => _error =
-              writeFailureMessage(e, whatFailed: "Couldn't send the reset email"),
-        );
-    } finally {
-      if (mounted) setState(() => _resetBusy = false);
-    }
   }
 
   void _submit() {
@@ -908,34 +880,7 @@ class _TrainerEditFormState extends State<TrainerEditForm> {
           const SizedBox(height: 18),
           Container(height: 1, color: AppColors.line),
           const SizedBox(height: 14),
-          if (widget.initial != null) ...[
-            Text(
-              "Password changes go through email now, not this form — click below to send a reset link to ${_email.text.trim().isEmpty ? "this account's email" : _email.text.trim()}.",
-              style: TextStyle(fontSize: 12, color: AppColors.mute),
-            ),
-            const SizedBox(height: 8),
-            if (_resetSent)
-              Text(
-                "✓ Reset email sent.",
-                style: TextStyle(
-                  color: AppColors.gold,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            else
-              BtnGhost(
-                onPressed: _resetBusy ? null : _sendPasswordReset,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(LucideIcons.lock, size: 14),
-                    const SizedBox(width: 6),
-                    Text(_resetBusy ? "Sending…" : "Send password reset email"),
-                  ],
-                ),
-              ),
-          ] else ...[
+          if (widget.initial == null) ...[
             FieldLabeled(
               label: "Create password *",
               child: AppField(kind: FieldKind.password, controller: _pw, obscureText: true),

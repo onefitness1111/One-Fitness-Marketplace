@@ -222,6 +222,7 @@ class _OwnPhoneSheetState extends State<_OwnPhoneSheet> {
           ),
           const SizedBox(height: 14),
           TextField(
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
             controller: _controller,
             keyboardType: TextInputType.phone,
             autofocus: true,

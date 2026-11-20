@@ -354,6 +354,7 @@ class _TemplateEditorState extends State<_TemplateEditor> {
             ],
           ),
           TextField(
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
             controller: _subject,
             focusNode: _subjectFocus,
             style: const TextStyle(fontSize: 14),
@@ -385,6 +386,7 @@ class _TemplateEditorState extends State<_TemplateEditor> {
             ],
           ),
           TextField(
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
             controller: _body,
             focusNode: _bodyFocus,
             minLines: 12,

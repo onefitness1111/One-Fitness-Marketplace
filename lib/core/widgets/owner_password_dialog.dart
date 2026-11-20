@@ -24,6 +24,7 @@ Future<bool> confirmOwnerPassword(BuildContext context) async {
             const Text("Type your owner password to refund this payment."),
             const SizedBox(height: 10),
             TextField(
+              onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
               controller: password,
               obscureText: true,
               decoration: const InputDecoration(labelText: "Password"),

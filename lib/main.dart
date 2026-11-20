@@ -6,7 +6,10 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "core/chat/unread_chat.dart";
 import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
+import "package:supabase_flutter/supabase_flutter.dart";
 import "core/supabase/supabase_service.dart";
+import "core/notifications/push_prompt.dart";
+import "core/widgets/change_password_form.dart";
 import "core/theme/app_colors.dart";
 import "core/updates/app_update.dart";
 import "core/updates/app_update_sheet.dart";
@@ -65,6 +68,10 @@ class OneFitnessApp extends StatelessWidget {
         title: "ONE Fitness",
         debugShowCheckedModeBanner: false,
         theme: theme,
+        builder: (context, child) => GestureDetector(
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: child ?? const SizedBox.shrink(),
+        ),
         scaffoldMessengerKey: scaffoldMessengerKey,
         home: const _RootGate(),
       ),
@@ -93,6 +100,8 @@ class _RootGateState extends ConsumerState<_RootGate> {
   bool _updateDismissed = false;
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
+  StreamSubscription<AuthState>? _authSub;
+  bool _setPassword = false;
 
   /// Coming back to the app re-reads membership state, so a cancellation
   /// or freeze made on another device (staff cancelling a client's
@@ -111,6 +120,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
       });
       _checkAppUpdate();
       ref.read(unreadChatKeysProvider.notifier).refresh();
+      ref.read(pushNoticeProvider.notifier).refresh();
     },
   );
 
@@ -123,6 +133,15 @@ class _RootGateState extends ConsumerState<_RootGate> {
     // deep link instead — see membership_hub_screen.dart's returnUrl and
     // the matching intent-filter/CFBundleURLTypes entries.
     if (!kIsWeb) _initDeepLinks();
+    try {
+      _authSub = SupabaseService.client.auth.onAuthStateChange.listen((data) {
+        if (data.event == AuthChangeEvent.passwordRecovery && mounted) {
+          setState(() => _setPassword = true);
+        }
+      });
+    } catch (_) {
+      // Widget tests build the app before Supabase is initialised.
+    }
     LiveLogStore.instance.ensureLoaded();
     _lifecycle; // created now so it's listening from the first frame
     _checkAppUpdate();
@@ -152,6 +171,17 @@ class _RootGateState extends ConsumerState<_RootGate> {
   }
 
   void _handleDeepLink(Uri uri) {
+    if (uri.scheme == "onefitness" && uri.host == "reset-password") {
+      unawaited(() async {
+        try {
+          await SupabaseService.recoverSessionFromUrl(uri);
+        } catch (e) {
+          // ignore: avoid_print
+          print("[reset] session: $e");
+        }
+      }());
+      return;
+    }
     if (uri.scheme != "onefitness" || uri.host != "checkout-return") return;
     final stripeParam = uri.queryParameters["stripe"];
     if (stripeParam == null) return;
@@ -217,12 +247,21 @@ class _RootGateState extends ConsumerState<_RootGate> {
   @override
   void dispose() {
     _linkSub?.cancel();
+    _authSub?.cancel();
     _lifecycle.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_setPassword) {
+      return SetNewPasswordScreen(
+        onDone: () async {
+          await loadAndSeedCoreData(ref);
+          if (mounted) setState(() => _setPassword = false);
+        },
+      );
+    }
     final bootstrap = ref.watch(supabaseBootstrapProvider);
 
     return bootstrap.when(

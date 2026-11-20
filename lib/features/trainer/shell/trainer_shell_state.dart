@@ -1,3 +1,4 @@
+import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../data/providers/trainer_providers.dart";
 
@@ -31,6 +32,7 @@ class TrainerModeNotifier extends Notifier<String> {
   }
 
   void go(String mode) {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (mode == state) return;
     // A plain stack: every screen visited is pushed, in order, and back
     // pops one at a time — Page 1 → Page 2 → Page 1 unwinds to Page 2, then
@@ -43,6 +45,7 @@ class TrainerModeNotifier extends Notifier<String> {
   /// anywhere else — as one step back can undo: back returns to the
   /// previous client, or to the screen the client was opened from.
   void openClient(String clientId) {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (state == "clients" && ref.read(selectedClientIdProvider) == clientId) return;
     _push();
     ref.read(selectedClientIdProvider.notifier).select(clientId);
@@ -50,6 +53,7 @@ class TrainerModeNotifier extends Notifier<String> {
   }
 
   void goBack() {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (_history.isEmpty) return;
     final entry = _history.removeLast();
     if (entry.clientId != ref.read(selectedClientIdProvider)) {

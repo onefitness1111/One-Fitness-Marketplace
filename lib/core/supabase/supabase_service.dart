@@ -2209,7 +2209,12 @@ class SupabaseService {
   /// account (a brand-new signup sets the initial password directly, see
   /// signUpClient/signUpCoach).
   static Future<void> sendPasswordReset(String email) =>
-      client.auth.resetPasswordForEmail(email);
+      client.auth.resetPasswordForEmail(email.trim(), redirectTo: "onefitness://reset-password");
+
+  static Future<void> updatePassword(String password) =>
+      client.auth.updateUser(UserAttributes(password: password));
+
+  static Future<void> recoverSessionFromUrl(Uri uri) => client.auth.getSessionFromUrl(uri);
 
   /// Staff sends a reset link. The address stays on the server, so a coach
   /// can do this for a client without being shown the email.
@@ -4478,13 +4483,12 @@ class SupabaseService {
     required String profileId,
     required String password,
   }) async {
-    final res = await client.functions.invoke(
-      "admin-set-password",
-      body: {"profileId": profileId, "password": password},
-    );
-    final data = res.data;
-    if (data is Map && data["error"] != null) throw Exception(data["error"].toString());
-    if (res.status != 200) throw Exception("Couldn't set that password. Please try again.");
+    final data = await _invokeFunction("admin-set-password", {
+      "profileId": profileId,
+      "password": password,
+    });
+    final err = data["error"];
+    if (err != null) throw Exception(err.toString());
   }
 
   /// Takes the late-cancellation fee from the client's saved card. The

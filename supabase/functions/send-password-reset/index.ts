@@ -39,7 +39,10 @@ serve(async (req) => {
         Authorization: `Bearer ${anon}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ email: member.email }),
+      body: JSON.stringify({
+        email: member.email,
+        redirect_to: "onefitness://reset-password",
+      }),
     });
     if (!res.ok) {
       const detail = await res.text();

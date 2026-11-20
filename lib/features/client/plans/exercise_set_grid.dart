@@ -103,6 +103,10 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
         old.exercise.id != widget.exercise.id ||
         old.logExerciseId != widget.logExerciseId;
     if (identityChanged) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      for (final node in [..._repsFocus, ..._weightFocus]) {
+        node.unfocus();
+      }
       _disposeControllers();
       _buildControllers();
     } else if (old.syncTick != widget.syncTick) {
@@ -545,6 +549,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: TextField(
+        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
         controller: _repsControllers[setNum - 1],
         focusNode: _repsFocus[setNum - 1],
         keyboardType: TextInputType.number,
@@ -626,6 +631,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
     return _cellWrap(Container(
       decoration: BoxDecoration(color: bg, border: Border.all(color: border), borderRadius: BorderRadius.circular(8)),
       child: TextField(
+        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
         controller: _weightControllers[setNum - 1],
         focusNode: _weightFocus[setNum - 1],
         keyboardType: const TextInputType.numberWithOptions(decimal: true),

@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "dart:async";
 import "package:supabase_flutter/supabase_flutter.dart";
 import "../../core/live_log/live_log_store.dart";
@@ -161,6 +162,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
         if (mounted) _startDay(initial);
       });
     }
+    unawaited(_loadViewPref());
   }
 
   @override
@@ -370,24 +372,46 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     if (mounted) setState(() => _sessionStarted = false);
   }
 
-  /// Which exercise the one-at-a-time view is showing.
+  /// Which exercise the one-at-a-time view is showing. Switching to the
+  /// full list keeps this index so coming back lands on the same card.
   late int _focusIndex = widget.initialFocusIndex;
 
-  /// Clients can switch to seeing the whole day at once. Deliberately NOT
-  /// persisted anywhere: the spec calls for every new session to start in
-  /// the focused view, so this is plain widget state that dies with the
-  /// session rather than a saved preference.
+  /// One card or the whole day. The same [_sessionData] feeds both, and the
+  /// last choice is remembered for this person and this client.
   bool _fullView = false;
+
+  String get _viewPrefKey {
+    var who = widget.loggedBy;
+    try {
+      who = SupabaseService.currentUser?.id ?? who;
+    } catch (_) {}
+    return "workout_view:$who:${widget.client.id}";
+  }
+
+  Future<void> _loadViewPref() async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(_viewPrefKey);
+      if (!mounted || raw == null) return;
+      setState(() => _fullView = raw == "full");
+    } catch (_) {}
+  }
+
+  void _chooseView(bool full) {
+    setState(() => _fullView = full);
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_viewPrefKey, full ? "full" : "one");
+      } catch (_) {}
+    }());
+  }
 
   void _startDay(String dayId, {bool announce = true}) {
     setState(() {
       _dayId = dayId;
       _sessionStarted = true;
       _sessionData.clear();
-      // Both reset per session — a client who switched to full view last time
-      // still starts focused this time.
       _focusIndex = widget.initialFocusIndex;
-      _fullView = false;
     });
     _seedDraftsFromStore();
     final prog = _currentProgram();
@@ -576,6 +600,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       child: Stack(
         children: [
       SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -865,11 +890,10 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  // One exercise at a time is the default for everyone. A
-                  // client can switch to the whole-day view; a coach cannot —
-                  // they move between clients instead, and each client's
-                  // screen stays focused on a single exercise.
-                  if (widget.loggedBy == "client" && activeDay.exercises.length > 1)
+                  // Everyone logging a workout gets both layouts. Group
+                  // sessions keep a choice per client because each view is
+                  // this widget for that client.
+                  if (activeDay.exercises.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Row(
@@ -879,16 +903,16 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               icon: LucideIcons.square,
                               label: "One at a time",
                               selected: !_fullView,
-                              onTap: () => setState(() => _fullView = false),
+                              onTap: () => _chooseView(false),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: _ViewToggleOption(
                               icon: LucideIcons.list,
-                              label: "Full view",
+                              label: "Full list",
                               selected: _fullView,
-                              onTap: () => setState(() => _fullView = true),
+                              onTap: () => _chooseView(true),
                             ),
                           ),
                         ],

@@ -177,6 +177,7 @@ Future<void> _showReportReasons(
                   ),
                 const SizedBox(height: 4),
                 TextField(
+                  onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
                   controller: noteCtrl,
                   maxLines: 3,
                   style: const TextStyle(fontSize: 14),

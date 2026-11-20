@@ -1,3 +1,4 @@
+import "../../../core/notifications/push_prompt.dart";
 import "../../../core/live_log/live_log_store.dart";
 import "../../../core/live_log/live_log_sync.dart";
 import "dart:async";
@@ -616,6 +617,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     }
 
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -663,6 +665,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               ),
             ],
           )),
+          const TurnOnNotificationsBanner(),
           const SizedBox(height: 18),
           const LiveWorkoutsCard(),
           if (isOwner) const UpdateAnnouncementCard(),

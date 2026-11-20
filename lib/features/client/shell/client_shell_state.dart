@@ -1,3 +1,4 @@
+import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../data/models/booking.dart";
 
@@ -20,6 +21,7 @@ class ClientScreenNotifier extends Notifier<String> {
   bool get canGoBack => _history.isNotEmpty;
 
   void go(String screen) {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (screen == state) return;
     // A plain stack, like a browser: every page visited is pushed in order
     // and back pops one at a time — Dashboard → Plans → Booking → Chat
@@ -32,6 +34,7 @@ class ClientScreenNotifier extends Notifier<String> {
   }
 
   void goBack() {
+    FocusManager.instance.primaryFocus?.unfocus();
     state = _history.isNotEmpty ? _history.removeLast() : "dashboard";
   }
 

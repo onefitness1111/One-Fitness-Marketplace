@@ -286,7 +286,10 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         Builder(
                           key: kStaffTourKeys["staff-hamburger"],
                           builder: (context) => IconButton(
-                            onPressed: () => Scaffold.of(context).openDrawer(),
+                            onPressed: () {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              Scaffold.of(context).openDrawer();
+                            },
                             icon: Icon(
                               LucideIcons.menu,
                               size: 22,

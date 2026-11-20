@@ -957,6 +957,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         backgroundColor: AppColors.card,
         title: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         content: TextField(
+          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
           controller: reason,
           maxLines: 3,
           decoration: InputDecoration(hintText: prompt),
@@ -988,12 +989,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
+              onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
               controller: amount,
               keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
               decoration: const InputDecoration(prefixText: "\$ ", labelText: "New balance (minus if they owe)"),
             ),
             const SizedBox(height: 8),
-            TextField(controller: note, decoration: const InputDecoration(labelText: "Reason")),
+            TextField(
+              onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+              controller: note, decoration: const InputDecoration(labelText: "Reason")),
           ],
         ),
         actions: [

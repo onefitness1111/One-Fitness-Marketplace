@@ -156,6 +156,7 @@ class _NotesTabState extends ConsumerState<NotesTab> {
         .toList();
 
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -542,6 +543,7 @@ class _NoteFormState extends State<_NoteForm> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,6 +607,7 @@ class _NoteFormState extends State<_NoteForm> {
           FieldLabeled(
             label: "Details",
             child: TextField(
+              onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
               controller: _details,
               maxLines: 4,
               style: TextStyle(color: AppColors.txt, fontSize: 14),

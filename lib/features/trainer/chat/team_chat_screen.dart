@@ -370,6 +370,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
                   children: [
                     Expanded(
                       child: TextField(
+                        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
                         controller: _text,
                         minLines: 1,
                         maxLines: 4,

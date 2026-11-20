@@ -115,6 +115,7 @@ dependencies:
   # Listed as a normal dependency, both modes agree and the build stops
   # breaking. The cost is one no-op plugin registered at runtime.
   flutter_native_splash: ^2.4.6
+  app_settings: ^9.0.1
 
 dev_dependencies:
   flutter_test:
