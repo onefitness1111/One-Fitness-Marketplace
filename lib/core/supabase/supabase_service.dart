@@ -5017,6 +5017,8 @@ class SupabaseService {
     "percentOff": c.percentOff,
     "flatOffCents": c.flatOffCents,
     "archived": c.archived,
+    "duration": c.duration,
+    "durationInMonths": c.durationInMonths,
   };
 
   static Coupon _couponFromJson(Map<String, dynamic> j) => Coupon(
@@ -5026,6 +5028,8 @@ class SupabaseService {
     percentOff: _asInt(j["percentOff"]) ?? 0,
     flatOffCents: _asInt(j["flatOffCents"]) ?? 0,
     archived: j["archived"] as bool? ?? false,
+    duration: j["duration"] as String? ?? "once",
+    durationInMonths: _asInt(j["durationInMonths"]) ?? 1,
   );
 
   static Future<List<Coupon>> loadCoupons() async {

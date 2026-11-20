@@ -8,19 +8,22 @@ import "../supabase/supabase_service.dart";
 /// [error] on purpose: backing out of the sheet is a normal thing to do and
 /// must not be reported as a failure.
 class PaymentResult {
-  const PaymentResult._({this.cancelled = false, this.error, this.noPaymentNeeded = false});
+  const PaymentResult._({this.cancelled = false, this.error, this.noPaymentNeeded = false, this.receipt});
 
-  const PaymentResult.success() : this._();
-  const PaymentResult.cancelled() : this._(cancelled: true);
-  const PaymentResult.failed(String message) : this._(error: message);
+  const PaymentResult.success({this.receipt}) : cancelled = false, error = null, noPaymentNeeded = false;
+  const PaymentResult.cancelled() : cancelled = true, error = null, noPaymentNeeded = false, receipt = null;
+  const PaymentResult.failed(String message) : cancelled = false, error = message, noPaymentNeeded = false, receipt = null;
 
   /// The purchase went through with nothing to collect right now — a
   /// future-dated billing anchor can make the first invoice $0.
-  const PaymentResult.nothingDue() : this._(noPaymentNeeded: true);
+  const PaymentResult.nothingDue({this.receipt}) : cancelled = false, error = null, noPaymentNeeded = true;
 
   final bool cancelled;
   final String? error;
   final bool noPaymentNeeded;
+
+  /// Prorated first charge and the next full bill, when this was a membership.
+  final String? receipt;
 
   bool get ok => error == null && !cancelled;
 }
@@ -332,7 +335,11 @@ class PaymentSheetService {
       return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));
     }
 
-    return _present(intent, businessName, billing);
+    final result = await _present(intent, businessName, billing);
+    if (!result.ok) return result;
+    final receipt = intent["receiptText"] as String?;
+    if (receipt == null || receipt.isEmpty) return result;
+    return result.noPaymentNeeded ? PaymentResult.nothingDue(receipt: receipt) : PaymentResult.success(receipt: receipt);
   }
 
   /// Package renewal. The caller has already asked the client to confirm.

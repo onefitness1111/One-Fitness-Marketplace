@@ -13,6 +13,8 @@ import { ensureProduct } from "../_shared/stripeProduct.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
 import { effectivePackageMax, renewalDiscountCents, renewalIdempotencyKey, renewalOffer } from "../_shared/packageRenewal.ts";
+import { discountCents as couponDiscountCents, firstChargeSentence, membershipFirstCharge, ongoingDiscountCents } from "../_shared/billingAnchor.mjs";
+import { stripeCouponDuration } from "../_shared/couponDuration.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -114,12 +116,14 @@ serve(async (req) => {
       .eq("profile_id", buyerId).maybeSingle();
 
     let referralSurchargeCents = 0;
+    let referralPercent = 0;
     let referringTrainerId: string | null = null;
     if (clientRow?.referred_by_trainer_id) {
       const { data: referringTrainer } = await admin.from("trainers")
         .select("referral_commission_percent").eq("profile_id", clientRow.referred_by_trainer_id).maybeSingle();
       const pct = referringTrainer?.referral_commission_percent || 0;
       if (pct > 0) {
+        referralPercent = pct;
         referralSurchargeCents = Math.round(priceCents * (pct / 100));
         referringTrainerId = clientRow.referred_by_trainer_id;
       }
@@ -141,6 +145,8 @@ serve(async (req) => {
     let discountCents = 0;
     let redeemedPoints = 0;
     let appliedCouponCode: string | null = null;
+    // deno-lint-ignore no-explicit-any
+    let appliedCoupon: any = null;
     let stripeCouponId: string | null = null;
     let renewalKey: string | null = null;
     let renewalOfferName: "discount" | "full" | null = null;
@@ -235,6 +241,7 @@ serve(async (req) => {
         !c?.archived && String(c?.code ?? "").toUpperCase() === rawCode.toUpperCase()
       );
       if (!match) throw new Error("That coupon code isn't valid or is no longer active.");
+      appliedCoupon = match;
       discountCents = match.type === "flat"
         ? Math.min(match.flatOffCents || 0, priceCents)
         : Math.round(priceCents * ((match.percentOff || 0) / 100));
@@ -272,40 +279,77 @@ serve(async (req) => {
     let amountCents = 0;
 
     if (isSubscription) {
-      if (discountCents > 0) {
-        const coupon = await stripe.coupons.create({
+      const planRenewalDay = Number(plan.renewalDay) >= 1 && Number(plan.renewalDay) <= 28 ? Number(plan.renewalDay) : null;
+      const anchorDay = clientRow?.billing_anchor_day || planRenewalDay || paymentSettings.defaultBillingAnchorDay || null;
+      const monthly = (plan.billingIntervalMonths || 1) === 1;
+      const schedule = anchorDay ? membershipFirstCharge(new Date(), priceCents, anchorDay) : null;
+      const prorate = !!(schedule && monthly);
+      const firstPlan = schedule && monthly ? schedule.proratedCents : priceCents;
+      if (prorate && appliedCoupon) {
+        discountCents = couponDiscountCents(firstPlan, appliedCoupon);
+      } else if (prorate && redeemedPoints) {
+        discountCents = Math.min(pointsToDiscountCents(redeemedPoints, firstPlan), firstPlan);
+      }
+      const firstFee = prorate ? calculateFeeCents(firstPlan, feeConfig) : feeCents;
+      const firstSurcharge = prorate ? Math.round(firstPlan * (referralPercent / 100)) : referralSurchargeCents;
+      const recurringFee = calculateFeeCents(priceCents, feeConfig);
+      metadata.subtotal_cents = String(firstPlan);
+      metadata.fee_cents = String(firstFee);
+      metadata.discount_cents = String(discountCents);
+      if (referringTrainerId) metadata.surcharge_cents = String(firstSurcharge);
+      if (schedule) {
+        metadata.billing_anchor_day = String(schedule.anchorDay);
+        metadata.next_charge_on = schedule.nextChargeDate;
+      }
+
+      const planProduct = await ensureProduct(stripe, `plan_${planId}`, plan.name || "Membership Plan");
+      const firstProduct = prorate
+        ? await ensureProduct(stripe, `plan_${planId}_prorated`, `${plan.name || "Membership"} (prorated)`)
+        : planProduct;
+      const feeProduct = await ensureProduct(
+        stripe,
+        `fee_${method}`,
+        feeConfig?.label || (method === "ach" ? "Bank Transfer Fee" : "Card Processing Fee"),
+      );
+      const referralProduct = await ensureProduct(stripe, "coach_referral", "Coach Referral Commission");
+
+      if (appliedCoupon && (discountCents > 0 || appliedCoupon.duration === "forever" || appliedCoupon.duration === "repeating")) {
+        const duration = stripeCouponDuration(appliedCoupon);
+        const created = await stripe.coupons.create({
+          ...duration,
+          name: `Coupon ${appliedCouponCode}`,
+          applies_to: { products: [...new Set([planProduct, firstProduct])] },
+          ...(appliedCoupon.type === "flat"
+            ? { amount_off: Math.max(0, Math.round(Number(appliedCoupon.flatOffCents) || 0)), currency: "usd" }
+            : { percent_off: Math.min(100, Math.max(0, Math.round(Number(appliedCoupon.percentOff) || 0))) }),
+        });
+        stripeCouponId = created.id;
+      } else if (discountCents > 0) {
+        const created = await stripe.coupons.create({
           amount_off: discountCents,
           currency: "usd",
           duration: "once",
-          name: appliedCouponCode ? `Coupon ${appliedCouponCode}` : `ONE Fitness rewards (${redeemedPoints} pts)`,
+          name: `ONE Fitness rewards (${redeemedPoints} pts)`,
         });
-        stripeCouponId = coupon.id;
+        stripeCouponId = created.id;
       }
 
-      const planRenewalDay = Number(plan.renewalDay) >= 1 && Number(plan.renewalDay) <= 28 ? Number(plan.renewalDay) : null;
-      const anchorDay = clientRow?.billing_anchor_day || planRenewalDay || paymentSettings.defaultBillingAnchorDay || null;
-      let billingCycleAnchor: number | undefined;
-      if (anchorDay) {
-        const now = new Date();
-        const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, anchorDay, 0, 0, 0));
-        billingCycleAnchor = Math.floor(target.getTime() / 1000);
-      }
-
+      const interval = plan.billingIntervalMonths || 1;
       const items = [{
         price_data: {
           currency: "usd",
           unit_amount: priceCents,
-          product: await ensureProduct(stripe, `plan_${planId}`, plan.name || "Membership Plan"),
-          recurring: { interval: "month" as const, interval_count: plan.billingIntervalMonths || 1 },
+          product: planProduct,
+          recurring: { interval: "month" as const, interval_count: interval },
         },
       }];
-      if (feeCents > 0) {
+      if (recurringFee > 0) {
         items.push({
           price_data: {
             currency: "usd",
-            unit_amount: feeCents,
-            product: await ensureProduct(stripe, `fee_${method}`, feeConfig?.label || (method === "ach" ? "Bank Transfer Fee" : "Card Processing Fee")),
-            recurring: { interval: "month" as const, interval_count: plan.billingIntervalMonths || 1 },
+            unit_amount: recurringFee,
+            product: feeProduct,
+            recurring: { interval: "month" as const, interval_count: interval },
           },
         });
       }
@@ -314,22 +358,28 @@ serve(async (req) => {
           price_data: {
             currency: "usd",
             unit_amount: referralSurchargeCents,
-            product: await ensureProduct(stripe, "coach_referral", "Coach Referral Commission"),
-            recurring: { interval: "month" as const, interval_count: plan.billingIntervalMonths || 1 },
+            product: referralProduct,
+            recurring: { interval: "month" as const, interval_count: interval },
           },
         });
       }
 
-      const firstPaymentItems = billingCycleAnchor
-        ? items.map((it) => ({
-          price_data: { currency: it.price_data.currency, unit_amount: it.price_data.unit_amount, product: it.price_data.product },
-        }))
+      const firstPaymentItems = schedule
+        ? [
+          { price_data: { currency: "usd", unit_amount: firstPlan, product: firstProduct } },
+          ...(firstFee > 0 ? [{ price_data: { currency: "usd", unit_amount: firstFee, product: feeProduct } }] : []),
+          ...(firstSurcharge > 0 ? [{ price_data: { currency: "usd", unit_amount: firstSurcharge, product: referralProduct } }] : []),
+        ]
         : [];
+
+      const sentenceCoupon = appliedCoupon
+        ?? (prorate && discountCents > 0 ? { type: "flat", flatOffCents: discountCents, duration: "once" } : null);
+      const receiptText = prorate && schedule ? firstChargeSentence(schedule, sentenceCoupon) : null;
 
       const subscription = await stripe.subscriptions.create({
         customer: customerId,
         items,
-        ...(billingCycleAnchor ? { trial_end: billingCycleAnchor, add_invoice_items: firstPaymentItems } : {}),
+        ...(schedule ? { trial_end: schedule.nextChargeUnix, add_invoice_items: firstPaymentItems, description: receiptText ?? undefined } : {}),
         payment_behavior: "default_incomplete",
         payment_settings: {
           save_default_payment_method: "on_subscription",
@@ -345,8 +395,12 @@ serve(async (req) => {
       clientSecret = intent?.client_secret ?? null;
       amountCents = invoice?.amount_due ?? 0;
       if (clientSecret) {
-        await stripe.paymentIntents.update(intent!.id, { metadata });
+        await stripe.paymentIntents.update(intent!.id, { metadata, ...(receiptText ? { description: receiptText } : {}) });
       }
+
+      const nextChargeCents = schedule
+        ? priceCents - ongoingDiscountCents(priceCents, appliedCoupon) + recurringFee + referralSurchargeCents
+        : priceCents;
 
       return new Response(JSON.stringify({
         mode: "subscription",
@@ -358,6 +412,10 @@ serve(async (req) => {
         allowedMethods,
         amountCents,
         requiresPayment: !!clientSecret,
+        receiptText,
+        proratedCents: schedule && prorate ? schedule.proratedCents : null,
+        nextChargeOn: schedule?.nextChargeDate ?? null,
+        nextChargeCents: schedule ? nextChargeCents : null,
       }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
     }
 

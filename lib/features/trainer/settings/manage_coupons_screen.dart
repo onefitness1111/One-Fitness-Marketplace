@@ -6,6 +6,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/coupon.dart";
+import "../../../core/payments/coupon_duration.dart";
 import "../../../data/providers/trainer_providers.dart";
 
 /// Owner-managed coupon-code catalog, reached from Customize Platform's
@@ -134,7 +135,7 @@ class _ManageCouponsScreenState extends ConsumerState<ManageCouponsScreen> {
                               ],
                             ],
                           ),
-                          Text(c.valueLabel, style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                          Text(c.durationLabel, style: TextStyle(fontSize: 11, color: AppColors.mute)),
                         ],
                       ),
                     ),
@@ -188,12 +189,15 @@ class _CouponEditFormState extends State<_CouponEditForm> {
   late final _percent = TextEditingController(text: "${widget.initial?.percentOff ?? 10}");
   late final _flat = TextEditingController(text: widget.initial != null ? (widget.initial!.flatOffCents / 100).toStringAsFixed(2) : "");
   late bool _archived = widget.initial?.archived ?? false;
+  late String _duration = widget.initial?.duration ?? couponDurationOnce;
+  late final _months = TextEditingController(text: "${widget.initial?.durationInMonths ?? 3}");
 
   @override
   void dispose() {
     _code.dispose();
     _percent.dispose();
     _flat.dispose();
+    _months.dispose();
     super.dispose();
   }
 
@@ -262,6 +266,52 @@ class _CouponEditFormState extends State<_CouponEditForm> {
               child: AppField(controller: _flat, keyboardType: const TextInputType.numberWithOptions(decimal: true)),
             ),
           const SizedBox(height: 10),
+          Text("Duration", style: TextStyle(color: AppColors.mute, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(
+            "One time is the first membership payment. Every month keeps the discount on each bill. For N months stops after that many bills. A package takes the discount once.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final t in const [
+                (couponDurationOnce, "One time"),
+                (couponDurationForever, "Every month"),
+                (couponDurationRepeating, "For N months"),
+              ])
+                TapHighlight(
+                  onTap: () => setState(() => _duration = t.$1),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _duration == t.$1 ? AppColors.txt : AppColors.line),
+                      color: _duration == t.$1 ? AppColors.txt : AppColors.bg,
+                    ),
+                    child: Text(
+                      t.$2,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _duration == t.$1 ? AppColors.bg : AppColors.txt,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          if (_duration == couponDurationRepeating) ...[
+            const SizedBox(height: 10),
+            FieldLabeled(
+              label: "Months",
+              child: AppField(controller: _months, keyboardType: TextInputType.number, onChanged: (_) => setState(() {})),
+            ),
+          ],
+          const SizedBox(height: 10),
           AppCard(
             child: TapHighlight(
               onTap: () => setState(() => _archived = !_archived),
@@ -288,6 +338,8 @@ class _CouponEditFormState extends State<_CouponEditForm> {
                             percentOff: (int.tryParse(_percent.text.trim()) ?? 0).clamp(0, 100),
                             flatOffCents: (((double.tryParse(_flat.text.trim()) ?? 0) * 100).round()).clamp(0, 1 << 31),
                             archived: _archived,
+                            duration: _duration,
+                            durationInMonths: (int.tryParse(_months.text.trim()) ?? 1).clamp(1, 36),
                           ),
                         ),
                   child: const Text("Save"),

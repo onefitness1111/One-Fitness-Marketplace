@@ -1,7 +1,9 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/payments/membership_proration.dart";
 import "../../../core/payments/payment_method_picker.dart";
+import "../../../data/models/coupon.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -221,8 +223,8 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Payment received — activating your plan…")),
-          );
+          SnackBar(content: Text(result.receipt ?? "Payment received — activating your plan…")),
+        );
         }
         final activated = await _waitForActivation(clientId, plan.id);
         if (activated) widget.onPurchased?.call();
@@ -1085,7 +1087,7 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
                 return Padding(
                   padding: const EdgeInsets.only(top: 6, bottom: 12),
                   child: Text(
-                    match != null ? "✓ ${match.valueLabel} will be applied at checkout." : "No active coupon matches that code.",
+                    match != null ? "✓ ${match.checkoutLabel(subscription: true)}${match.duration == "once" ? "" : " A package takes ${match.valueLabel} once."}" : "No active coupon matches that code.",
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: match != null ? AppColors.success : AppColors.mute),
                   ),
                 );
@@ -1152,21 +1154,49 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
                                 style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.4),
                               ),
                             ),
-                          // A membership with a fixed renewal day charges the
-                          // full price today and next on that day of next
-                          // month (create-payment-intent) — said up front so
-                          // the billing date isn't a surprise.
-                          if (!isCurrent &&
-                              p.renewalDay != null &&
-                              p.priceCents > 0 &&
-                              effectivePaymentType(p) == "subscription")
+                          if (!isCurrent && p.priceCents > 0 && effectivePaymentType(p) == "subscription")
                             Padding(
                               padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                "You pay \$${(p.priceCents / 100).toStringAsFixed(2)} today, then \$${(p.priceCents / 100).toStringAsFixed(2)} "
-                                "on the ${_ordinalDay(p.renewalDay!)} of every month, starting next month.",
-                                style: TextStyle(fontSize: 11.5, color: AppColors.gold, height: 1.4),
-                              ),
+                              child: Builder(builder: (context) {
+                                final settings = ref.watch(platformSettingsProvider);
+                                final anchor = resolveAnchorDay(
+                                  clientDay: info.billingAnchorDay,
+                                  planDay: p.renewalDay,
+                                  platformDay: settings.defaultBillingAnchorDay,
+                                );
+                                final quote = membershipFirstCharge(now: DateTime.now(), priceCents: p.priceCents, anchorDay: anchor);
+                                final feeBase = quote?.proratedCents ?? p.priceCents;
+                                final fee = processingFeeCents(
+                                  enabled: settings.cardFee.enabled,
+                                  structure: settings.cardFee.structure,
+                                  percent: settings.cardFee.percent,
+                                  flatCents: settings.cardFee.flatCents,
+                                  baseCents: feeBase,
+                                );
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _membershipCheckoutLine(
+                                        priceCents: p.priceCents,
+                                        anchorDay: anchor,
+                                        coupon: ref.watch(couponsProvider.notifier).byCode(_couponController.text.trim()),
+                                      ),
+                                      style: TextStyle(fontSize: 11.5, color: AppColors.txt, height: 1.4),
+                                    ),
+                                    if (fee > 0)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          quote == null
+                                              ? "Card fee ${money(fee)}."
+                                              : "Card fee ${money(fee)} on today's prorated amount. Later bills fee the full price.",
+                                          style: TextStyle(fontSize: 11.5, color: AppColors.mute, height: 1.4),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              }),
                             ),
                           const SizedBox(height: 10),
                           if (isCurrent)
@@ -1312,6 +1342,26 @@ class _HeldPackages extends StatelessWidget {
       ],
     );
   }
+}
+
+String _membershipCheckoutLine({
+  required int priceCents,
+  required int? anchorDay,
+  required Coupon? coupon,
+}) {
+  final quote = membershipFirstCharge(now: DateTime.now(), priceCents: priceCents, anchorDay: anchorDay);
+  if (quote == null) {
+    final amount = money(priceCents);
+    return "You pay $amount today, then $amount each month from this date.";
+  }
+  return firstChargeSentence(
+    quote: quote,
+    couponType: coupon == null ? null : coupon.type,
+    percentOff: coupon?.percentOff ?? 0,
+    flatOffCents: coupon?.flatOffCents ?? 0,
+    duration: coupon?.duration ?? "once",
+    durationInMonths: coupon?.durationInMonths ?? 1,
+  );
 }
 
 /// 1 → "1st", 21 → "21st".
