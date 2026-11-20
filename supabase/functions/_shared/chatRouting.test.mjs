@@ -11,6 +11,7 @@ import {
   matchClientTag,
   parseTapback,
   pickProfileForSms,
+  planTextsForSavedMessage,
   prefixBody,
   quoteMatches,
   windowOpen,
@@ -361,4 +362,29 @@ test("the owner can tag a client by name", () => {
 test("a lead reply does not ask for a password", () => {
   assert.equal(leadReply().toLowerCase().includes("password"), false);
   assert.equal(parseTapback('Disliked "See you at 6"'), null);
+});
+
+test("a broadcast text uses the group name, and a one-on-one text keeps its stored prefix", () => {
+  const person = { id: "sam", phone: "+15551110002", hasConsent: true, optedOut: false };
+  const sender = { id: "chris", role: "coach", displayName: "Coach Chris" };
+  const broadcast = planTextsForSavedMessage({
+    sender,
+    recipient: person,
+    body: "See you at 6",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    groupName: "Morning\ncrew",
+  });
+  assert.equal(broadcast.sms[0].body, "Morning crew: See you at 6");
+
+  const direct = planTextsForSavedMessage({
+    sender,
+    recipient: person,
+    body: "Coach Chris: See you at 6",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+  });
+  assert.equal(direct.sms[0].body, "Coach Chris: See you at 6");
 });

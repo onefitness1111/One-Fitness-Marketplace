@@ -20,7 +20,7 @@ import {
   json,
   requireStaff,
 } from "../_shared/messagingGuard.ts";
-import { broadcastWays, smsQuietHours } from "../_shared/broadcastRules.mjs";
+import { broadcastSummaryChannel, broadcastWays, sanitizeGroupName, smsQuietHours } from "../_shared/broadcastRules.mjs";
 import { publicCoachName } from "../_shared/coachName.ts";
 
 const BATCH = 20;
@@ -59,7 +59,9 @@ serve(async (req) => {
 
     const people = await loadPeople(admin, ids);
     const quiet = smsQuietHours(new Date());
-    const label = await senderLabel(admin, userId, role);
+    const senderName = await senderLabel(admin, userId, role);
+    const groupName = sanitizeGroupName(body.groupName);
+    const label = groupName || senderName;
 
     const channels = [
       ...(ways.app ? ["inapp"] : []),
@@ -68,7 +70,7 @@ serve(async (req) => {
     ];
     const result = {
       ok: true,
-      channel: channels.join(","),
+      channel: broadcastSummaryChannel(ways),
       channels,
       app: { sent: 0, failed: 0 },
       sms: { sent: 0, skipped: 0, failed: 0, skippedNoPhone: 0, skippedOptOut: 0, skippedQuietHours: 0 },
@@ -141,6 +143,7 @@ serve(async (req) => {
           body: text,
           channel: savedChannel,
           read_by_coach: true,
+          ...(groupName ? { group_name: groupName } : {}),
         });
         if (error) {
           if (ways.app) result.app.failed += 1;

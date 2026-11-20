@@ -28,6 +28,13 @@ export function coachNameKey(name) {
   return key || null;
 }
 
+/** Broadcast label for a saved message. Empty keeps the stored coach prefix. */
+export function sanitizeBroadcastName(raw) {
+  const cleaned = String(raw ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length <= 40 ? cleaned : cleaned.slice(0, 40).trimEnd();
+}
+
 export function prefixBody(displayName, text) {
   const name = String(displayName || "").trim();
   const body = String(text || "");
@@ -515,16 +522,17 @@ export class ThreadBook {
 }
 
 /** What the app-send texter should send for a row that is already saved. */
-export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true }) {
+export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName }) {
   const sms = [];
   const passAlong = [];
   if (includeSms && recipient) {
     const can = recipient.phone && !recipient.optedOut && recipient.hasConsent;
     if (can) {
       const notice = originChannel === "sms" && routedTo === "business";
+      const named = sanitizeBroadcastName(groupName);
       sms.push({
         toId: recipient.id,
-        body: notice ? businessNotice(sender.displayName) : body,
+        body: notice ? businessNotice(sender.displayName) : (named ? prefixBody(named, body) : body),
       });
     }
   }

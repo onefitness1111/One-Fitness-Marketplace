@@ -1009,6 +1009,14 @@ class _Bubble extends StatelessWidget {
       child: Column(
         crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
+          if (!isMine && (message.groupName ?? "").isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 2),
+              child: Text(
+                message.groupName!,
+                style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600),
+              ),
+            ),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
             child: TapHighlight(
