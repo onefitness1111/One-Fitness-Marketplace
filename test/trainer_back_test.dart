@@ -122,15 +122,12 @@ void main() {
 
   // Coach (non-owner) hamburger, minus Dashboard (already there).
   runMenuPages("coach", null, const {
-    "Clients": "clients",
-    "Schedule": "schedule",
+    "Requests": "requests",
     "Waitlist": "waitlist",
     "Exercises": "exercises",
     "Equipment Library": "equipment",
     "Challenges": "challenges",
-    "Chat": "chat",
     "My Profile": "myprofile",
-    "Calendar Sync": "calendarsync",
     "Merit Badges": "coachbadges",
     "My Pay": "mypay",
     "Support": "support",
@@ -150,22 +147,20 @@ void main() {
     );
   });
 
-  testWidgets("coach menu offers Calendar Sync", (tester) async {
+  testWidgets("coach schedule offers Calendar Sync and the menu does not", (tester) async {
     await boot(tester);
     await tester.tap(find.byIcon(LucideIcons.menu));
     await tester.pumpAndSettle();
-    final item = find.descendant(of: find.byType(Drawer), matching: find.text("Calendar Sync"));
-    await tester.scrollUntilVisible(
-      item,
-      80,
-      scrollable: find.descendant(of: find.byType(Drawer), matching: find.byType(Scrollable)).first,
-    );
-    expect(item, findsOneWidget);
+    expect(find.descendant(of: find.byType(Drawer), matching: find.text("Calendar Sync")), findsNothing);
+    await tester.tap(find.byTooltip("Close menu"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("Schedule"));
+    await tester.pumpAndSettle();
+    expect(find.text("Calendar Sync"), findsOneWidget);
   });
 
   // Admin (owner) hamburger. "Reports" is a group whose label navigates.
   runMenuPages("admin", "owner", const {
-    "Chat": "chat",
     "Build Workout Program": "builderWorkout",
     "Build Nutrition Program": "builderNutrition",
     "Exercises": "exercises",

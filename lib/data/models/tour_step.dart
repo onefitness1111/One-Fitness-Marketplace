@@ -52,16 +52,12 @@ const kCoachHomeTourSteps = [
 /// One step for every row in the coach menu, in the same order.
 const kCoachMenuTourSteps = [
   TourStep("staff-drawer-dashboard", "Dashboard", "Back to today's list."),
-  TourStep("staff-drawer-clients", "Clients", "Everyone you train."),
   TourStep("staff-drawer-requests", "Requests", "Time-off and schedule requests waiting on you."),
-  TourStep("staff-drawer-schedule", "Schedule", "The same calendar as the Schedule button."),
   TourStep("staff-drawer-waitlist", "Waitlist", "People waiting for a spot that opened up."),
   TourStep("staff-drawer-exercises", "Exercises", "The movement library you build programs from."),
   TourStep("staff-drawer-equipment", "Equipment Library", "What the gym has, so programs stay realistic."),
   TourStep("staff-drawer-challenges", "Challenges", "Gym-wide challenges you can run."),
-  TourStep("staff-drawer-chat", "Chat", "Client messages, in one place."),
   TourStep("staff-drawer-myprofile", "My Profile", "Your photo, bio, and the name clients see."),
-  TourStep("staff-drawer-calendarsync", "Calendar Sync", "Send your ONE Fitness schedule to the calendar on your phone."),
   TourStep("staff-drawer-coachbadges", "Merit Badges", "Badges you earn as a coach."),
   TourStep("staff-drawer-mypay", "My Pay", "What you've earned."),
   TourStep("staff-drawer-support", "Support", "How to reach the gym."),
@@ -82,7 +78,6 @@ const kOwnerHomeTourSteps = [
 const kOwnerMenuTourSteps = [
   TourStep("staff-drawer-dashboard", "Dashboard", "Back to the gym overview."),
   TourStep("staff-drawer-requests", "Requests", "Time-off and schedule requests from the team."),
-  TourStep("staff-drawer-chat", "Chat", "Client messages, plus staff conversations."),
   TourStep("staff-drawer-builderWorkout", "Build Workout Program", "Create a workout plan you can assign."),
   TourStep("staff-drawer-builderNutrition", "Build Nutrition Program", "Create a nutrition plan, including calorie budgets."),
   TourStep("staff-drawer-exercises", "Exercises", "The movement library programs are built from."),

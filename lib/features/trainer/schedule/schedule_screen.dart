@@ -57,6 +57,34 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (!isOwner)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+            child: Material(
+              color: AppColors.card,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: BorderSide(color: AppColors.line),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => ref.read(trainerModeProvider.notifier).go("calendarsync"),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.calendar, size: 16, color: AppColors.txt),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text("Calendar Sync", style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.txt)),
+                      ),
+                      Icon(LucideIcons.chevronRight, size: 16, color: AppColors.mute),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
           child: Row(
