@@ -220,7 +220,7 @@ export function hasRecentEntry(entries, cutoffYmd) {
 
 export function sessionMilestoneHits(completedCount) {
   const hits = [];
-  if (completedCount >= 1) hits.push("first_session");
+  // first_session is retired. One completed session no longer earns a badge.
   for (const n of SESSION_MILESTONES) {
     if (completedCount >= n) hits.push(milestoneKey(n));
   }
@@ -297,7 +297,7 @@ export function championQualifies({ ended, winnerId, clientId, rank }) {
 
 export function bundleKeys(event) {
   if (event === "after_session") {
-    return ["early_bird", "daytimer", "night_owl", "first_session", "sessions_10", "sessions_25", "sessions_50", "sessions_100", "one_year", "perfect_attendance"];
+    return ["early_bird", "daytimer", "night_owl", "sessions_10", "sessions_25", "sessions_50", "sessions_100", "one_year", "perfect_attendance"];
   }
   if (event === "after_habit") return ["habit"];
   if (event === "after_photo") return ["progress_tracker_photo"];

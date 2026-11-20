@@ -36,7 +36,7 @@ export const TIME_DRIVEN_BADGES = [
   "early_bird", "daytimer", "night_owl",
   "community_builder", "habit",
   "nutrition_streak", "perfect_attendance", "one_year",
-  "first_session", "sessions_10", "sessions_25", "sessions_50", "sessions_100",
+  "sessions_10", "sessions_25", "sessions_50", "sessions_100",
   "goal_reached",
   ...PROGRESS_TRACKER_SUB_BADGE_KEYS,
 ];
@@ -223,7 +223,12 @@ export async function checkQualifies(admin: any, badgeKey: string, clientId: str
     return { qualifies: false, reason: "Community Builder is granted when a referral is confirmed." };
   }
 
-  if (badgeKey === "first_session" || badgeKey.startsWith("sessions_")) {
+  if (badgeKey === "first_session") {
+    // Retired. A 1.1.2 app request must no-op, not error or re-award.
+    return { qualifies: false, reason: "" };
+  }
+
+  if (badgeKey.startsWith("sessions_")) {
     const rows = await bookings(admin, clientId, c);
     const n = rows.filter(completed).length;
     const hits = sessionMilestoneHits(n);
@@ -438,6 +443,7 @@ export async function awardRecordBreaker(admin: any, clientId: string) {
 }
 
 export async function runBadgeEvent(admin: any, clientId: string, eventOrKey: string, sourceRefId?: string | null) {
+  if (eventOrKey === "first_session") return { outcome: "unchanged", awarded: [] as string[] };
   if (eventOrKey === "record_breaker") return awardRecordBreaker(admin, clientId);
   if (eventOrKey === "champion") {
     if (!sourceRefId) throw new Error("sourceRefId (challenge id) is required.");

@@ -16,6 +16,11 @@ serve(async (req) => {
   try {
     const { clientId, badgeKey, note } = await req.json();
     if (!clientId || !badgeKey) throw new Error("clientId and badgeKey are required");
+    if (badgeKey === "first_session") {
+      return new Response(JSON.stringify({ ok: true, alreadyEarned: true, awarded: [] }), {
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     if (!(badgeKey in BADGE_NAMES)) throw new Error("Unknown badge key.");
 
     const authed = createClient(
