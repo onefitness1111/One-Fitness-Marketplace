@@ -8,6 +8,24 @@ export function broadcastChannel(raw) {
   return BROADCAST_CHANNELS.includes(value) ? value : null;
 }
 
+/** Old apps read "app", "app_sms", or "email". Any other mix is the chip list. */
+export function broadcastSummaryChannel(ways) {
+  if (!ways) return null;
+  if (ways.app && ways.sms && !ways.email) return "app_sms";
+  if (ways.app && !ways.sms && !ways.email) return "app";
+  if (!ways.app && !ways.sms && ways.email) return "email";
+  return [ways.app ? "inapp" : null, ways.sms ? "sms" : null, ways.email ? "email" : null]
+    .filter(Boolean)
+    .join(",");
+}
+
+/** Newlines become spaces. Empty means keep the coach-name prefix. */
+export function sanitizeGroupName(raw) {
+  const cleaned = String(raw ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length <= 40 ? cleaned : cleaned.slice(0, 40).trimEnd();
+}
+
 /** Chip names, or the older single channel string. Empty is not a send. */
 export function broadcastWays(input) {
   const listed = Array.isArray(input?.channels) ? input.channels : Array.isArray(input) ? input : null;

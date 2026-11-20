@@ -75,7 +75,7 @@ serve(async (req) => {
 
     const { data: msg, error } = await admin
       .from("messages")
-      .select("id, client_id, trainer_id, sender_id, who, body, channel, origin_channel, routed_to")
+      .select("id, client_id, trainer_id, sender_id, who, body, channel, origin_channel, routed_to, group_name")
       .eq("id", messageId)
       .maybeSingle();
     if (error) throw error;
@@ -104,6 +104,7 @@ serve(async (req) => {
       routedTo: (msg.routed_to as string | null) || (msg.trainer_id ? "conversation" : "business"),
       coaches,
       includeSms: channelHasSms(msg.channel as string | null),
+      groupName: msg.group_name,
     });
 
     for (const copy of plan.passAlong) {

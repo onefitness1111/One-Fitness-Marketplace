@@ -51,6 +51,18 @@ String? broadcastLegacyWire(BroadcastWays ways) {
   return null;
 }
 
+/// What `broadcast-message` puts in the response `channel` field.
+/// Old apps read "app", "app_sms", or "email". Anything else is the chip list.
+String broadcastSummaryChannel(BroadcastWays ways) => broadcastLegacyWire(ways) ?? ways.wire.join(",");
+
+/// Broadcast label. Newlines become spaces, the ends are trimmed, and the
+/// result is at most 40 characters. Empty means the old coach-name prefix.
+String sanitizeGroupName(String? raw) {
+  final cleaned = (raw ?? "").replaceAll(RegExp(r"[\r\n\t]+"), " ").replaceAll(RegExp(r"\s+"), " ").trim();
+  if (cleaned.isEmpty) return "";
+  return cleaned.length <= 40 ? cleaned : cleaned.substring(0, 40).trimRight();
+}
+
 class BroadcastClient {
   const BroadcastClient({
     required this.id,

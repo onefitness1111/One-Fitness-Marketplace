@@ -22,6 +22,7 @@ class CommMessage {
     this.channel,
     this.createdAt,
     this.reactions = const [],
+    this.groupName,
   });
 
   final String id;
@@ -43,6 +44,9 @@ class CommMessage {
 
   /// Hearts and thumbs-ups. Likes are not a separate message.
   final List<MessageReaction> reactions;
+
+  /// Set on a broadcast copy. One-on-one messages leave this empty.
+  final String? groupName;
 
   /// Real chronological timestamp for day-grouping/sort order in the chat
   /// UI. [id] is always a microsecond-epoch stamp for a message this app
@@ -72,5 +76,6 @@ class CommMessage {
         channel: channel,
         createdAt: createdAt,
         reactions: reactions ?? this.reactions,
+        groupName: groupName,
       );
 }

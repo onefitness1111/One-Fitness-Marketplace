@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   broadcastChannel,
+  broadcastSummaryChannel,
   broadcastWays,
   previewBroadcast,
+  sanitizeGroupName,
   scopeBroadcast,
   smsQuietHours,
 } from "./broadcastRules.mjs";
@@ -23,6 +25,13 @@ test("any mix of in app, text, and email is allowed, and empty is not", () => {
   assert.deepEqual(broadcastWays({ channel: "app_sms" }), { app: true, sms: true, email: false });
   assert.equal(broadcastChannel("sms"), null);
   assert.equal(broadcastChannel("app_sms"), "app_sms");
+  assert.equal(broadcastSummaryChannel({ app: true, sms: false, email: false }), "app");
+  assert.equal(broadcastSummaryChannel({ app: true, sms: true, email: false }), "app_sms");
+  assert.equal(broadcastSummaryChannel({ app: false, sms: false, email: true }), "email");
+  assert.equal(broadcastSummaryChannel({ app: true, sms: true, email: true }), "inapp,sms,email");
+  assert.equal(sanitizeGroupName("  Morning\ncrew  "), "Morning crew");
+  assert.equal(sanitizeGroupName("x".repeat(50)).length, 40);
+  assert.equal(sanitizeGroupName(" \n "), "");
 });
 
 test("a coach reaches only their own clients", () => {

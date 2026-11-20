@@ -22,6 +22,7 @@ class BroadcastScreen extends ConsumerStatefulWidget {
 
 class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
   final _search = TextEditingController();
+  final _groupName = TextEditingController();
   final _message = TextEditingController();
   final _subject = TextEditingController();
   bool _all = true;
@@ -35,6 +36,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
   @override
   void dispose() {
     _search.dispose();
+    _groupName.dispose();
     _message.dispose();
     _subject.dispose();
     super.dispose();
@@ -74,14 +76,16 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
       _error = null;
     });
     final ways = _ways;
+    final groupName = sanitizeGroupName(_groupName.text);
     try {
       final result = await SupabaseService.sendBroadcast(
         text: _message.text.trim(),
-        channel: broadcastLegacyWire(ways) ?? ways.wire.join(","),
+        channel: broadcastSummaryChannel(ways),
         channels: ways.wire,
         allClients: _all,
         clientIds: scope.allowed.map((c) => c.id).toList(),
         subject: ways.email ? _subject.text.trim() : null,
+        groupName: groupName,
       );
       if (!mounted) return;
       setState(() => _result = result);
@@ -105,6 +109,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
         : (sender.isNotEmpty ? sender.first.displayTitle : coachPublicName());
     final scope = _scope(mine, isOwner, senderId);
     final ways = _ways;
+    final groupName = sanitizeGroupName(_groupName.text);
     final preview = previewBroadcast(
       ways: ways,
       recipients: scope.allowed,
@@ -117,6 +122,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     }
     if (_reviewing) {
       return _Review(
+        groupName: groupName,
         from: from,
         ways: ways,
         preview: preview,
@@ -129,7 +135,8 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
 
     final query = _search.text.trim().toLowerCase();
     final shown = mine.where((c) => query.isEmpty || c.name.toLowerCase().contains(query)).toList();
-    final canReview = _message.text.trim().isNotEmpty &&
+    final canReview = groupName.isNotEmpty &&
+        _message.text.trim().isNotEmpty &&
         scope.allowed.isNotEmpty &&
         broadcastWaysAllowed(_channels.map((c) => c.name).toSet()) &&
         (!ways.email || _subject.text.trim().isNotEmpty);
@@ -137,6 +144,15 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
+        const _Label("Group name"),
+        AppField(
+          controller: _groupName,
+          kind: FieldKind.text,
+          placeholder: "Name this group",
+          maxLength: 40,
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 16),
         Text("From $from", style: TextStyle(color: AppColors.mute, fontSize: 12, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         Text(
@@ -227,6 +243,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
 
 class _Review extends StatelessWidget {
   const _Review({
+    required this.groupName,
     required this.from,
     required this.ways,
     required this.preview,
@@ -236,6 +253,7 @@ class _Review extends StatelessWidget {
     required this.onSend,
   });
 
+  final String groupName;
   final String from;
   final BroadcastWays ways;
   final BroadcastPreview preview;
@@ -247,6 +265,7 @@ class _Review extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lines = <String>[
+      "Group name: $groupName",
       "From $from",
       if (ways.app) "App chat: ${preview.app}",
       if (ways.sms) ...[

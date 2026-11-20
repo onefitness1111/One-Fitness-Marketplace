@@ -2530,6 +2530,7 @@ class SupabaseService {
     readByCoach: (r["read_by_coach"] as bool?) ?? false,
     channel: r["channel"] as String?,
     createdAt: DateTime.tryParse((r["created_at"] as String?) ?? "")?.toLocal(),
+    groupName: (r["group_name"] as String?)?.trim(),
   );
 
   /// Turns the database's enforcement errors into something a person can
@@ -4439,6 +4440,7 @@ class SupabaseService {
     List<String> clientIds = const [],
     List<String> channels = const [],
     String? subject,
+    String? groupName,
   }) =>
       _invokeFunction("broadcast-message", {
         "text": text,
@@ -4447,6 +4449,7 @@ class SupabaseService {
         "all": allClients,
         "clientIds": clientIds,
         if (subject != null && subject.trim().isNotEmpty) "subject": subject.trim(),
+        if (groupName != null && groupName.trim().isNotEmpty) "groupName": groupName.trim(),
       });
 
   /// What would happen if staff cancelled this client's membership —

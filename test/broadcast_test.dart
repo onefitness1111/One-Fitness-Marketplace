@@ -35,6 +35,16 @@ void main() {
     expect(broadcastWaysAllowed(const {}), isFalse);
     expect(broadcastLegacyWire(const BroadcastWays(app: true, sms: true)), "app_sms");
     expect(broadcastLegacyWire(const BroadcastWays(app: true, email: true)), isNull);
+    expect(broadcastSummaryChannel(const BroadcastWays(app: true)), "app");
+    expect(broadcastSummaryChannel(const BroadcastWays(app: true, sms: true)), "app_sms");
+    expect(broadcastSummaryChannel(const BroadcastWays(email: true)), "email");
+    expect(broadcastSummaryChannel(const BroadcastWays(app: true, sms: true, email: true)), "inapp,sms,email");
+  });
+
+  test("a group name is trimmed, flattened, and capped at 40 characters", () {
+    expect(sanitizeGroupName("  Morning\ncrew  "), "Morning crew");
+    expect(sanitizeGroupName(" \n "), "");
+    expect(sanitizeGroupName("x" * 50).length, 40);
   });
 
   test("a coach reaches only their own clients", () {
