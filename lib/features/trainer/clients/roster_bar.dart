@@ -6,6 +6,7 @@ import "add_client_sheet.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/flag_utils.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
 
@@ -43,6 +44,9 @@ class _RosterBarState extends ConsumerState<RosterBar> {
     final clientRecords = ref.watch(trainerClientRecordsProvider);
     final bookings = ref.watch(allBookingsProvider);
     final activeId = ref.watch(selectedClientIdProvider);
+    // One roster-wide load (loadMeritBadgesAll). Each tile only reads
+    // this list. It does not ask the server again.
+    final earnedBadges = ref.watch(earnedBadgesProvider);
 
     // Every coach reaches every client from this tab. The schedule is what
     // stays limited to their own sessions. Chat can still be narrowed.
@@ -65,7 +69,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
           ),
           const SizedBox(height: 6),
           SizedBox(
-            height: 60,
+            height: 78,
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
@@ -111,7 +115,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
                       borderRadius: BorderRadius.circular(14),
                       child: Container(
                         width: 180,
-                        padding: const EdgeInsets.fromLTRB(10, 10, 14, 10),
+                        padding: const EdgeInsets.fromLTRB(10, 8, 14, 8),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(14),
                           color: isActive ? AppColors.gold.withValues(alpha: 0.12) : AppColors.card,
@@ -146,6 +150,8 @@ class _RosterBarState extends ConsumerState<RosterBar> {
                                       color: isActive ? AppColors.gold : AppColors.txt,
                                     ),
                                   ),
+                                  const SizedBox(height: 3),
+                                  ClientTileBadges(clientId: c.id, earnedBadges: earnedBadges),
                                   const SizedBox(height: 2),
                                   Row(
                                     children: [
