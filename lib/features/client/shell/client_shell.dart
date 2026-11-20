@@ -21,6 +21,7 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart" show waiversProvider;
 import "../badges/badge_gallery_screen.dart";
 import "../beep/client_live_session_layer.dart";
+import "client_moments.dart";
 import "../booking/advanced_booking_screen.dart";
 import "../booking/booking_screen.dart";
 import "../booking/day_detail_screen.dart";
@@ -707,6 +708,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                 onOpenChat: () => go("chat"),
                 onOpenWorkout: () => go("plans"),
               ),
+              const ClientMoments(),
             ],
           ),
         ),

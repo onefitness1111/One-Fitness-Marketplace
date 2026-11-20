@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
+import "../motion/motion.dart";
 import "../theme/app_colors.dart";
 
 /// A tap target that paints a gray or white wash on top of [child] while
@@ -68,12 +69,17 @@ class _TapHighlightState extends State<TapHighlight> {
               },
         onLongPress: widget.onLongPress,
         behavior: widget.behavior,
-        child: _TapWash(
+        child: AnimatedScale(
+          scale: enabled && _pressed && !reduceMotionOf(context) ? 0.97 : 1,
+          duration: motionPress,
+          curve: Curves.easeOut,
+          child: _TapWash(
           show: show,
           color: color,
           borderRadius: widget.shape == BoxShape.circle ? null : widget.borderRadius,
           shape: widget.shape,
           child: widget.child,
+        ),
         ),
       ),
     );

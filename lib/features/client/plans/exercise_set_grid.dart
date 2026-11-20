@@ -48,6 +48,7 @@ class ExerciseSetGrid extends StatefulWidget {
     this.clientId = "",
     this.coachLed = false,
     this.onSwap,
+    this.showsPr,
   });
 
   /// Today's session only. The program is not rewritten.
@@ -77,6 +78,9 @@ class ExerciseSetGrid extends StatefulWidget {
   /// A coach logging for the client sees a short note. The client logging
   /// their own session sees the same suggestion written out.
   final bool coachLed;
+
+  /// True when this set's entered weight is a personal record. Client only.
+  final bool Function(int setNum)? showsPr;
 
   @override
   State<ExerciseSetGrid> createState() => _ExerciseSetGridState();
@@ -586,6 +590,7 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
   }
 
   Widget _weightInputCell(ExercisePrescription exercise, int setNum) {
+    final pr = widget.showsPr?.call(setNum) ?? false;
     final draft = widget.sessionData["${exercise.name}__$setNum"];
     final weight = draft?.weight;
     final last = getLastSetData(widget.client, exercise.name, setNum, widget.dayId);
@@ -628,7 +633,14 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
       color = AppColors.statusGreen;
     }
 
-    return _cellWrap(Container(
+    return _cellWrap(Column(
+      children: [
+        if (pr)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text("PR", style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: AppColors.txt, letterSpacing: 0.4)),
+          ),
+        Container(
       decoration: BoxDecoration(color: bg, border: Border.all(color: border), borderRadius: BorderRadius.circular(8)),
       child: TextField(
         onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
@@ -650,6 +662,8 @@ class _ExerciseSetGridState extends State<ExerciseSetGrid> {
           setState(() {});
         },
       ),
+        ),
+      ],
     ));
   }
 }

@@ -5,6 +5,9 @@ import "dart:async";
 import "package:supabase_flutter/supabase_flutter.dart";
 import "../../core/live_log/live_log_store.dart";
 import "../../core/live_log/current_live_day.dart";
+import "../../core/motion/pr_bus.dart";
+import "../../core/motion/pr_logic.dart";
+import "../../core/motion/stagger_in.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/navigation/local_back_stack.dart";
 import "../../core/supabase/supabase_service.dart";
@@ -259,6 +262,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     if (!mounted || _live != c) return;
     final store = widget._store;
     final day = _currentDay();
+    final weights = <(String, int, double?)>[];
     setState(() {
       c.sets.forEach((k, v) {
         final parts = k.split("__");
@@ -284,6 +288,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
           );
         }
         if (v.weight != null && v.weightAt != null) {
+          weights.add((name, setNum, v.weight));
           final whole = v.weight! % 1 == 0 ? v.weight!.toInt().toString() : v.weight!.toString();
           store.remember(
             sessionId: widget.sessionId,
@@ -299,6 +304,20 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       _seedDraftsFromStore();
       _syncTick++;
     });
+    if (widget.loggedBy == "client") {
+      final foreground = WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      for (final (name, setNum, weight) in weights) {
+        final best = bestLoggedWeightNamed(widget.client.workoutLogs, name);
+        PrBus.instance.consider(
+          exercise: name,
+          setNum: setNum,
+          weight: weight,
+          previousBest: best,
+          appInForeground: foreground,
+        );
+      }
+    }
   }
 
   ProgramDay? _currentDay() {
@@ -460,6 +479,30 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     });
     // Shared with the other side right away (queued if offline).
     _live?.setField(exerciseName, setNum, field, value);
+    if (widget.loggedBy == "client" && field == "weight") {
+      final weight = value as double?;
+      final best = bestLoggedWeightNamed(widget.client.workoutLogs, exerciseName);
+      final foreground = WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      PrBus.instance.consider(
+        exercise: exerciseName,
+        setNum: setNum,
+        weight: weight,
+        previousBest: best,
+        appInForeground: foreground,
+      );
+      if (weightIsPersonalRecord(previousBest: best, weight: weight)) {
+        unawaited(SupabaseService.awardMeritBadge(widget.client.id, "record_breaker"));
+      }
+    }
+  }
+
+  bool _showsPr(String exerciseName, int setNum) {
+    final weight = _sessionData["${exerciseName}__$setNum"]?.weight;
+    return weightIsPersonalRecord(
+      previousBest: bestLoggedWeightNamed(widget.client.workoutLogs, exerciseName),
+      weight: weight,
+    );
   }
 
   ExercisePrescription _shown(ExercisePrescription ex) {
@@ -703,7 +746,9 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                         final exCount = d.exercises.length;
                         final firstSuggested = d.suggested &&
                             days.where((x) => x.suggested).firstOrNull?.id == d.id;
-                        return Column(
+                        return StaggerIn(
+                          index: days.indexOf(d).clamp(0, 12),
+                          child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (firstSuggested)
@@ -800,6 +845,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                           ),
                             ),
                           ],
+                        ),
                         );
                       }),
                     ],
@@ -957,6 +1003,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               sessionId: widget.sessionId,
                               clientId: client.id,
                               coachLed: widget.loggedBy != "client",
+                              showsPr: widget.loggedBy == "client" ? (n) => _showsPr(_shown(ex).name, n) : null,
                             ),
                             if (_live != null)
                               LiveNotesBox(
@@ -1024,6 +1071,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                               sessionId: widget.sessionId,
                               clientId: client.id,
                               coachLed: widget.loggedBy != "client",
+                              showsPr: widget.loggedBy == "client" ? (n) => _showsPr(_shown(ex).name, n) : null,
                             ),
                             if (_live != null)
                               LiveNotesBox(

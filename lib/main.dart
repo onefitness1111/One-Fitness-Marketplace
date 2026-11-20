@@ -10,6 +10,7 @@ import "package:supabase_flutter/supabase_flutter.dart";
 import "core/supabase/supabase_service.dart";
 import "core/notifications/push_prompt.dart";
 import "core/widgets/change_password_form.dart";
+import "core/motion/skeleton.dart";
 import "core/theme/app_colors.dart";
 import "core/updates/app_update.dart";
 import "core/updates/app_update_sheet.dart";
@@ -267,16 +268,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
     return bootstrap.when(
       loading: () => Scaffold(
         backgroundColor: AppColors.bg,
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: AppColors.gold),
-              const SizedBox(height: 14),
-              Text("Loading…", style: TextStyle(fontSize: 14, color: AppColors.txt)),
-            ],
-          ),
-        ),
+        body: const AppLoading(),
       ),
       error: (err, st) => const _RootContent(), // fall back to mock/signed-out state rather than block the app
       data: (_) {
