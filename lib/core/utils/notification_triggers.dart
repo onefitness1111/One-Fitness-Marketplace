@@ -83,6 +83,19 @@ Future<void> notifyClientAndCoach({
   }
 }
 
+/// Every coach hears this. Used when there is no single session coach,
+/// because a client is not assigned to one coach.
+Future<void> notifyAllCoaches({required String title, required String body}) async {
+  try {
+    final people = await SupabaseService.loadProfileDirectory();
+    for (final person in people) {
+      if (person["role"] == "coach" && person["id"] is String) {
+        await notifyPush(profileId: person["id"] as String, title: title, body: body);
+      }
+    }
+  } catch (_) {}
+}
+
 /// Photos, measurements, programs and intake go to the business, not to
 /// every coach. Fails quietly if the directory is not available yet.
 Future<void> notifyOwnerInternal({required String title, required String body}) async {

@@ -133,15 +133,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  List<Trainer> _scopedCoaches(ClientInfo info, List<Trainer> trainers, PlatformSettings settings) {
-    // "Allow clients to message any coach" off (the default) scopes the
-    // picker to coaches the client actually has a relationship with.
-    final scoped = settings.clientsCanMessageAnyCoach
-        ? trainers
-        : trainers.where((t) => t.id == info.primaryTrainerId).toList();
-    return scoped.isNotEmpty ? scoped : trainers;
-  }
-
   Future<void> _openChangeSheet({
     required List<Trainer> realCandidates,
     required String businessName,
@@ -325,7 +316,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final trainers = ref.watch(trainersProvider);
     final settings = ref.watch(platformSettingsProvider);
     final owners = ref.watch(ownerDirectoryProvider);
-    final scoped = _scopedCoaches(info, trainers, settings);
+    final scoped = trainers;
     final reach = clientRecipients(
       coachIds: scoped.map((t) => t.id),
       ownerIds: owners.map((o) => o.id).toSet(),

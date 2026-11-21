@@ -43,17 +43,15 @@ class _ChallengesScreenState extends ConsumerState<ChallengesScreen> {
     }
 
     final now = isoToday();
-    // A challenge scoped to a coach is only for that coach's clients. One
-    // this client already joined stays visible regardless — being moved
-    // to another coach shouldn't hide a leaderboard they're on.
-    bool forMe(Challenge c) => c.trainerId == null || c.trainerId == info.primaryTrainerId || isClientRegistered(c, info.id);
+    // Every client can see every coach's challenge. trainerId on the
+    // challenge is who created it, not a client assignment.
     final joined = challenges
         .where((c) => isClientRegistered(c, info.id))
         .toList();
     final available = challenges
         .where(
           (c) =>
-              forMe(c) && !isClientRegistered(c, info.id) && c.endDate.compareTo(now) >= 0,
+              !isClientRegistered(c, info.id) && c.endDate.compareTo(now) >= 0,
         )
         .toList();
 

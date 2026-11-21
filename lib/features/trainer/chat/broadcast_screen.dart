@@ -43,8 +43,8 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
   }
 
   List<ClientInfo> _mine(List<ClientInfo> roster, bool isOwner, String? senderId) {
-    if (isOwner) return roster;
-    return roster.where((c) => c.primaryTrainerId == senderId).toList();
+    if (isOwner || (senderId ?? "").trim().isNotEmpty) return roster;
+    return const [];
   }
 
   List<BroadcastClient> _asPeople(List<ClientInfo> clients, bool isOwner) => [
@@ -280,7 +280,7 @@ class _Review extends StatelessWidget {
         "Email: ${preview.email}",
         if (preview.skippedNoEmail > 0) "Skipped, no email: ${preview.skippedNoEmail}",
       ],
-      if (preview.refused > 0) "Left out, not your client: ${preview.refused}",
+      if (preview.refused > 0) "Left out, not a client: ${preview.refused}",
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),

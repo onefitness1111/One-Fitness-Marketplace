@@ -32,14 +32,13 @@ String feeLabelFor(String kind) {
   }
 }
 
+/// A coach may charge any client. The owner may too. A signed-out caller may not.
 bool mayChargeClient({
   required bool senderIsOwner,
   required String senderId,
-  required String? primaryTrainerId,
 }) {
   if (senderIsOwner) return true;
-  final coach = (primaryTrainerId ?? "").trim();
-  return senderId.isNotEmpty && coach == senderId;
+  return senderId.trim().isNotEmpty;
 }
 
 /// Stripe asks for the card again when the bank wants a new check, or the

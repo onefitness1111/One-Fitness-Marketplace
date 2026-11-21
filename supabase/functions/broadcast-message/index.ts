@@ -1,6 +1,6 @@
 // One message to many clients, each in their own chat with the sender.
 //
-// The owner reaches every client. A coach reaches only their own clients.
+// The owner and every coach reach every client.
 // Channels are any mix of app chat, a text, and email.
 // A text uses the same Twilio number and the same opt-out checks as a
 // normal chat text. It is not sent before 8:00am or from 9:00pm Pacific.

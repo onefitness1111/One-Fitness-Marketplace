@@ -74,10 +74,10 @@ void main() {
     );
   });
 
-  test("a coach charges only their own client, and a bad card asks for a new one", () {
-    expect(mayChargeClient(senderIsOwner: false, senderId: "chris", primaryTrainerId: "chris"), isTrue);
-    expect(mayChargeClient(senderIsOwner: false, senderId: "chris", primaryTrainerId: "pat"), isFalse);
-    expect(mayChargeClient(senderIsOwner: true, senderId: "owner", primaryTrainerId: "pat"), isTrue);
+  test("a coach can charge any client, and a bad card asks for a new one", () {
+    expect(mayChargeClient(senderIsOwner: false, senderId: "chris"), isTrue);
+    expect(mayChargeClient(senderIsOwner: false, senderId: ""), isFalse);
+    expect(mayChargeClient(senderIsOwner: true, senderId: "owner"), isTrue);
     expect(feeCentsFor("late"), 1500);
     expect(feeCentsFor("close"), 2500);
     expect(chargeNeedsNewCard("authentication_required"), isTrue);
