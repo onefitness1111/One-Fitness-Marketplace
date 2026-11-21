@@ -341,6 +341,9 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
           child: SafeArea(
             bottom: false,
             child: Column(
+              // Full width. A centered column gives the body a minimum
+              // width of zero, and the page below then collapses.
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Container(
                   decoration: BoxDecoration(
@@ -529,7 +532,12 @@ class _KeptTabsState extends State<_KeptTabs> {
     final keys = tabs.keys.toList();
     final index = keys.indexOf(widget.mode);
     final onTab = index >= 0;
+    // Hidden tabs are Offstage, which reports a size of zero. A loose
+    // stack shrinks to that, so the drawer page (Positioned.fill) becomes
+    // a zero-width strip: the title stays up and the page under it is
+    // just the black background. Expand so menu pages fill the body.
     return Stack(
+      fit: StackFit.expand,
       children: [
         Offstage(
           offstage: !onTab,
