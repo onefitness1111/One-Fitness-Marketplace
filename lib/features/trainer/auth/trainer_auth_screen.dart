@@ -8,6 +8,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/web/portal_layout.dart";
 import "../../../core/utils/auth_error.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../auth/signing_in_label.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "coach_signup_screen.dart";
 
@@ -68,15 +69,10 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
     });
     try {
       await SupabaseService.signIn(_email.text.trim(), _password.text);
-      final profile = await SupabaseService.getSessionProfile();
-      if (profile == null || profile["role"] != "coach") {
-        await SupabaseService.signOut();
-        throw Exception("This account isn't set up as a coach.");
-      }
-      // Re-fetches roster/trainers/bookings/plans as this now-authenticated
-      // coach (RLS returns more/different rows than the anonymous startup
-      // bootstrap saw) and sets trainerAuth from the restored session.
-      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
+      // The role read overlaps the first data round. A non-coach account
+      // is signed out inside loadAndSeedCoreData.
+      final roleF = SupabaseService.currentRole();
+      await loadAndSeedCoreData(ref, knownRole: "coach", roleGate: roleF);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -99,12 +95,8 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
     });
     try {
       await SupabaseService.signIn(_ownerEmail.text.trim(), _ownerPassword.text);
-      final profile = await SupabaseService.getSessionProfile();
-      if (profile == null || profile["role"] != "owner") {
-        await SupabaseService.signOut();
-        throw Exception("This account isn't the owner account.");
-      }
-      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
+      final roleF = SupabaseService.currentRole();
+      await loadAndSeedCoreData(ref, knownRole: "owner", roleGate: roleF);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -205,7 +197,7 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
                                   onPressed: _busy ? null : _signIn,
                                   full: true,
                                   child: _busy
-                                      ? const Text("Signing in…")
+                                      ? const SigningInLabel()
                                       : const Row(
                                           mainAxisAlignment: MainAxisAlignment.center,
                                           mainAxisSize: MainAxisSize.min,
@@ -329,9 +321,9 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
                                             mainAxisAlignment: MainAxisAlignment.center,
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              const Icon(LucideIcons.lock, size: 14),
-                                              const SizedBox(width: 6),
-                                              Text(_ownerBusy ? "Signing in…" : "Enter"),
+                                              if (!_ownerBusy) const Icon(LucideIcons.lock, size: 14),
+                                              if (!_ownerBusy) const SizedBox(width: 6),
+                                              _ownerBusy ? const SigningInLabel(label: "Signing in…") : const Text("Enter"),
                                             ],
                                           ),
                                         ),
