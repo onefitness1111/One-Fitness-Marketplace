@@ -4,6 +4,7 @@ import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "core/auth/web_launch.dart";
+import "core/startup/launch_timing.dart";
 import "core/chat/unread_chat.dart";
 import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
@@ -35,32 +36,32 @@ import "features/trainer/shell/trainer_shell.dart";
 import "features/trainer/shell/trainer_shell_state.dart";
 
 Future<void> main() async {
+  LaunchTiming.markProcessStart();
   WidgetsFlutterBinding.ensureInitialized();
   configureUrlStrategy();
-  // Supabase and Firebase don't depend on each other, so initialise them
-  // side by side rather than paying for both one after the other.
-  // Firebase only — the permission prompt and token registration wait
-  // until sign-in, so the OS asks with context rather than on a cold
-  // first launch. Never throws: push failing must not block startup.
-  // Started before the others and awaited after, so this single
-  // SharedPreferences read overlaps the network init rather than adding to
-  // it. Having the answer before the first frame is what stops a cold start
-  // flashing the wrong palette.
+  // Local only. Firebase, secure storage, PackageInfo, the update check,
+  // and every network call wait until the first frame is up. The palette
+  // is the exception: it is one SharedPreferences read, and opening on the
+  // wrong one flashes the sign-in photo white.
   final storedTheme = ThemeModeNotifier.readStored();
-  // Read the address before startup. Supabase does not consume it
-  // (detectSessionInUri is off), so a reset link can be exchanged once.
   final launchUri = kIsWeb ? Uri.base : null;
-  await Future.wait([SupabaseService.initialize(), PushService.init()]);
-  final launch = launchUri == null ? WebLaunchPlan.none : await consumeWebLaunch(launchUri);
+  final launch = launchUri == null ? WebLaunchPlan.none : planWebLaunch(launchUri);
   runApp(
     ProviderScope(
       overrides: [
         initialThemeModeProvider.overrideWithValue(await storedTheme),
         webLaunchProvider.overrideWithValue(launch),
+        webLaunchUriProvider.overrideWithValue(launchUri),
       ],
       child: const OneFitnessApp(),
     ),
   );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    LaunchTiming.markFirstFrame();
+    // Push must not sit in front of the first frame. Permission is still
+    // asked later, after sign-in, not here.
+    unawaited(PushService.init());
+  });
 }
 
 /// Lets the Stripe-return check in _RootGate show a SnackBar without
@@ -184,7 +185,13 @@ class _RootGateState extends ConsumerState<_RootGate> {
     }
     LiveLogStore.instance.ensureLoaded();
     _lifecycle; // created now so it's listening from the first frame
-    _checkAppUpdate();
+    // PackageInfo and the app-config read used to start in this method,
+    // before the first frame. They run after it. A blocking update sheet
+    // appears when the check finishes, only if this build is below the
+    // minimum or force_update is set. It does not hold the dashboard.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkAppUpdate();
+    });
   }
 
   Future<void> _checkAppUpdate() async {

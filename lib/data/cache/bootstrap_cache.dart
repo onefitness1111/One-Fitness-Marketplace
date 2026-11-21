@@ -1,6 +1,6 @@
-import "dart:convert";
-
 import "package:shared_preferences/shared_preferences.dart";
+
+import "../../core/json/off_main_json.dart";
 
 import "../models/booking.dart";
 import "../models/client_info.dart";
@@ -85,7 +85,9 @@ class BootstrapCache {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_dataKey(userId));
       if (raw == null || raw.isEmpty) return null;
-      final decoded = jsonDecode(raw);
+      // The snapshot is the last dashboard, programs included. Decoding it
+      // on the UI isolate was a multi-second freeze before the first paint.
+      final decoded = await decodeJsonOffMain(raw);
       if (decoded is! Map) return null;
       return decoded.cast<String, dynamic>();
     } catch (_) {
@@ -95,9 +97,34 @@ class BootstrapCache {
 
   static Future<void> write(String userId, Map<String, dynamic> payload) async {
     try {
+      final encoded = await encodeJsonOffMain(payload, weight: _weight(payload));
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_dataKey(userId), jsonEncode(payload));
+      await prefs.setString(_dataKey(userId), encoded);
       await prefs.setString(_userKey, userId);
     } catch (_) {}
+  }
+
+  /// Stops walking once the payload is clearly big enough to leave the UI isolate.
+  static int _weight(Object? value) {
+    var seen = 0;
+    void walk(Object? v) {
+      if (seen >= offMainJsonBytes) return;
+      if (v is String) {
+        seen += v.length;
+      } else if (v is List) {
+        for (final e in v) {
+          walk(e);
+          if (seen >= offMainJsonBytes) return;
+        }
+      } else if (v is Map) {
+        for (final e in v.values) {
+          walk(e);
+          if (seen >= offMainJsonBytes) return;
+        }
+      }
+    }
+
+    walk(value);
+    return seen;
   }
 }

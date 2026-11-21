@@ -8,6 +8,7 @@ import "../../core/theme/app_colors.dart";
 import "../../core/web/portal_layout.dart";
 import "../../core/utils/auth_error.dart";
 import "../../core/widgets/widgets.dart";
+import "signing_in_label.dart";
 import "../../data/providers/client_providers.dart";
 import "../../data/providers/supabase_bootstrap_provider.dart";
 import "client_signup_screen.dart";
@@ -65,16 +66,10 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
     });
     try {
       await SupabaseService.signIn(_email.text.trim(), _password.text);
-      final profile = await SupabaseService.getSessionProfile();
-      if (profile == null || profile["role"] != "client") {
-        await SupabaseService.signOut();
-        throw Exception("This account isn't set up as a client.");
-      }
-      // Re-fetches roster/trainers/bookings/plans as this now-authenticated
-      // user (RLS returns more/different rows than the anonymous startup
-      // bootstrap saw) and sets clientInfo/clientRecord/clientBookings/
-      // clientSignedIn from the freshly-restored session in one pass.
-      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
+      // The role read overlaps the first data round. loadAndSeedCoreData
+      // signs out and throws if this account is not a client.
+      final roleF = SupabaseService.currentRole();
+      await loadAndSeedCoreData(ref, knownRole: "client", roleGate: roleF);
     } catch (e, st) {
       // ignore: avoid_print
       print("[client sign-in] failed: $e\n$st");
@@ -225,7 +220,7 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
                                 onPressed: _busy ? null : _signIn,
                                 full: true,
                                 child: _busy
-                                    ? const Text("Signing in…")
+                                    ? const SigningInLabel()
                                     : const Row(
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         mainAxisSize: MainAxisSize.min,
