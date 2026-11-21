@@ -16,6 +16,7 @@ class Charge {
     this.trainerId,
     this.trainerName,
     this.waivedAt,
+    this.stripePaymentIntentId,
   });
 
   final String id;
@@ -32,4 +33,8 @@ class Charge {
   final String? trainerId;
   final String? trainerName;
   final String? waivedAt;
+
+  /// Stripe PaymentIntent id when a card was charged for this row.
+  /// Null when the fee was only written to the ledger.
+  final String? stripePaymentIntentId;
 }

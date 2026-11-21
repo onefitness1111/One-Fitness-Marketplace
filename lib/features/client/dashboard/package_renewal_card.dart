@@ -134,14 +134,15 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
     }
     if (!mounted) return;
     final info = ref.read(clientInfoProvider);
-    final billing = await ensureBillingAddress(context, clientId: info.id, clientName: info.name);
-    if (billing == null || !mounted) return;
+    final billing = await collectBillingAddress(context, clientId: info.id, clientName: info.name);
+    if (!billing.proceed || !mounted) return;
     setState(() { _busyId = offer.planId; _error = null; });
     final (result, paymentId) = await PaymentSheetService.purchasePackageRenewal(
       planId: offer.planId,
       enrollmentStart: offer.enrollmentStart,
       businessName: ref.read(platformSettingsProvider).businessName,
-      billing: billing,
+      billing: billing.address,
+      useStoredBilling: billing.storedOnFile,
     );
     if (!mounted) return;
     if (result.cancelled) {

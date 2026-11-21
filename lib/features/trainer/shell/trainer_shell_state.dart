@@ -17,6 +17,11 @@ typedef _NavEntry = ({String mode, String? clientId});
 class TrainerModeNotifier extends Notifier<String> {
   final List<_NavEntry> _history = [];
 
+  /// Reports hub key to open on the next visit to Reports. Set by
+  /// [openReport]. Plain [go] and [goBack] clear it so the hub itself
+  /// opens.
+  String? pendingReportKey;
+
   @override
   String build() => "dashboard";
 
@@ -31,8 +36,12 @@ class TrainerModeNotifier extends Notifier<String> {
     if (_history.length > 50) _history.removeAt(0);
   }
 
-  void go(String mode) {
+  void go(String mode, {String? openReport}) {
     FocusManager.instance.primaryFocus?.unfocus();
+    if (mode == state && openReport == null) return;
+    // A specific report is only kept when this navigation asks for one.
+    // Opening Reports from the drawer passes no key, so the catalog shows.
+    pendingReportKey = mode == "reports" ? openReport : null;
     if (mode == state) return;
     // A plain stack: every screen visited is pushed, in order, and back
     // pops one at a time — Page 1 → Page 2 → Page 1 unwinds to Page 2, then
@@ -40,6 +49,10 @@ class TrainerModeNotifier extends Notifier<String> {
     _push();
     state = mode;
   }
+
+  /// Opens one report inside the owner Reports hub. [reportKey] matches a
+  /// catalog key, for example the Real-Time Charges ledger.
+  void openReport(String reportKey) => go("reports", openReport: reportKey);
 
   /// Opens a client's profile — from the roster, Dashboard, Schedule or
   /// anywhere else — as one step back can undo: back returns to the
@@ -59,12 +72,14 @@ class TrainerModeNotifier extends Notifier<String> {
     if (entry.clientId != ref.read(selectedClientIdProvider)) {
       ref.read(selectedClientIdProvider.notifier).select(entry.clientId);
     }
+    pendingReportKey = null;
     state = entry.mode;
   }
 
   /// A fresh staff session starts on Dashboard with no trail behind it.
   void reset() {
     _history.clear();
+    pendingReportKey = null;
     state = "dashboard";
   }
 
@@ -73,6 +88,7 @@ class TrainerModeNotifier extends Notifier<String> {
   void openFresh(String mode) {
     FocusManager.instance.primaryFocus?.unfocus();
     _history.clear();
+    pendingReportKey = null;
     state = mode;
   }
 }

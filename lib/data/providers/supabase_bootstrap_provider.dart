@@ -9,6 +9,7 @@ import "../../core/notifications/push_service.dart";
 import "../../core/session/login_prompts.dart";
 import "../../core/startup/launch_timing.dart";
 import "../../core/supabase/supabase_service.dart";
+import "../../core/utils/charges_due.dart";
 import "../../core/utils/date_utils.dart";
 import "../cache/bootstrap_cache.dart";
 import "../models/client_info.dart";
@@ -941,7 +942,9 @@ void _loadExtras(_Hold hold, int generation, String? me) {
   }));
   unawaited(_timed("charges", SupabaseService.loadCharges(), <Charge>[]).then((charges) {
     if (generation != _loadGeneration) return;
-    hold.charges.setAll(charges);
+    // loadCharges selects stripe_payment_intent_id, so the owner banner
+    // can count unpaid rows as soon as this background load lands.
+    hold.charges.setAll(charges, paymentIntentKnown: true);
     _sectionInflight[GymSection.charges] = Future<void>.value();
   }));
   if (me == null) return;
@@ -1087,7 +1090,14 @@ void _applyExtras(_Hold hold, Map<String, dynamic> extras) {
     _sectionInflight[GymSection.badges] = Future<void>.value();
   }
   if (extras.containsKey("charges")) {
-    hold.charges.setAll(SupabaseService.chargesFromRows(SupabaseService.asRowList(extras["charges"])));
+    final rows = SupabaseService.asRowList(extras["charges"]);
+    // The bootstrap RPC omits stripe_payment_intent_id. An empty list has
+    // nothing to mis-count; a list whose rows include the key (the direct
+    // charges query, or a later snapshot of it) is safe to count.
+    hold.charges.setAll(
+      SupabaseService.chargesFromRows(rows),
+      paymentIntentKnown: chargeRowsKnowPaymentIntent(rows),
+    );
     _sectionInflight[GymSection.charges] = Future<void>.value();
   }
   final nudges = [
@@ -1216,7 +1226,7 @@ void _clearSamples(_Hold hold) {
   hold.points.setAll(const <PointsLedgerEntry>[]);
   hold.badges.setAll(const <EarnedBadge>[]);
   hold.challenges.setAll(const <Challenge>[]);
-  hold.charges.setAll(const <Charge>[]);
+  hold.charges.setAll(const <Charge>[], paymentIntentKnown: false);
 }
 
 void _startDeferred(_Hold hold, int generation, String? ownClientId) {
@@ -1233,7 +1243,9 @@ void _startDeferred(_Hold hold, int generation, String? ownClientId) {
   later(SupabaseService.loadMeritBadgesAll(), "badges", hold.badges.setAll);
   later(SupabaseService.loadChallenges(), "challenges", hold.challenges.setAll);
   later(SupabaseService.loadChallengeTemplates(), "challenge_templates", hold.templates.setAll);
-  later(SupabaseService.loadCharges(), "charges", hold.charges.setAll);
+  later(SupabaseService.loadCharges(), "charges", (rows) {
+    hold.charges.setAll(rows, paymentIntentKnown: true);
+  });
   later(SupabaseService.loadBlockedTime(), "blocked time", hold.blocked.setAll);
   later(SupabaseService.loadProducts(), "products", hold.products.setAll);
   later(SupabaseService.loadCoupons(), "coupons", hold.coupons.setAll);
@@ -1340,7 +1352,7 @@ Future<void> _loadSection(_Hold hold, int generation, GymSection section) async 
         if (generation == _loadGeneration) hold.templates.setAll(rows);
       case GymSection.charges:
         final rows = await SupabaseService.loadCharges();
-        if (generation == _loadGeneration) hold.charges.setAll(rows);
+        if (generation == _loadGeneration) hold.charges.setAll(rows, paymentIntentKnown: true);
       case GymSection.blocked:
         final rows = await SupabaseService.loadBlockedTime();
         if (generation == _loadGeneration) hold.blocked.setAll(rows);
