@@ -47,7 +47,11 @@ class _CoachmarkOverlayState extends State<CoachmarkOverlay> {
   @override
   void initState() {
     super.initState();
+    // The callback is for the next frame. Ask for that frame here. Without
+    // it, a screen that is not already animating never runs the walkthrough,
+    // and the first tap lands on nothing.
     WidgetsBinding.instance.addPostFrameCallback((_) => _settle());
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   @override

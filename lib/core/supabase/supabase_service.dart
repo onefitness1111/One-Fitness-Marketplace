@@ -507,11 +507,14 @@ class SupabaseService {
   }
 
   /// Runs after the auth session is cleared. The bootstrap uses it to drop
-  /// the first-tap prompt without deleting the on-device snapshot.
+  /// the first-tap prompt. The on-device dashboard snapshot is removed here
+  /// so the next person on this phone cannot open it.
   static void Function()? afterSignOut;
 
   static Future<void> signOut() async {
+    final id = currentUser?.id;
     await client.auth.signOut();
+    await BootstrapCache.deleteFor(id);
     afterSignOut?.call();
   }
 
@@ -684,11 +687,11 @@ class SupabaseService {
 
   /// Coach names from a directory that already has contact fields.
   /// [includePay] is false at sign-in; pay loads when a pay screen opens.
-  static Future<List<Map<String, dynamic>>> fetchTrainerRows(List<String> ids) async {
+  static Future<List<Map<String, dynamic>>> fetchTrainerRows(List<String> ids, {String? columns}) async {
     if (ids.isEmpty) return [];
     final trainers = await client
         .from("trainers")
-        .select(_trainerColumns)
+        .select(columns ?? _trainerColumns)
         .inFilter("profile_id", ids);
     return [for (final t in trainers as List) Map<String, dynamic>.from(t as Map)];
   }
@@ -739,6 +742,31 @@ class SupabaseService {
       for (final row in raw)
         if (row is Map) Map<String, dynamic>.from(row),
     ];
+  }
+
+  static List<Map<String, dynamic>> asRowList(dynamic raw) => _rowList(raw);
+
+  /// One round trip for the home screen. Null when the function is not
+  /// installed yet — the caller falls back to the separate reads.
+  static Future<Map<String, dynamic>?> fetchDashboardBootstrap({
+    required String from,
+    required String to,
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      final raw = await client.rpc("dashboard_bootstrap", params: {"p_from": from, "p_to": to});
+      LaunchQueryLog.note("dashboard_bootstrap ${sw.elapsedMilliseconds}ms");
+      if (raw is Map) return Map<String, dynamic>.from(raw);
+      if (raw is String && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) return decoded.cast<String, dynamic>();
+      }
+      LaunchQueryLog.note("dashboard_bootstrap returned nothing usable");
+      return null;
+    } catch (e) {
+      LaunchQueryLog.note("dashboard_bootstrap unavailable ${sw.elapsedMilliseconds}ms: $e");
+      return null;
+    }
   }
 
   /// Builds the on-device snapshot from the raw rows just fetched. The
@@ -804,6 +832,7 @@ class SupabaseService {
         settings: settingsFromJson(json["settings"] is Map ? (json["settings"] as Map).cast<String, dynamic>() : null),
         payReady: payRows.isNotEmpty,
         isClient: isClient,
+        extras: json["extras"] is Map ? (json["extras"] as Map).cast<String, dynamic>() : const {},
       );
     } catch (e) {
       // ignore: avoid_print
@@ -1054,6 +1083,9 @@ class SupabaseService {
     final rows = await client.from("merit_badges").select(badgeSelectColumns);
     return _safeMap(rows, _earnedBadgeFromRow);
   }
+
+  static List<EarnedBadge> badgesFromRows(List<Map<String, dynamic>> rows) =>
+      _safeMap(rows, _earnedBadgeFromRow);
 
   /// Re-fetches just one client's rows after a points/badge mutation — used
   /// instead of trusting a locally-reconstructed row, since the server
@@ -1743,6 +1775,9 @@ class SupabaseService {
     final rows = await client.from("charges").select(chargeSelectColumns);
     return _safeMap(rows, _chargeFromRow);
   }
+
+  static List<Charge> chargesFromRows(List<Map<String, dynamic>> rows) =>
+      _safeMap(rows, _chargeFromRow);
 
   /// Owner/coach logging a manual charge against a client (Add Charge) —
   /// mirrors insertCharge in supabaseData.js. `amount` charges are dollars

@@ -6,6 +6,7 @@ import "../../../core/payments/payment_sheet_service.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 
 /// True when booking must stop. The sheet is the notice, with Pay now.
@@ -88,37 +89,15 @@ class _BalanceDueSheetState extends ConsumerState<_BalanceDueSheet> {
 }
 
 /// The same notice on the client's home screen, with the same Pay now button.
-class BalanceDueBanner extends ConsumerStatefulWidget {
+class BalanceDueBanner extends ConsumerWidget {
   const BalanceDueBanner({super.key, required this.clientId});
 
   final String clientId;
 
   @override
-  ConsumerState<BalanceDueBanner> createState() => _BalanceDueBannerState();
-}
-
-class _BalanceDueBannerState extends ConsumerState<BalanceDueBanner> {
-  int? _cents;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final cents = await SupabaseService.loadBalanceCents(widget.clientId);
-      if (mounted) setState(() => _cents = cents < 0 ? cents : null);
-    } catch (_) {
-      if (mounted) setState(() => _cents = null);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cents = _cents;
-    if (cents == null) return const SizedBox.shrink();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cents = ref.watch(dashboardExtrasProvider).balanceCents;
+    if (cents == null || cents >= 0) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
@@ -130,7 +109,15 @@ class _BalanceDueBannerState extends ConsumerState<BalanceDueBanner> {
             BtnGold(
               onPressed: () async {
                 await showOutstandingBalanceSheet(context, balanceCents: cents);
-                await _load();
+                try {
+                  final fresh = await SupabaseService.loadBalanceCents(clientId);
+                  ref.read(dashboardExtrasProvider.notifier).replace(
+                        ref.read(dashboardExtrasProvider).copyWith(
+                              balanceCents: fresh < 0 ? fresh : null,
+                              clearBalance: fresh >= 0,
+                            ),
+                      );
+                } catch (_) {}
               },
               child: const Text("Pay now"),
             ),

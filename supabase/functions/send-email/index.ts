@@ -3,15 +3,17 @@
 // Proposed replacement. Not deployed until you deploy this function.
 // The previous version let any signed-in person email any address.
 //
-// Now: the owner or a coach only. The recipient must be a member (pass
-// profileId; an address is accepted only when it belongs to a member).
-// A client cannot call this. There is a generous rate limit so a script
-// cannot fire thousands of messages, without blocking a normal gym blast.
+// The owner or a coach can email a member. A client can email only a coach
+// or the owner; the address is looked up here and is not returned.
+// There is a generous rate limit so a script cannot fire thousands of messages.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { sendEmailOrThrow } from "../_shared/sendEmail.ts";
 import {
   CORS_HEADERS,
+  adminClient,
   assertStaffMayMessage,
+  callerRole,
+  callerUser,
   clip,
   enforceRateLimit,
   json,
@@ -27,10 +29,27 @@ serve(async (req) => {
     const body = await req.json();
     const subject = clip(body.subject, 200, "Subject");
     const text = clip(body.text, 8000, "Message");
-    const { admin, userId, role } = await requireStaff(req);
-
     const profileId = String(body.profileId ?? "").trim();
     const to = String(body.to ?? "").trim();
+
+    // A client may email their coach or the gym. The address is looked up
+    // here and is never returned. Staff keep the broader sender.
+    const user = await callerUser(req);
+    const admin = adminClient();
+    const caller = await callerRole(admin, user.id);
+    if (caller === "client") {
+      const member = await memberById(admin, profileId);
+      if (!member || (member.role !== "coach" && member.role !== "owner")) {
+        throw new Error("Clients can only email their coach or the gym.");
+      }
+      if (!member.email) throw new Error("That member has no email address on file.");
+      await enforceRateLimit(admin, user.id, "email");
+      await sendEmailOrThrow(member.email, subject, text);
+      console.log(`send-email: ${user.id} (client) -> ${member.id}`);
+      return json({ ok: true });
+    }
+
+    const { userId, role } = await requireStaff(req);
     const member = profileId
       ? await memberById(admin, profileId)
       : await memberByEmail(admin, to);

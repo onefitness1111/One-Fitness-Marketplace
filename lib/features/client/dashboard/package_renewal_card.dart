@@ -9,6 +9,7 @@ import "../../../core/widgets/app_buttons.dart";
 import "../../../core/widgets/app_card.dart";
 import "../../../core/widgets/billing_address_form.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 
 class _Offer {
@@ -53,44 +54,31 @@ class PackageRenewalCard extends ConsumerStatefulWidget {
 }
 
 class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
-  List<_Offer> _offers = const [];
-  bool _loaded = false;
   String? _busyId;
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final rows = await SupabaseService.syncPackageRenewals();
-      final next = <_Offer>[];
-      for (final row in rows) {
-        final name = row["offer"]?.toString();
-        final offer = name == "discount"
-            ? RenewalOffer.discount
-            : name == "full"
-                ? RenewalOffer.fullPrice
-                : RenewalOffer.none;
-        if (offer == RenewalOffer.none) continue;
-        next.add(_Offer(
-          planId: row["planId"]?.toString() ?? "",
-          planName: row["planName"]?.toString() ?? "package",
-          enrollmentStart: row["enrollmentStart"]?.toString() ?? "",
-          offer: offer,
-          remaining: (row["remaining"] as num?)?.toInt() ?? 0,
-          priceCents: (row["priceCents"] as num?)?.toInt() ?? 0,
-          chargeCents: (row["chargeCents"] as num?)?.toInt() ?? 0,
-          discountPercent: _discountPercent(row),
-        ));
-      }
-      if (mounted) setState(() { _offers = next; _loaded = true; _error = null; });
-    } catch (_) {
-      if (mounted) setState(() => _loaded = true);
+  List<_Offer> _offersFrom(List<Map<String, dynamic>> rows) {
+    final next = <_Offer>[];
+    for (final row in rows) {
+      final name = row["offer"]?.toString();
+      final offer = name == "discount"
+          ? RenewalOffer.discount
+          : name == "full"
+              ? RenewalOffer.fullPrice
+              : RenewalOffer.none;
+      if (offer == RenewalOffer.none) continue;
+      next.add(_Offer(
+        planId: row["planId"]?.toString() ?? "",
+        planName: row["planName"]?.toString() ?? "package",
+        enrollmentStart: row["enrollmentStart"]?.toString() ?? "",
+        offer: offer,
+        remaining: (row["remaining"] as num?)?.toInt() ?? 0,
+        priceCents: (row["priceCents"] as num?)?.toInt() ?? 0,
+        chargeCents: (row["chargeCents"] as num?)?.toInt() ?? 0,
+        discountPercent: _discountPercent(row),
+      ));
     }
+    return next;
   }
 
   Future<void> _dismiss(_Offer offer) async {
@@ -101,9 +89,10 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
         enrollmentStart: offer.enrollmentStart,
         kind: offer.kind,
       );
-      if (mounted) {
-        setState(() => _offers = _offers.where((o) => o.planId != offer.planId).toList());
-      }
+      final extras = ref.read(dashboardExtrasProvider);
+      ref.read(dashboardExtrasProvider.notifier).replace(extras.copyWith(
+            renewals: extras.renewals.where((row) => row["planId"]?.toString() != offer.planId).toList(),
+          ));
     } catch (_) {
       if (mounted) {
         setState(() => _error = offer.offer == RenewalOffer.discount
@@ -172,10 +161,11 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
       }
     }
     if (!mounted) return;
-    setState(() {
-      _busyId = null;
-      _offers = _offers.where((o) => o.planId != offer.planId).toList();
-    });
+    setState(() => _busyId = null);
+    final extras = ref.read(dashboardExtrasProvider);
+    ref.read(dashboardExtrasProvider.notifier).replace(extras.copyWith(
+          renewals: extras.renewals.where((row) => row["planId"]?.toString() != offer.planId).toList(),
+        ));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Renewal confirmed. ${renewalMoney(offer.chargeCents)} was charged to the card on file, plus any card fee shown on the payment screen.")),
     );
@@ -183,10 +173,11 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded || _offers.isEmpty) return const SizedBox.shrink();
+    final offers = _offersFrom(ref.watch(dashboardExtrasProvider).renewals);
+    if (offers.isEmpty) return const SizedBox.shrink();
     return Column(
       children: [
-        for (final offer in _offers)
+        for (final offer in offers)
           AppCard(
             borderColor: AppColors.goldDim,
             child: Column(
