@@ -50,14 +50,36 @@ CapacityInfo capacityInfo(List<Booking> bookings, String trainerId, String date,
   return CapacityInfo(count: group.length, cap: capFor(sessionType, semiPrivateCap: semiPrivateCap));
 }
 
-/// Mirrors `findTrainerConflict` — a trainer can only run one session (one
-/// type/discipline) per time slot; adding a different type to an occupied
-/// slot is a conflict, adding the same type just joins the existing group.
+/// Minutes. Matches `session_len` in the live `enforce_booking_limits`
+/// trigger: two of this coach's sessions overlap when the starts are
+/// strictly under an hour apart. An hour apart does not. The length staff
+/// typed on one booking does not widen the window — the trigger compares
+/// start times only.
+const kTrainerOverlapMinutes = 60;
+
+/// A coach can run one shared session at a time.
+///
+/// A row conflicts when it is the same coach and date, still holds a seat,
+/// and starts within [kTrainerOverlapMinutes] of [slot], unless it IS the
+/// shared session being joined (identical start, type, and discipline).
+/// Joining that session is a capacity question, not a conflict. A 12:00
+/// booking against an existing 12:45 one is a conflict; the old check only
+/// looked at the exact minute and let that through.
+///
+/// The closest overlapping booking is the one returned, so the prompt can
+/// name 12:45 rather than a session further away.
 Booking? findTrainerConflict(List<Booking> bookings, String trainerId, String date, int slot, String sessionType, String discipline) {
-  final group = sessionGroup(bookings, trainerId, date, slot).where(bookingHoldsSeat).toList();
-  if (group.isEmpty) return null;
-  final mismatch = group.where((b) => b.sessionType != sessionType || b.discipline != discipline);
-  return mismatch.isEmpty ? null : mismatch.first;
+  Booking? best;
+  var bestDiff = kTrainerOverlapMinutes;
+  for (final b in bookings) {
+    if (!bookingHoldsSeat(b) || b.trainerId != trainerId || b.date != date) continue;
+    final diff = (b.slot - slot).abs();
+    if (diff >= kTrainerOverlapMinutes || diff >= bestDiff) continue;
+    if (b.slot == slot && b.sessionType == sessionType && b.discipline == discipline) continue;
+    best = b;
+    bestDiff = diff;
+  }
+  return best;
 }
 
 /// Mirrors `trainerOfferings` — every slot start (minutes) this trainer

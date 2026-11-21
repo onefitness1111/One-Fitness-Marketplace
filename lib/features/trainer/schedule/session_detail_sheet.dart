@@ -6,7 +6,8 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/booking_utils.dart";
+import "../../../core/utils/booking_limits.dart";
+import "../../../core/utils/booking_utils.dart" hide findTrainerConflict;
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -16,9 +17,11 @@ import "../../../core/utils/onboarding_utils.dart";
 import "../../../core/utils/scheduling_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
+import "../../../data/models/client_info.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "client_search_picker.dart";
+import "override_prompt.dart";
 
 /// Mirrors SessionDetail.jsx — the roster of every client in one
 /// trainer+date+slot group, with add/remove-client and cancel actions.
@@ -61,6 +64,285 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save — check your connection and try again.")));
   }
 
+  String _rosterName(String clientId) {
+    final matches = ref
+        .read(trainerRosterProvider)
+        .where((c) => c.id == clientId);
+    return matches.isEmpty ? "another client" : matches.first.name;
+  }
+
+  Future<void> _addClient(
+    ClientInfo client, {
+    required Booking session,
+    required CapacityInfo cap,
+    required String trainerName,
+    required bool isOwner,
+    required List<Booking> allBookings,
+  }) async {
+    if (!await confirmStaffBalanceAdd(
+          context,
+          clientId: client.id,
+          isOwner: isOwner,
+        ) ||
+        !mounted)
+      return;
+
+    final conflict = findTrainerConflict(
+      allBookings,
+      widget.trainerId,
+      widget.date,
+      widget.slot,
+      session.sessionType,
+      session.discipline,
+    );
+    String? overrideReason;
+    if (conflict != null) {
+      if (!isOwner) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text(coachOverlapRefusal)));
+        return;
+      }
+      final message = ownerOverlapOverrideMessage(
+        coachName: trainerName,
+        conflictSlot: conflict.slot,
+        clientName: _rosterName(conflict.clientId),
+      );
+      final ok = await confirmOwnerOverride(
+        context,
+        title: "Scheduling conflict",
+        message: message,
+      );
+      if (!ok || !mounted) return;
+      overrideReason = overrideReasonFor(
+        BookingLimitKind.overlap,
+        detail: overrideDetail(message),
+      );
+    }
+
+    // Adding past the class limit is allowed — staff know the room — but
+    // never silently. The count is what it will be once this client is in.
+    // An overlap override already stamps the insert, and that stamp is what
+    // the trigger accepts for a full class too.
+    if (cap.atCap && overrideReason == null) {
+      if (!isOwner) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "This ${sessionTypeLabel(session.sessionType)} session is at its limit of ${cap.cap} — only the owner can add past it.",
+            ),
+          ),
+        );
+        return;
+      }
+      final message = ownerCapacityOverrideMessage(
+        clientName: client.name,
+        count: cap.count,
+        cap: cap.cap,
+      );
+      final go = await confirmOwnerOverride(
+        context,
+        title: "Session at capacity",
+        message: message,
+      );
+      if (!go || !mounted) return;
+      overrideReason = overrideReasonFor(
+        BookingLimitKind.capacity,
+        detail: overrideDetail(message),
+      );
+    }
+
+    setState(() => _adding = false);
+    final planId = planToChargeFor(
+      client,
+      session.sessionType,
+      allBookings,
+      ref.read(membershipPlansProvider),
+    );
+
+    Future<void> insert(String? reason) async {
+      var draft = Booking(
+        id: "",
+        clientId: client.id,
+        trainerId: widget.trainerId,
+        date: widget.date,
+        slot: widget.slot,
+        sessionType: session.sessionType,
+        discipline: session.discipline,
+        planId: planId,
+        durationMin: session.durationMin,
+      );
+      if (reason != null) draft = draft.withOwnerOverride(reason);
+      final saved = await SupabaseService.insertBooking(draft);
+      ref.read(allBookingsProvider.notifier).addBooking(saved);
+      notifyPush(
+        profileId: client.id,
+        title: "Session booked",
+        body:
+            "You're booked for ${niceDate(widget.date)} at ${fmtSlot(widget.slot)} with $trainerName.",
+        sms: true,
+      );
+      if (planId == null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "${client.name} has no active plan covering ${sessionTypeLabel(session.sessionType)} — booked, but no session was deducted.",
+            ),
+          ),
+        );
+      }
+    }
+
+    if (planId == null &&
+        !client.isStaff &&
+        overrideReason == null &&
+        !session.sessionType.startsWith("assessment")) {
+      final out = await bookClientWithoutPlan(
+        context: context,
+        clientName: client.name,
+        clientId: client.id,
+        sessionType: session.sessionType,
+        trainerId: widget.trainerId,
+        date: widget.date,
+        slot: widget.slot,
+        discipline: session.discipline,
+        priceCents: ref
+            .read(platformSettingsProvider)
+            .singleSessionPriceFor(session.sessionType),
+        isOwner: isOwner,
+      );
+      if (out == null || !mounted) return;
+      if (out.status == "requested") {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(out.message ?? "Sent to the owner.")),
+        );
+        return;
+      }
+      if (!out.booked) {
+        final fresh = findTrainerConflict(
+          ref.read(allBookingsProvider),
+          widget.trainerId,
+          widget.date,
+          widget.slot,
+          session.sessionType,
+          session.discipline,
+        );
+        final retry = await offerBookingOverride(
+          context,
+          error: out.message ?? "",
+          isOwner: isOwner,
+          alreadyOverriding: false,
+          unspecifiedFull:
+              out.full && classifyBookingLimitError(out.message ?? "") == null,
+          coachName: trainerName,
+          addingClientName: client.name,
+          conflictSlot: fresh?.slot,
+          conflictingClientName: fresh == null
+              ? null
+              : _rosterName(fresh.clientId),
+          capacityCount: cap.atCap ? cap.count : null,
+          capacityCap: cap.atCap ? cap.cap : null,
+          refunded: out.refunded,
+        );
+        if (!mounted) return;
+        if (!retry.go) {
+          if (retry.declined) {
+            if (out.full && out.refunded) {
+              await showFilledRefundDialog(
+                context,
+                singleSessionFailureMessage(out),
+              );
+            }
+            return;
+          }
+          if (out.full && out.refunded) {
+            await showFilledRefundDialog(
+              context,
+              singleSessionFailureMessage(out),
+            );
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(singleSessionFailureMessage(out))),
+            );
+          }
+          return;
+        }
+        overrideReason = retry.reason;
+      } else {
+        final made = await SupabaseService.loadBookingById(out.bookingId!);
+        if (made != null)
+          ref.read(allBookingsProvider.notifier).addBooking(made);
+        notifyPush(
+          profileId: client.id,
+          title: "Session booked",
+          body:
+              "You're booked for ${niceDate(widget.date)} at ${fmtSlot(widget.slot)} with $trainerName.",
+          sms: true,
+        );
+        return;
+      }
+    }
+
+    try {
+      await insert(overrideReason);
+    } catch (e) {
+      final text = e.toString();
+      if (text.contains("This client has an outstanding balance") && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(staffBalanceWarningFromError(text))),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final fresh = findTrainerConflict(
+        ref.read(allBookingsProvider),
+        widget.trainerId,
+        widget.date,
+        widget.slot,
+        session.sessionType,
+        session.discipline,
+      );
+      final retry = await offerBookingOverride(
+        context,
+        error: e,
+        isOwner: isOwner,
+        alreadyOverriding: overrideReason != null,
+        coachName: trainerName,
+        addingClientName: client.name,
+        conflictSlot: classifyBookingLimitError(e) == BookingLimitKind.overlap
+            ? fresh?.slot
+            : null,
+        conflictingClientName: fresh == null
+            ? null
+            : _rosterName(fresh.clientId),
+        capacityCount: capacityPairFromError(e)?.$1,
+        capacityCap: capacityPairFromError(e)?.$2,
+      );
+      if (!mounted || retry.declined) return;
+      if (!retry.go) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(staffBookingFailureMessage(e))));
+        return;
+      }
+      try {
+        await insert(retry.reason);
+      } catch (e2) {
+        if (!mounted) return;
+        final again = e2.toString();
+        if (again.contains("This client has an outstanding balance")) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(staffBalanceWarningFromError(again))),
+          );
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(staffBookingFailureMessage(e2))));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final allBookings = ref.watch(allBookingsProvider);
@@ -97,123 +379,14 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
             ClientSearchPicker(
               roster: roster,
               exclude: active.map((b) => b.clientId).toList(),
-              onSelect: (c) async {
-                if (!await confirmStaffBalanceAdd(context, clientId: c.id, isOwner: isOwner) || !mounted) return;
-                // Adding past the class limit is allowed — staff know the
-                // room — but never silently. The count is what it will be
-                // once this client is in.
-                var override = false;
-                if (cap.atCap) {
-                  if (!isOwner) {
-                    // The database only accepts an over-limit booking from
-                    // the owner, so asking a coach to confirm would just
-                    // lead to a failed save.
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text("This ${sessionTypeLabel(first.sessionType)} session is at its limit of ${cap.cap} — only the owner can add past it."),
-                    ));
-                    return;
-                  }
-                  final go = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      backgroundColor: AppColors.card,
-                      title: const Text("Over the class limit"),
-                      content: Text(
-                        "This ${sessionTypeLabel(first.sessionType)} session is limited to ${cap.cap}. "
-                        "Adding ${c.name} makes it ${cap.count + 1} of ${cap.cap} — you're adding more than the limit for this class.",
-                      ),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Add anyway")),
-                      ],
-                    ),
-                  );
-                  if (go != true || !mounted) return;
-                  override = true;
-                }
-                setState(() => _adding = false);
-                // Deduct from the client's own plan, exactly as if they had
-                // booked it themselves — otherwise a staff-added session is
-                // free, and their balance quietly drifts from reality.
-                final planId = planToChargeFor(c, first.sessionType, allBookings, ref.read(membershipPlansProvider));
-                // Nothing covers this session: charge a single session to the
-                // card on file, or book it free (a card is needed either way).
-                if (planId == null && !c.isStaff && !override && !first.sessionType.startsWith("assessment")) {
-                  final out = await bookClientWithoutPlan(
-                    context: context,
-                    clientName: c.name,
-                    clientId: c.id,
-                    sessionType: first.sessionType,
-                    trainerId: widget.trainerId,
-                    date: widget.date,
-                    slot: widget.slot,
-                    discipline: first.discipline,
-                    priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(first.sessionType),
-                    isOwner: isOwner,
-                  );
-                  if (out == null || !mounted) return;
-                  if (out.status == "requested") {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message ?? "Sent to the owner.")));
-                    return;
-                  }
-                  if (!out.booked) {
-                    if (out.full && out.refunded) {
-                      await showFilledRefundDialog(context, singleSessionFailureMessage(out));
-                    } else if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(singleSessionFailureMessage(out))));
-                    }
-                    return;
-                  }
-                  final made = await SupabaseService.loadBookingById(out.bookingId!);
-                  if (made != null) ref.read(allBookingsProvider.notifier).addBooking(made);
-                  notifyPush(
-                    profileId: c.id,
-                    title: "Session booked",
-                    body: "You're booked for ${niceDate(widget.date)} at ${fmtSlot(widget.slot)} with $trainerName.",
-                    sms: true,
-                  );
-                  return;
-                }
-                try {
-                  final saved = await SupabaseService.insertBooking(Booking(
-                        id: "",
-                        clientId: c.id,
-                        trainerId: widget.trainerId,
-                        date: widget.date,
-                        slot: widget.slot,
-                        sessionType: first.sessionType,
-                        discipline: first.discipline,
-                        planId: planId,
-                        durationMin: first.durationMin,
-                        // Stamped only after the owner confirmed above. The
-                        // booking trigger checks the caller really is the
-                        // owner, and without the stamp it refuses the insert
-                        // as over capacity.
-                        overriddenBy: override ? "owner" : null,
-                        overriddenAt: override ? DateTime.now().toUtc().toIso8601String() : null,
-                        overrideReason: override ? "capacity" : null,
-                      ));
-                  ref.read(allBookingsProvider.notifier).addBooking(saved);
-                  notifyPush(
-                    profileId: c.id,
-                    title: "Session booked",
-                    body: "You're booked for ${niceDate(widget.date)} at ${fmtSlot(widget.slot)} with $trainerName.",
-                    sms: true,
-                  );
-                  if (planId == null && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text("${c.name} has no active plan covering ${sessionTypeLabel(first.sessionType)} — booked, but no session was deducted."),
-                    ));
-                  }
-                } catch (e) {
-                  final text = e.toString();
-                  if (text.contains("This client has an outstanding balance") && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(staffBalanceWarningFromError(text))));
-                    return;
-                  }
-                  _showError();
-                }
-              },
+              onSelect: (c) => _addClient(
+                c,
+                session: first,
+                cap: cap,
+                trainerName: trainerName,
+                isOwner: isOwner,
+                allBookings: allBookings,
+              ),
             ),
             ],
           ),
