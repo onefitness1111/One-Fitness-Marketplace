@@ -42,6 +42,10 @@ class CachedFirstScreen {
 /// The key is the signed-in user id. It holds only rows that user could
 /// already read under RLS (names, bookings, records, plans). No session
 /// token, no refresh token, no card number.
+///
+/// Signing out leaves the snapshot in place so the next login for that
+/// person can paint immediately. [activate] drops it when a different
+/// person signs in on this device. [deleteFor] is for account deletion.
 class BootstrapCache {
   static const _userKey = "onefitness.bootstrap.user";
 

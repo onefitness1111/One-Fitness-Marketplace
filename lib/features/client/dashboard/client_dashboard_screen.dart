@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/notifications/push_prompt.dart";
+import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
@@ -121,7 +122,8 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final firstName = info.name.split(" ").first;
+    final rawName = info.name.trim();
+    final firstName = rawName.isEmpty ? "" : rawName.split(" ").first;
     final habits = getClientHabits(client);
     final todayLog = getHabitLog(client, isoToday());
     final done = habits.where((h) => todayLog.checked[h.id] == true).length;
@@ -164,7 +166,9 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           stag(Text(
-            "Hey $firstName, it's ${_hasSessionToday ? "lifting day!" : "a rest day"}",
+            firstName.isEmpty
+                ? "Hey, it's ${_hasSessionToday ? "lifting day!" : "a rest day"}"
+                : "Hey $firstName, it's ${_hasSessionToday ? "lifting day!" : "a rest day"}",
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           )),
           const SizedBox(height: 8),
@@ -180,7 +184,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             const SizedBox(height: 2),
           ],
           stag(TextButton(
-            onPressed: widget.onGoBadges,
+            onPressed: gateLoginTap(widget.onGoBadges),
             style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
             child: const Padding(
               padding: EdgeInsets.only(bottom: 14),
@@ -291,7 +295,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                   ],
                   const SizedBox(height: 10),
                   OutlinedButton(
-                    onPressed: widget.onGoBooking,
+                    onPressed: gateLoginTap(widget.onGoBooking),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.gold,
                       side: BorderSide(color: AppColors.line),
@@ -421,7 +425,7 @@ class _OnboardingSection extends StatelessWidget {
             _OnboardingStepCard(step: step, onTap: onGoBookAssessment),
           if (onSkip != null)
             TextButton(
-              onPressed: onSkip,
+              onPressed: gateLoginTap(onSkip),
               style: TextButton.styleFrom(foregroundColor: AppColors.mute, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
               child: const Padding(
                 padding: EdgeInsets.only(top: 4),
@@ -443,7 +447,7 @@ class _IntakeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return OutlinedButton(
-      onPressed: onTap,
+      onPressed: gateLoginTap(onTap),
       style: OutlinedButton.styleFrom(
         backgroundColor: AppColors.gold.withValues(alpha: 0.12),
         foregroundColor: AppColors.gold,

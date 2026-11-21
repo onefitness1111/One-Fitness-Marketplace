@@ -4,6 +4,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:app_settings/app_settings.dart";
+import "../session/login_prompts.dart";
 import "../theme/app_colors.dart";
 import "push_service.dart";
 
@@ -91,7 +92,7 @@ class TurnOnNotificationsBanner extends ConsumerWidget {
           side: BorderSide(color: AppColors.line),
         ),
         child: InkWell(
-          onTap: () => ref.read(pushNoticeProvider.notifier).enable(),
+          onTap: gateLoginTap(() => ref.read(pushNoticeProvider.notifier).enable()),
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
@@ -104,7 +105,7 @@ class TurnOnNotificationsBanner extends ConsumerWidget {
                   ),
                 ),
                 IconButton(
-                  onPressed: () => ref.read(pushNoticeProvider.notifier).snooze(),
+                  onPressed: gateLoginTap(() => ref.read(pushNoticeProvider.notifier).snooze()),
                   icon: Icon(Icons.close, size: 18, color: AppColors.mute),
                 ),
               ],
@@ -126,7 +127,7 @@ class PushOffHint extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: GestureDetector(
-        onTap: () => ref.read(pushNoticeProvider.notifier).enable(),
+        onTap: gateLoginTap(() => ref.read(pushNoticeProvider.notifier).enable()),
         child: Text(
           "Notifications are off. Tap to turn them on.",
           style: TextStyle(fontSize: 12, color: AppColors.mute),

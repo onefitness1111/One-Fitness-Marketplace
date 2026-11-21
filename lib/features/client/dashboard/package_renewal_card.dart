@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "../../../core/session/login_prompts.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../core/supabase/supabase_service.dart";
@@ -215,7 +216,7 @@ class _PackageRenewalCardState extends ConsumerState<PackageRenewalCard> {
                 Align(
                   alignment: Alignment.center,
                   child: TextButton(
-                    onPressed: _busyId == null ? () => _dismiss(offer) : null,
+                    onPressed: _busyId == null ? gateLoginTap(() => _dismiss(offer)) : null,
                     child: Text("Not now", style: TextStyle(color: AppColors.mute, fontSize: 13)),
                   ),
                 ),

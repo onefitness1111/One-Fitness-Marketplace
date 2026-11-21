@@ -71,7 +71,7 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
       // user (RLS returns more/different rows than the anonymous startup
       // bootstrap saw) and sets clientInfo/clientRecord/clientBookings/
       // clientSignedIn from the freshly-restored session in one pass.
-      await loadAndSeedCoreData(ref);
+      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
     } catch (e, st) {
       // ignore: avoid_print
       print("[client sign-in] failed: $e\n$st");

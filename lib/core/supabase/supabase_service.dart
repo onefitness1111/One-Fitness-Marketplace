@@ -4,6 +4,7 @@ import "package:http/http.dart" as http;
 import "package:supabase_flutter/supabase_flutter.dart";
 import "package:uuid/uuid.dart";
 import "../../data/cache/bootstrap_cache.dart";
+import "../../data/providers/dashboard_load.dart";
 import "streamed_upload.dart";
 import "../utils/coach_merit_badge_utils.dart";
 import "../utils/image_shrink.dart";
@@ -101,11 +102,27 @@ class SupabaseService {
     final _ = client.auth.currentSession;
   }
 
-  /// { id, role, name, email, phone, photo_url } or null if signed out /
-  /// the account's app-side row was removed.
-  static Future<Map<String, dynamic>?> getSessionProfile() async {
+  /// The signed-in account's role, without downloading the profile directory.
+  ///
+  /// `current_user_role()` reads one row. The directory is a separate,
+  /// heavier call and sign-in only needs the role to decide which shell
+  /// to open.
+  static Future<String?> currentRole() async {
     if (currentUser == null) return null;
-    return sessionProfileIn(await directoryWithContacts());
+    final role = await client.rpc("current_user_role");
+    if (role is String && role.isNotEmpty) return role;
+    return null;
+  }
+
+  /// { id, role } or null if signed out / the account's app-side row was
+  /// removed. Name, email, and phone arrive with the directory load, not
+  /// here — this used to fetch that directory, and sign-in fetched it again.
+  static Future<Map<String, dynamic>?> getSessionProfile() async {
+    final user = currentUser;
+    if (user == null) return null;
+    final role = await currentRole();
+    if (role == null) return null;
+    return {"id": user.id, "role": role};
   }
 
   static Future<void> signIn(String email, String password) async {
@@ -136,12 +153,14 @@ class SupabaseService {
     if (res.status != 200) {
       throw Exception("We couldn't delete your account just now. Please try again.");
     }
+    final id = currentUser?.id;
     try {
       await client.auth.signOut();
     } catch (_) {
       // The user is already gone server-side; a failed sign-out call must
       // not make a successful deletion look like a failure.
     }
+    await BootstrapCache.deleteFor(id);
   }
 
   /// Records that this user accepted the Terms of Use (Apple guideline 1.2)
@@ -487,10 +506,13 @@ class SupabaseService {
     return userId;
   }
 
+  /// Runs after the auth session is cleared. The bootstrap uses it to drop
+  /// the first-tap prompt without deleting the on-device snapshot.
+  static void Function()? afterSignOut;
+
   static Future<void> signOut() async {
-    final id = currentUser?.id;
     await client.auth.signOut();
-    await BootstrapCache.deleteFor(id);
+    afterSignOut?.call();
   }
 
   // ── Read ──────────────────────────────────────────────────────────
@@ -839,9 +861,19 @@ class SupabaseService {
         lastName: t.lastName,
       );
 
-  static Future<List<Map<String, dynamic>>> fetchBookingRows() async {
-    final rows = await client.from("bookings").select();
+  static Future<List<Map<String, dynamic>>> fetchBookingRows({String? from, String? to}) async {
+    var query = client.from("bookings").select(bookingSelectColumns);
+    if (from != null) query = query.gte("date", from);
+    if (to != null) query = query.lte("date", to);
+    final rows = await query;
     return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
+  }
+
+  /// Bookings the dashboard can paint: today, the previous two weeks, and
+  /// the next two weeks. [loadBookings] is the full list, for the schedule.
+  static Future<List<Booking>> loadDashboardBookings({DateTime? now}) async {
+    final window = dashboardBookingWindow(now ?? DateTime.now());
+    return bookingsFromRows(await fetchBookingRows(from: window.from, to: window.to));
   }
 
   static List<Booking> bookingsFromRows(List<Map<String, dynamic>> rows) =>
@@ -875,13 +907,15 @@ class SupabaseService {
   /// what the gateway accepts. A client with no row gets the same blank
   /// record [loadClientRecord] would have returned.
   /// Every client record this person may see, in one request, without
-  /// waiting for the roster. Only the fields the coach dashboard reads:
-  /// programs, nutrition, the live split, logged sessions, and notes.
-  static const dashboardRecordColumns =
-      "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,programDays:data->programDays,workoutLogs:data->workoutLogs,trainerNotes:data->trainerNotes";
+  /// waiting for the roster. The owner read includes workout logs. A coach
+  /// sign-in passes [coachDashboardRecordColumns] and leaves the logs for
+  /// the screen that opens a client.
+  static const dashboardRecordColumns = fullDashboardRecordColumns;
 
-  static Future<List<Map<String, dynamic>>> fetchDashboardRecordRows() async {
-    final rows = await client.from("client_records").select(dashboardRecordColumns);
+  static Future<List<Map<String, dynamic>>> fetchDashboardRecordRows({
+    String columns = fullDashboardRecordColumns,
+  }) async {
+    final rows = await client.from("client_records").select(columns);
     return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
   }
 
@@ -898,6 +932,7 @@ class SupabaseService {
           "programDays": pick("programDays"),
           "workoutLogs": pick("workoutLogs"),
           "trainerNotes": pick("trainerNotes"),
+          "programRefresh": pick("programRefresh"),
         });
       } catch (e) {
         // ignore: avoid_print
@@ -950,7 +985,7 @@ class SupabaseService {
   /// products/waiver_docs/programs_library/custom_meals — id + a `data`
   /// blob whose keys are already camelCase, unlike the normalized tables).
   static Future<List<Map<String, dynamic>>> fetchPlanRows() async {
-    final rows = await client.from("membership_plans").select();
+    final rows = await client.from("membership_plans").select(jsonBlobColumns);
     return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
   }
 
@@ -1011,12 +1046,12 @@ class SupabaseService {
   /// Roster-wide — RLS (points_ledger_select_self_or_staff) scopes what
   /// actually comes back to whatever the caller may see either way.
   static Future<List<PointsLedgerEntry>> loadPointsLedgerAll() async {
-    final rows = await client.from("points_ledger").select();
+    final rows = await client.from("points_ledger").select(pointsSelectColumns);
     return _safeMap(rows, _pointsLedgerFromRow);
   }
 
   static Future<List<EarnedBadge>> loadMeritBadgesAll() async {
-    final rows = await client.from("merit_badges").select();
+    final rows = await client.from("merit_badges").select(badgeSelectColumns);
     return _safeMap(rows, _earnedBadgeFromRow);
   }
 
@@ -1029,7 +1064,7 @@ class SupabaseService {
   ) async {
     final rows = await client
         .from("points_ledger")
-        .select()
+        .select(pointsSelectColumns)
         .eq("client_id", clientId);
     return _safeMap(rows, _pointsLedgerFromRow);
   }
@@ -1037,7 +1072,7 @@ class SupabaseService {
   static Future<List<EarnedBadge>> loadMeritBadgesFor(String clientId) async {
     final rows = await client
         .from("merit_badges")
-        .select()
+        .select(badgeSelectColumns)
         .eq("client_id", clientId);
     return _safeMap(rows, _earnedBadgeFromRow);
   }
@@ -1047,7 +1082,7 @@ class SupabaseService {
   /// (same as loadBookings), and RLS scopes what a trainer/owner can see
   /// regardless of any client-side date filter.
   static Future<List<BlockedTime>> loadBlockedTime() async {
-    final rows = await client.from("blocked_time").select();
+    final rows = await client.from("blocked_time").select(blockedTimeSelectColumns);
     return _safeMap(rows, _blockedTimeFromRow);
   }
 
@@ -1258,7 +1293,7 @@ class SupabaseService {
   }
 
   static Future<List<Product>> loadProducts() async {
-    final rows = await client.from("products").select();
+    final rows = await client.from("products").select(jsonBlobColumns);
     return _safeMap(
       rows,
       (r) => _productFromJson((r["data"] as Map).cast<String, dynamic>()),
@@ -1284,7 +1319,7 @@ class SupabaseService {
   );
 
   static Future<List<Map<String, dynamic>>> fetchWaiverRows() async {
-    final rows = await client.from("waiver_docs").select();
+    final rows = await client.from("waiver_docs").select(jsonBlobColumns);
     return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
   }
 
@@ -1313,7 +1348,7 @@ class SupabaseService {
   /// only `type: "workout"` entries are mapped here for now; a nutrition
   /// row is skipped rather than guessed.
   static Future<List<SavedProgram>> loadProgramsLibrary() async {
-    final rows = await client.from("programs_library").select();
+    final rows = await client.from("programs_library").select(jsonBlobColumns);
     final out = <SavedProgram>[];
     for (final row in rows) {
       try {
@@ -1478,7 +1513,7 @@ class SupabaseService {
   );
 
   static Future<List<MealDef>> loadCustomMeals() async {
-    final rows = await client.from("custom_meals").select();
+    final rows = await client.from("custom_meals").select(jsonBlobColumns);
     return _safeMap(
       rows,
       (r) => _mealDefFromJson((r["data"] as Map).cast<String, dynamic>()),
@@ -1518,7 +1553,7 @@ class SupabaseService {
   /// for those two fields until the coach picks one, same as any unrecognized
   /// value would.
   static Future<List<ExerciseDef>> loadExercises() async {
-    final rows = await client.from("exercises").select();
+    final rows = await client.from("exercises").select(jsonBlobColumns);
     return _safeMap(
       rows,
       (r) => _exerciseDefFromJson((r["data"] as Map).cast<String, dynamic>()),
@@ -1705,7 +1740,7 @@ class SupabaseService {
       );
 
   static Future<List<Charge>> loadCharges() async {
-    final rows = await client.from("charges").select();
+    final rows = await client.from("charges").select(chargeSelectColumns);
     return _safeMap(rows, _chargeFromRow);
   }
 
@@ -2847,7 +2882,7 @@ class SupabaseService {
   static Future<List<CommMessage>> loadMessagesFor(String clientId) async {
     final rows = await client
         .from("messages")
-        .select()
+        .select(messageSelectColumns)
         .eq("client_id", clientId)
         .order("created_at");
     final messages = (rows as List).cast<Map<String, dynamic>>().map(_messageFromRow).toList();
@@ -2857,7 +2892,7 @@ class SupabaseService {
   /// Every thread at once, keyed by client id — what the coach's chat list
   /// needs on load.
   static Future<Map<String, List<CommMessage>>> loadAllMessages() async {
-    final rows = await client.from("messages").select().order("created_at");
+    final rows = await client.from("messages").select(messageSelectColumns).order("created_at");
     final out = <String, List<CommMessage>>{};
     for (final r in (rows as List).cast<Map<String, dynamic>>()) {
       (out[r["client_id"] as String] ??= []).add(_messageFromRow(r));
@@ -5210,7 +5245,7 @@ class SupabaseService {
   );
 
   static Future<List<Coupon>> loadCoupons() async {
-    final rows = await client.from("coupons").select();
+    final rows = await client.from("coupons").select(jsonBlobColumns);
     return _safeMap(
       rows,
       (r) => _couponFromJson((r["data"] as Map).cast<String, dynamic>()),
@@ -5687,7 +5722,7 @@ class SupabaseService {
   /// existed the nutrition library lived only in memory and vanished on
   /// every restart.
   static Future<List<NutritionLibraryEntry>> loadNutritionLibrary() async {
-    final rows = await client.from("programs_library").select();
+    final rows = await client.from("programs_library").select(jsonBlobColumns);
     final out = <NutritionLibraryEntry>[];
     for (final row in rows) {
       try {

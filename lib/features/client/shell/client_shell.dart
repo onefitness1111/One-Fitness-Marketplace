@@ -1,9 +1,13 @@
+import "dart:async";
+
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/chat/unread_chat.dart";
 import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/notifications/push_service.dart";
+import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
@@ -18,6 +22,7 @@ import "../../../data/models/merit_badge_def.dart";
 import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart" show waiversProvider;
 import "../badges/badge_gallery_screen.dart";
 import "../beep/client_live_session_layer.dart";
@@ -315,6 +320,28 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     }
   }
 
+  Future<void> _runFirstTap(void Function(String) go) async {
+    await LoginPrompts.whenDashboardReady();
+    if (!mounted) return;
+    await runLoginPromptSequence(
+      requestNotifications: PushService.registerForCurrentUser,
+      waiverNeeded: () {
+        if (!ref.read(platformSettingsProvider).requireWaiverAtSignup) return false;
+        final person = ref.read(clientInfoProvider);
+        if (person.isStaff) return false;
+        return outstandingWaivers(
+          allDocs: ref.read(waiversProvider),
+          signatures: ref.read(clientRecordProvider).signatures,
+          clientPlanIds: person.heldPlanIds,
+        ).isNotEmpty;
+      },
+      showWaiver: () => _maybePromptWaiver("dashboard", go),
+    );
+    if (!mounted) return;
+    setState(() {});
+    _syncDashboardTour(ref.read(clientScreenProvider), ref.read(clientRecordProvider).tourSeenDashboard);
+  }
+
   void _finishDashboardTour() {
     _dashboardTourArmed = false;
     _dashboardTourEntry?.remove();
@@ -388,8 +415,17 @@ class _ClientShellState extends ConsumerState<ClientShell> {
       _scaffoldKey.currentState?.closeDrawer();
     }
 
+    if (LoginPrompts.armed && screen == "dashboard") {
+      LoginPrompts.attach(() => _runFirstTap(go));
+    }
+    unawaited(ensureClientSections(ref, screen));
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // After a fresh login the first tap asks for notifications, then the
+      // waiver. Until that tap, neither the waiver nor the tour covers the
+      // dashboard. A scroll does not count as that tap.
+      if (LoginPrompts.armed || LoginPrompts.holding) return;
       // The waiver question comes first; the tour waits until it's answered.
       _maybePromptWaiver(screen, go);
       _syncDashboardTour(screen, client.tourSeenDashboard);
@@ -484,10 +520,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                             Builder(
                               key: kDashboardTourKeys["dash-hamburger"],
                               builder: (context) => IconButton(
-                                onPressed: () {
+                                onPressed: gateLoginTap(() {
                                   FocusManager.instance.primaryFocus?.unfocus();
                                   Scaffold.of(context).openDrawer();
-                                },
+                                }),
                                 icon: Icon(
                                   LucideIcons.menu,
                                   size: 22,
@@ -504,7 +540,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                             if (showBack) ...[
                               const SizedBox(width: 8),
                               IconButton(
-                                onPressed: _handleBack,
+                                onPressed: gateLoginTap(_handleBack),
                                 tooltip: "Back",
                                 icon: Icon(
                                   LucideIcons.chevronLeft,
@@ -523,7 +559,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                           trailing: [
                             if (screen == "chat") ...[
                               IconButton(
-                                onPressed: () => showChatInfoSheet(context),
+                                onPressed: gateLoginTap(() => showChatInfoSheet(context)),
                                 icon: Icon(
                                   LucideIcons.info,
                                   size: 20,
@@ -874,7 +910,7 @@ class _ClientDrawerState extends ConsumerState<_ClientDrawer> {
                   // walks to Settings mid-workout to dim a screen.
                   const ThemeModeToggleButton(),
                   IconButton(
-                    onPressed: () => Scaffold.of(context).closeDrawer(),
+                    onPressed: gateLoginTap(() => Scaffold.of(context).closeDrawer()),
                     tooltip: "Close menu",
                     icon: Icon(
                       LucideIcons.x,

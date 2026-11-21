@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/session/login_prompts.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
@@ -89,13 +90,13 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 IconButton(
-                  onPressed: () => _shift(-1),
+                  onPressed: gateLoginTap(() => _shift(-1)),
                   icon: Icon(LucideIcons.chevronLeft, size: 18, color: AppColors.mute),
                   visualDensity: VisualDensity.compact,
                 ),
                 Text(monthName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 IconButton(
-                  onPressed: () => _shift(1),
+                  onPressed: gateLoginTap(() => _shift(1)),
                   icon: Icon(LucideIcons.chevronRight, size: 18, color: AppColors.mute),
                   visualDensity: VisualDensity.compact,
                 ),

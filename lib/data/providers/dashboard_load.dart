@@ -1,0 +1,151 @@
+import "../../core/utils/date_utils.dart";
+
+/// How far around today the first booking read reaches.
+///
+/// The dashboard needs today, recent missed sessions, and the next couple
+/// of weeks. Older bookings and ones further out load when a schedule,
+/// booking, or history screen opens.
+const dashboardBookingLookbackDays = 14;
+const dashboardBookingLookaheadDays = 14;
+
+({String from, String to}) dashboardBookingWindow(DateTime day) {
+  final start = DateTime(day.year, day.month, day.day);
+  return (
+    from: isoDate(start.subtract(const Duration(days: dashboardBookingLookbackDays))),
+    to: isoDate(start.add(const Duration(days: dashboardBookingLookaheadDays))),
+  );
+}
+
+/// Client and coach dashboards paint as soon as the role is known.
+/// The owner still waits for the full gym download.
+bool shellBeforeFullGymDownload(String? role) => role == "client" || role == "coach";
+
+/// Every client record the owner dashboard reads, including workout logs.
+const fullDashboardRecordColumns =
+    "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,programDays:data->programDays,workoutLogs:data->workoutLogs,trainerNotes:data->trainerNotes";
+
+/// Coach dashboard read. Workout logs and the live split are large and are
+/// not on the home list; they load when a client or a session is opened.
+const coachDashboardRecordColumns =
+    "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,trainerNotes:data->trainerNotes,programRefresh:data->programRefresh";
+
+/// Columns [SupabaseService] turns into a [Booking]. Nothing else on the row
+/// is shown, and a bare `select()` pulls columns the screen never reads.
+const bookingSelectColumns =
+    "id, client_id, trainer_id, date, slot_min, session_type, discipline, attendance_status, client_started_at, location, is_physical_assessment, overridden_by, overridden_at, override_reason, plan_id, duration_min, counts_toward_pay, cancelled_at";
+
+const messageSelectColumns =
+    "id, client_id, who, body, created_at, trainer_id, read_by_coach, channel, group_name";
+
+const pointsSelectColumns =
+    "id, client_id, amount, type, source, created_at, expires_at, granted_by_user_id, reason, voided_by_ledger_id";
+
+const badgeSelectColumns =
+    "id, client_id, badge_key, earned_at, earned_method, granted_by_user_id, note, revoked_at, revoked_by_user_id, celebrated_at";
+
+const chargeSelectColumns =
+    "id, client_id, client_name, type, date, at, amount, category, description, plan_id, plan_name, trainer_id, trainer_name, waived_at";
+
+const blockedTimeSelectColumns = "id, trainer_id, date, full_day, start_min, end_min, reason";
+
+/// Tables stored as one jsonb blob per row. The app only reads these two.
+const jsonBlobColumns = "id, data";
+
+/// A slice of gym data that is not required to paint the dashboard.
+enum GymSection {
+  bookingsRest,
+  points,
+  badges,
+  challenges,
+  challengeTemplates,
+  charges,
+  blocked,
+  products,
+  coupons,
+  programs,
+  nutritionLibrary,
+  meals,
+  exercises,
+  squads,
+  waitlist,
+  categories,
+  equipment,
+  forms,
+  coachBadges,
+  prEvents,
+  messages,
+  plans,
+  waivers,
+}
+
+/// What to fetch when a client opens [screen]. The dashboard itself is
+/// loaded by the sign-in path; this covers everything else.
+Set<GymSection> sectionsForClientScreen(String screen) => switch (screen) {
+      "dashboard" => {GymSection.badges},
+      "plans" || "nutrition" => {
+          GymSection.exercises,
+          GymSection.programs,
+          GymSection.meals,
+          GymSection.nutritionLibrary,
+        },
+      "booking" || "advancedBooking" || "day" => {
+          GymSection.bookingsRest,
+          GymSection.blocked,
+          GymSection.waitlist,
+          GymSection.plans,
+          GymSection.waivers,
+        },
+      "chat" => {GymSection.messages},
+      "memberships" => {
+          GymSection.plans,
+          GymSection.products,
+          GymSection.coupons,
+          GymSection.charges,
+        },
+      "shop" => {GymSection.products},
+      "rewards" => {GymSection.points},
+      "badges" => {GymSection.badges},
+      "challenges" => {GymSection.challenges, GymSection.challengeTemplates},
+      "squad" => {GymSection.squads},
+      "history" => {GymSection.bookingsRest},
+      "forms" => {GymSection.forms},
+      "signatures" => {GymSection.waivers},
+      _ => const {},
+    };
+
+/// What to fetch when a coach opens [screen]. The owner still loads these
+/// during sign-in, the way the app always has.
+Set<GymSection> sectionsForStaffScreen(String screen) => switch (screen) {
+      "clients" => {
+          GymSection.badges,
+          GymSection.points,
+          GymSection.challenges,
+          GymSection.forms,
+          GymSection.programs,
+          GymSection.exercises,
+        },
+      "schedule" || "selfbook" => {
+          GymSection.bookingsRest,
+          GymSection.blocked,
+          GymSection.waitlist,
+        },
+      "chat" || "teamchat" => {GymSection.messages},
+      "exercises" => {GymSection.exercises},
+      "equipment" => {GymSection.equipment},
+      "builderWorkout" => {GymSection.programs, GymSection.exercises},
+      "builderNutrition" => {GymSection.nutritionLibrary, GymSection.meals},
+      "challenges" => {GymSection.challenges, GymSection.challengeTemplates},
+      "products" => {GymSection.products, GymSection.categories},
+      "memberships" => {
+          GymSection.plans,
+          GymSection.coupons,
+          GymSection.categories,
+          GymSection.forms,
+        },
+      "waivers" => {GymSection.waivers},
+      "reports" => {GymSection.charges, GymSection.coachBadges, GymSection.prEvents},
+      "waitlist" => {GymSection.waitlist},
+      "coachbadges" => {GymSection.coachBadges, GymSection.prEvents},
+      "mypay" => {GymSection.charges},
+      _ => const {},
+    };

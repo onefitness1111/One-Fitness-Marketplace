@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "../motion/motion.dart";
+import "../session/login_prompts.dart";
 import "../theme/app_colors.dart";
 
 /// A tap target that paints a gray or white wash on top of [child] while
@@ -64,6 +65,7 @@ class _TapHighlightState extends State<TapHighlight> {
         onTap: widget.onTap == null
             ? null
             : () {
+                if (LoginPrompts.claim()) return;
                 if (widget.haptic) HapticFeedback.lightImpact();
                 widget.onTap!();
               },
