@@ -24,6 +24,7 @@ import "../../../data/models/client_record.dart";
 import "../../../data/models/comm_message.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
+import "../sms/sms_opt_in_prompt.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 
 /// The three things the Chat tab can be showing.
@@ -434,6 +435,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   children: _buildBubbleList(thread, selectedCoach, info.id),
                 ),
         ),
+        const SmsOptInPromptSlot(padding: EdgeInsets.fromLTRB(16, 0, 16, 8)),
         _Composer(
           controller: _msgController,
           recipientName: selectedCoach.displayTitle,

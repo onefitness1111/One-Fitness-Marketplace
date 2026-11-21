@@ -685,10 +685,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                             go("forms");
                           },
                         ),
-                        "chat" => const SmsOptInPromptSlot(
-                          padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                          child: ChatScreen(),
-                        ),
+                        "chat" => const ChatScreen(),
                         "plans" => const PlansScreen(),
                         "booking" => BookingScreen(
                           onGoMemberships: () => go("memberships"),

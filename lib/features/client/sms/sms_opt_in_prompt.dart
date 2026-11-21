@@ -55,8 +55,8 @@ final smsOptInPromptProvider = NotifierProvider<SmsOptInPromptNotifier, SmsOptIn
   SmsOptInPromptNotifier.new,
 );
 
-/// The card on the dashboard, and the same card pinned above Chat.
-/// [child] keeps the screen underneath filling the space that remains.
+/// The card at the bottom of the dashboard, and the same card just above
+/// the chat composer. [child] keeps a screen filling the space above it.
 class SmsOptInPromptSlot extends ConsumerWidget {
   const SmsOptInPromptSlot({super.key, this.child, this.padding = EdgeInsets.zero});
 

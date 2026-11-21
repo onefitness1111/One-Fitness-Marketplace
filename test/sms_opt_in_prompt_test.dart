@@ -118,6 +118,25 @@ void main() {
       expect(main.contains("promptSmsOptIn"), isFalse);
       expect(bootstrap.contains("smsOptInPushOpensPrompt"), isTrue);
     });
+
+    test("the dashboard card comes after the rest of the page", () {
+      final src = File("lib/features/client/dashboard/client_dashboard_screen.dart").readAsStringSync();
+      final card = src.indexOf("const SmsOptInPromptSlot");
+      final workout = src.indexOf("Today's workout");
+      expect(card, greaterThan(workout));
+      expect(src.indexOf("SmsOptInPromptSlot", card + 1), greaterThan(card));
+    });
+
+    test("chat puts the prompt directly above the composer", () {
+      final chat = File("lib/features/client/chat/chat_screen.dart").readAsStringSync();
+      final prompt = chat.indexOf("const SmsOptInPromptSlot");
+      final composer = chat.indexOf("_Composer(");
+      expect(prompt, greaterThan(0));
+      expect(composer, greaterThan(prompt));
+      expect(chat.substring(prompt, composer).contains("Expanded"), isFalse);
+      final shell = File("lib/features/client/shell/client_shell.dart").readAsStringSync();
+      expect(shell.contains("SmsOptInPromptSlot"), isFalse);
+    });
   });
 
   testWidgets("the prompt shows the consent and both choices", (tester) async {
@@ -165,12 +184,12 @@ void main() {
     );
   });
 
-  testWidgets("sheet mockup", (tester) async {
+  testWidgets("chat prompt mockup", (tester) async {
     if (!File(_interRegular).existsSync()) return;
     await _shot(
       tester,
-      name: "sms-opt-in-sheet",
-      child: const _SheetMock(),
+      name: "sms-opt-in-chat",
+      child: const _ChatMock(),
     );
   });
 }
@@ -258,7 +277,22 @@ class _DashboardMock extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text("Saturday, Nov 21", style: TextStyle(fontSize: 13, color: AppColors.mute)),
+          const SizedBox(height: 18),
+          Text("Next session", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.mute)),
+          const SizedBox(height: 6),
+          Text("No upcoming sessions booked.", style: TextStyle(fontSize: 13, color: AppColors.mute)),
           const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Text("Today's workout", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.txt)),
+          ),
+          const Spacer(),
           SmsOptInPromptCard(onYes: () {}, onNotNow: () {}, fontFamily: "Inter"),
         ],
       ),
@@ -266,48 +300,50 @@ class _DashboardMock extends StatelessWidget {
   }
 }
 
-class _SheetMock extends StatelessWidget {
-  const _SheetMock();
+class _ChatMock extends StatelessWidget {
+  const _ChatMock();
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 54, 16, 12),
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line))),
+          child: Text("Coach Chris", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.txt)),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 56, 18, 24),
-          child: Opacity(
-            opacity: 0.35,
-            child: Text(
-              "Hey Alex, it's a rest day",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.txt),
+          padding: const EdgeInsets.fromLTRB(16, 16, 64, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Text("See you at 6.", style: TextStyle(fontSize: 14, color: AppColors.txt)),
             ),
           ),
         ),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-              border: Border(top: BorderSide(color: AppColors.line)),
-            ),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(color: AppColors.line, borderRadius: BorderRadius.circular(4)),
-                ),
-                SmsOptInPromptBody(onYes: () {}, onNotNow: () {}, fontFamily: "Inter"),
-              ],
-            ),
+        const Spacer(),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: SmsOptInPromptCard(onYes: _noop, onNotNow: _noop, fontFamily: "Inter"),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          decoration: BoxDecoration(
+            color: AppColors.bg,
+            border: Border(top: BorderSide(color: AppColors.line)),
           ),
+          child: Text("Message Coach Chris", style: TextStyle(fontSize: 14, color: AppColors.mute)),
         ),
       ],
     );
   }
 }
+
+void _noop() {}

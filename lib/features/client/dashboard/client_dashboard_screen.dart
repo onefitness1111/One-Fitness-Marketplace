@@ -171,7 +171,6 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
           )),
           const SizedBox(height: 8),
           const TurnOnNotificationsBanner(),
-          const SmsOptInPromptSlot(padding: EdgeInsets.only(bottom: 12)),
           const SizedBox(height: 2),
           stag(Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -335,6 +334,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               ],
             ),
           )),
+          const SmsOptInPromptSlot(padding: EdgeInsets.only(top: 4)),
         ],
       ),
     );
@@ -350,9 +350,12 @@ Widget _portalDashboard({required bool wide, required List<Widget> children}) {
   final headers = <Widget>[];
   final side = <Widget>[];
   final main = <Widget>[];
+  final footers = <Widget>[];
   for (final child in children) {
     if (child is _Span) {
       main.add(child);
+    } else if (child is SmsOptInPromptSlot) {
+      footers.add(child);
     } else if (child is AppCard ||
         child is _OnboardingSection ||
         child is SessionsRemainingBadge ||
@@ -375,6 +378,7 @@ Widget _portalDashboard({required bool wide, required List<Widget> children}) {
           Expanded(flex: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: main)),
         ],
       ),
+      ...footers,
     ],
   );
 }
