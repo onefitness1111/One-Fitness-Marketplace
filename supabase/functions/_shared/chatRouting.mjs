@@ -202,6 +202,66 @@ function nextId(prefix) {
   return `${prefix}-${_seq}`;
 }
 
+/** Coach and owner. Clients are not staff, and neither is any other role. */
+export function isStaffRole(role) {
+  return role === "coach" || role === "owner";
+}
+
+/**
+ * Clients need sms_consent_at or clients.sms_opt_in.
+ * A coach or the owner does not: a phone and not having opted out is enough.
+ */
+export function hasSmsConsent({ role, smsConsentAt, smsOptIn } = {}) {
+  if (isStaffRole(role)) return true;
+  return smsConsentAt != null || smsOptIn === true;
+}
+
+/**
+ * Whether a person can be texted.
+ * Staff: a phone number, and sms_opted_out is not true.
+ * Clients: that, plus consent. No coach assignment is consulted.
+ */
+export function canText(person) {
+  if (!person) return false;
+  const phone = String(person.phone || "").trim();
+  if (!phone || person.optedOut === true) return false;
+  if (isStaffRole(person.role)) return true;
+  return person.hasConsent === true;
+}
+
+/** A client writing to a coach or the owner. The channel picker does not apply. */
+export function clientToStaff(sender, recipient) {
+  return sender?.role === "client" && isStaffRole(recipient?.role);
+}
+
+/**
+ * SMS body for a row that is already saved.
+ * Client to staff uses the conversation relay ("Name: text"). A body that
+ * already starts with that name is left alone. An inbound text that landed
+ * in Business Chat keeps the existing notice.
+ */
+export function savedMessageText({ sender, recipient, body, originChannel, routedTo, groupName }) {
+  if (originChannel === "sms" && routedTo === "business") {
+    return businessNotice(sender?.displayName);
+  }
+  if (clientToStaff(sender, recipient)) {
+    return prefixBody(sender?.displayName, body);
+  }
+  const named = sanitizeBroadcastName(groupName);
+  if (named) return prefixBody(named, body);
+  return body;
+}
+
+/** Title and body for the staff push. Same words client-notify already uses. */
+export function staffPushCopy(clientName, messageBody) {
+  const name = String(clientName || "").trim() || "a client";
+  const text = String(messageBody || "").trim().slice(0, 500);
+  return {
+    title: `New message from ${name}`,
+    body: text || "New message",
+  };
+}
+
 /**
  * In-memory gym used by the tests and mirrored by the text handler.
  * People: {id, role, displayName, coachName, phone, optedOut, hasConsent}
@@ -245,7 +305,7 @@ export class ThreadBook {
   }
 
   canText(person) {
-    return Boolean(person && person.phone && !person.optedOut && person.hasConsent);
+    return canText(person);
   }
 
   convoBetween(a, b) {
@@ -311,9 +371,10 @@ export class ThreadBook {
   }
 
   /**
-   * App send. The message is in the shared thread. The other person is
-   * texted the prefixed message when they can receive texts.
-   * includeSms false is the in-app-only choice.
+   * App send. The message is in the shared thread.
+   * A client writing a coach or the owner is always texted the prefixed
+   * message. includeSms false is the in-app choice for everyone else,
+   * including whether that client is texted back.
    */
   sendApp({ fromId, toId, text, now, includeSms = true }) {
     const from = this.person(fromId);
@@ -328,7 +389,7 @@ export class ThreadBook {
       channel: "app",
       direction: "outbound",
     });
-    if (includeSms) this.textPerson(to, message.body);
+    if (includeSms || clientToStaff(from, to)) this.textPerson(to, message.body);
 
     if (from.role === "owner" && convo.routedTo === "business") {
       const tagged = matchCoachTag(text, this.coaches()) || matchCoachTag(message.body, this.coaches());
@@ -525,16 +586,12 @@ export class ThreadBook {
 export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName }) {
   const sms = [];
   const passAlong = [];
-  if (includeSms && recipient) {
-    const can = recipient.phone && !recipient.optedOut && recipient.hasConsent;
-    if (can) {
-      const notice = originChannel === "sms" && routedTo === "business";
-      const named = sanitizeBroadcastName(groupName);
-      sms.push({
-        toId: recipient.id,
-        body: notice ? businessNotice(sender.displayName) : (named ? prefixBody(named, body) : body),
-      });
-    }
+  // Client to staff ignores the channel picker. Staff to client still honors it.
+  if ((includeSms || clientToStaff(sender, recipient)) && recipient && canText(recipient)) {
+    sms.push({
+      toId: recipient.id,
+      body: savedMessageText({ sender, recipient, body, originChannel, routedTo, groupName }),
+    });
   }
   if (sender.role === "owner" && routedTo === "business" && recipient) {
     const tagged = matchCoachTag(body, coaches);

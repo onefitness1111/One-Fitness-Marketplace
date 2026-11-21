@@ -46,6 +46,7 @@ enum _ChatView { list, thread, picker, broadcast }
 
 const _prefRecipientKey = "coach_chat_client_id";
 const _prefChannelKey = "coach_chat_channel";
+const _prefChannelMarkerKey = "coach_chat_channel_default";
 
 /// Mirrors the client-side chat_screen.dart's redesign, reversed: the coach
 /// picks a client (searchable, from their scoped roster) instead of a
@@ -274,11 +275,18 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // Values written by an older build come through the legacy spellings,
     // so a coach's remembered choice survives the update.
-    final saved = decodeChannels(prefs.getString(_prefChannelKey));
+    final resolved = resolveSavedChatChannels(
+      prefs.getString(_prefChannelKey),
+      prefs.getString(_prefChannelMarkerKey),
+    );
+    if (resolved.writeBack) {
+      await prefs.setString(_prefChannelKey, encodeChannels(resolved.channels));
+      await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
+    }
     if (!mounted) return;
     setState(() {
       _recipientId = savedRecipient;
-      _channels = saved.isEmpty ? defaultChatChannels : saved;
+      _channels = resolved.channels;
       _prefsLoaded = true;
     });
     if (_isSetUp) {
@@ -297,6 +305,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefRecipientKey, recipientId);
     await prefs.setString(_prefChannelKey, encodeChannels(channels));
+    await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
     if (!mounted) return;
     setState(() {
       _recipientId = recipientId;
