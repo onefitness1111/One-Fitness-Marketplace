@@ -432,7 +432,9 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       "calendarsync" when isOwner => const SizedBox.shrink(),
                       "coachbadges" when !isOwner => const CoachMeritBadgesScreen(),
                       "mypay" => const MyPayScreen(),
-                      "reports" when isOwner => const ReportsHubScreen(),
+                      "reports" when isOwner => ReportsHubScreen(
+                        initialReportKey: ref.read(trainerModeProvider.notifier).pendingReportKey,
+                      ),
                       "memberships" when isOwner => const ManageMembershipsScreen(),
                       "products" when isOwner => const ManageProductsScreen(),
                       "waivers" when isOwner => const ManageWaiversScreen(),

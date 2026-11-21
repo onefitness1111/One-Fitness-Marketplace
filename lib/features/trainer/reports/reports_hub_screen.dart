@@ -38,6 +38,18 @@ class _Category {
   final List<_ReportDef> reports;
 }
 
+/// Real-Time Charges — the Financial ledger (refund and waive).
+const realtimeChargesReportKey = "realtime";
+
+_ReportDef? _reportByKey(String key) {
+  for (final cat in _catalog) {
+    for (final report in cat.reports) {
+      if (report.key == key) return report;
+    }
+  }
+  return null;
+}
+
 final _catalog = [
   _Category("Financial", [
     _ReportDef(
@@ -57,7 +69,7 @@ final _catalog = [
       (r) => ItemsSoldReport(range: r),
     ),
     _ReportDef(
-      "realtime",
+      realtimeChargesReportKey,
       "Real-Time Charges",
       "Recent charges with refund/waive",
       LucideIcons.creditCard,
@@ -172,7 +184,11 @@ const _favoritesPrefKey = "onefit:report-favorites";
 /// same column layout/order as web's `ReportTable`, handed to the OS share
 /// sheet instead of triggering a browser download.
 class ReportsHubScreen extends StatefulWidget {
-  const ReportsHubScreen({super.key});
+  const ReportsHubScreen({super.key, this.initialReportKey});
+
+  /// Catalog key to open immediately, such as [realtimeChargesReportKey].
+  /// Null shows the report list.
+  final String? initialReportKey;
 
   @override
   State<ReportsHubScreen> createState() => _ReportsHubScreenState();
@@ -188,6 +204,8 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
   void initState() {
     super.initState();
     _loadFavorites();
+    final key = widget.initialReportKey;
+    if (key != null) _open = _reportByKey(key);
   }
 
   Future<void> _loadFavorites() async {

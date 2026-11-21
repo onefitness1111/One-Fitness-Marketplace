@@ -18,6 +18,7 @@ import "../../../core/utils/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../data/providers/platform_settings_provider.dart";
+import "../../../core/utils/charges_due.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/session_start.dart";
@@ -40,6 +41,7 @@ import "update_announcement_card.dart";
 import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
 import "../../../core/widgets/session_timer.dart";
+import "../reports/reports_hub_screen.dart";
 import "../shell/trainer_shell_state.dart";
 
 /// Mirrors TrainerHome.jsx — the coach/owner dashboard: greeting header,
@@ -238,10 +240,11 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final bookings = ref.watch(allBookingsProvider);
     final liveRuns = ref.watch(liveSessionsProvider);
     final clientRecords = ref.watch(trainerClientRecordsProvider);
-    final todayCharges = ref
-        .watch(chargesProvider)
-        .where((c) => c.date == isoToday())
-        .toList();
+    // Hidden until a load that selected stripe_payment_intent_id has
+    // landed. The dashboard bootstrap list omits that column, so counting
+    // it would treat today's card purchases as still due.
+    final paymentIntentKnown = ref.watch(chargesPaymentIntentKnownProvider);
+    final todayUnpaid = chargesToCollectOn(ref.watch(chargesProvider), isoToday());
 
     final me = trainers.where((t) => t.id == trainerAuth);
     final myName = isOwner
@@ -1158,11 +1161,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               );
             }),
           // Collecting charges is the owner's job only — coaches don't see it.
-          if (isOwner && todayCharges.isNotEmpty)
+          // Hidden when nothing is still unpaid (paid purchases, card
+          // charges that stored a PaymentIntent, and waived fees).
+          if (isOwner && paymentIntentKnown && todayUnpaid.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: TapHighlight(
-                onTap: () => goMode("schedule"),
+                onTap: () => ref.read(trainerModeProvider.notifier).openReport(realtimeChargesReportKey),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
                   padding: const EdgeInsets.all(12),
@@ -1181,7 +1186,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          "${todayCharges.length} charge${todayCharges.length != 1 ? "s" : ""} to collect today",
+                          "${todayUnpaid.length} charge${todayUnpaid.length != 1 ? "s" : ""} to collect today",
                           style: TextStyle(
                             fontSize: 13,
                             color: AppColors.txt,

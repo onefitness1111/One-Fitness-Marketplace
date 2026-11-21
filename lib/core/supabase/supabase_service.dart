@@ -1838,7 +1838,15 @@ class SupabaseService {
     trainerId: row["trainer_id"] as String?,
     trainerName: row["trainer_name"] as String?,
     waivedAt: _dateOnly(row["waived_at"] as String?),
+    stripePaymentIntentId: _paymentIntentId(row["stripe_payment_intent_id"]),
   );
+
+  /// Blank and non-string values mean no card charge was recorded.
+  static String? _paymentIntentId(Object? value) {
+    if (value is! String) return null;
+    final id = value.trim();
+    return id.isEmpty ? null : id;
+  }
 
   /// Real `data` blob nests everything under 5 tabs (`access`, `clients`,
   /// `payments`, `workouts`, `scheduling` — note the coach-related tab is

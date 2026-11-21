@@ -86,7 +86,7 @@ const badgeSelectColumns =
     "id, client_id, badge_key, earned_at, earned_method, granted_by_user_id, note, revoked_at, revoked_by_user_id, celebrated_at";
 
 const chargeSelectColumns =
-    "id, client_id, client_name, type, date, at, amount, category, description, plan_id, plan_name, trainer_id, trainer_name, waived_at";
+    "id, client_id, client_name, type, date, at, amount, category, description, plan_id, plan_name, trainer_id, trainer_name, waived_at, stripe_payment_intent_id";
 
 const blockedTimeSelectColumns = "id, trainer_id, date, full_day, start_min, end_min, reason";
 
