@@ -77,7 +77,7 @@ class _RealTimeChargesReportState extends ConsumerState<RealTimeChargesReport> {
 
   Future<void> _refresh() async {
     final fresh = await SupabaseService.loadCharges();
-    ref.read(chargesProvider.notifier).setAll(fresh);
+    ref.read(chargesProvider.notifier).setAll(fresh, paymentIntentKnown: true);
   }
 
   void _showError(String msg) {

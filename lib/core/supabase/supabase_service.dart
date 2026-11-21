@@ -1838,7 +1838,15 @@ class SupabaseService {
     trainerId: row["trainer_id"] as String?,
     trainerName: row["trainer_name"] as String?,
     waivedAt: _dateOnly(row["waived_at"] as String?),
+    stripePaymentIntentId: _paymentIntentId(row["stripe_payment_intent_id"]),
   );
+
+  /// Blank and non-string values mean no card charge was recorded.
+  static String? _paymentIntentId(Object? value) {
+    if (value is! String) return null;
+    final id = value.trim();
+    return id.isEmpty ? null : id;
+  }
 
   /// Real `data` blob nests everything under 5 tabs (`access`, `clients`,
   /// `payments`, `workouts`, `scheduling` — note the coach-related tab is
@@ -4074,6 +4082,38 @@ class SupabaseService {
       }
     }
     return null;
+  }
+
+  /// Balances for many clients at once. The owner can read every id.
+  /// Missing ids are left out. A failed call returns an empty map.
+  static Future<Map<String, int>> loadClientBalances(List<String> ids) async {
+    if (ids.isEmpty) return {};
+    final rows = await _rpcList("client_balances_for", {"p_ids": ids});
+    final out = <String, int>{};
+    for (final raw in rows) {
+      if (raw is! Map) continue;
+      final id = raw["profile_id"]?.toString() ?? "";
+      if (id.isEmpty) continue;
+      out[id] = (raw["balance_cents"] as num?)?.toInt() ?? 0;
+    }
+    return out;
+  }
+
+  /// Ledger rows for one client, including paid and waived. The owner can
+  /// read every client. No card number and no billing address.
+  static Future<List<dynamic>> loadClientLedger(String clientId) =>
+      _rpcList("client_ledger_for", {"p_client": clientId});
+
+  /// Whether Stripe has a card saved for this client. Null when the lookup
+  /// did not answer. The preview never includes the full card number.
+  static Future<bool?> clientHasSavedCard(String clientId) async {
+    try {
+      final preview = await chargeClient(clientId: clientId, action: "preview");
+      if (preview["error"] != null) return null;
+      return preview["hasCard"] == true;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// A client's account balance in cents: negative = they owe the gym,
