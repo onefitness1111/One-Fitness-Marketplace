@@ -824,14 +824,12 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ),
           ),
-          if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () => setState(() => _paymentDetails = true),
-              icon: const Icon(LucideIcons.creditCard, size: 14),
-              label: const Text("Payment details (add or remove card)"),
-            ),
-          ],
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _paymentDetails = true),
+            icon: const Icon(LucideIcons.creditCard, size: 14),
+            label: const Text("Payment details (add or remove card)"),
+          ),
           if (ref.watch(trainerAuthProvider) == "owner") ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(

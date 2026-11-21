@@ -1,6 +1,6 @@
 // Saved cards and bank accounts. A client sees their own. The owner can open
-// a client's, and so can that client's coach. The street address is not in
-// this response.
+// a client's, and so can any coach. Clients are not assigned to a coach.
+// The street address is not in this response.
 //
 // Not deployed until you deploy this function.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
@@ -33,13 +33,13 @@ serve(async (req) => {
     let targetId = user.id;
     if (clientId && clientId !== user.id) targetId = clientId;
     const { data: clientRow } = await admin.from("clients")
-      .select("stripe_customer_id, stripe_subscription_id, primary_trainer_id")
+      .select("stripe_customer_id, stripe_subscription_id")
       .eq("profile_id", targetId)
       .maybeSingle();
     if (targetId !== user.id) {
       const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
       const role = me?.role ?? "";
-      const allowed = role === "owner" || (role === "coach" && clientRow?.primary_trainer_id === user.id);
+      const allowed = role === "owner" || role === "coach";
       if (!allowed) throw new Error("Not allowed to see or change that client's payment methods.");
     }
     const customerId = clientRow?.stripe_customer_id as string | null;

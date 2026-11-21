@@ -145,6 +145,8 @@ class _CoachPrivateAddressState extends State<CoachPrivateAddress> {
     if (result.error != null) {
       setState(() {
         _busy = false;
+        // The server's sentence, such as "Only the owner can change an
+        // address that's already on file."
         _error = result.error;
       });
       return;

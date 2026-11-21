@@ -150,6 +150,14 @@ void main() {
     );
     expect(blocked.gate, isNull);
     expect(blocked.error, isNotNull);
+
+    final refused = await commitAddressStep(
+      viewer: BillingViewer.coach,
+      onFile: false,
+      draft: address,
+      save: (_) async => throw Exception("Only the owner can change an address that's already on file."),
+    );
+    expect(refused.error, "Only the owner can change an address that's already on file.");
   });
 
   test("city and state from an older profile prefill the billing form", () {

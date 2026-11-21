@@ -9,15 +9,20 @@
 -- the owner, and the service role. This revokes the column again so a
 -- later grant cannot quietly reopen it.
 --
--- Write today: set_client_billing_address lets the client's coach replace
--- an address that is already saved. The app reaches that function through
--- save-billing-address, which calls it as the service role. This migration
--- stops a coach calling the function directly, and stops a coach's own
--- update of the column, once a street is on file. The service-role call
--- stays open so the client can still edit their address from Profile
--- Settings. The save-billing-address function in this repo now refuses a
--- coach overwrite before that call; deploy that function with this
--- migration or the already-deployed copy can still replace an address.
+-- Clients are not assigned to a coach. Any profile with role coach may
+-- read city and state, and may save an address only while no street is
+-- on file. The owner and the client themselves may replace it.
+--
+-- Write today: set_client_billing_address lets a coach replace an address,
+-- and only when that coach is stored as the client's coach. A client with
+-- no coach stored cannot be updated by any coach. The app
+-- reaches that function through save-billing-address, which calls it as
+-- the service role. This migration lets any coach call it, and refuses a
+-- second write. The service-role call stays open so the client can still
+-- edit their address. The save-billing-address function in this repo now
+-- refuses a coach overwrite before that call; deploy that function with
+-- this migration or the already-deployed copy still requires an assigned
+-- coach and can still replace an address.
 --
 -- "On file" matches client_file_flags: a street (line1) is saved. A null
 -- value, or the city/state-only object copied by
@@ -34,19 +39,18 @@ security definer
 set search_path to 'public'
 as $$
 declare
-  coach uuid;
   addr jsonb;
 begin
-  select c.primary_trainer_id, c.billing_address
-    into coach, addr
+  select c.billing_address
+    into addr
   from public.clients c
   where c.profile_id = p_client;
 
   if auth.role() is distinct from 'service_role'
      and p_client is distinct from auth.uid()
      and public.current_user_role() is distinct from 'owner'
-     and not (public.current_user_role() = 'coach' and coach = auth.uid()) then
-    raise exception 'Not allowed.';
+     and public.current_user_role() is distinct from 'coach' then
+    raise exception 'Not allowed to read that billing address.';
   end if;
 
   city := nullif(btrim(addr->>'city'), '');
@@ -65,30 +69,29 @@ security definer
 set search_path to 'public'
 as $$
 declare
-  coach uuid;
   existing jsonb;
   actor_is_coach boolean;
 begin
-  select c.primary_trainer_id, c.billing_address
-    into coach, existing
+  select c.billing_address
+    into existing
   from public.clients c
   where c.profile_id = p_client;
 
   if auth.role() is distinct from 'service_role'
      and p_client is distinct from auth.uid()
      and public.current_user_role() is distinct from 'owner'
-     and not (public.current_user_role() = 'coach' and coach = auth.uid()) then
+     and public.current_user_role() is distinct from 'coach' then
     raise exception 'Not allowed to update that billing address.';
   end if;
 
-  -- A coach may fill an empty address and may not replace one. The client
+  -- Any coach may fill an empty address and may not replace one. The client
   -- and the owner may replace it. service_role is the path Profile Settings
   -- already uses; save-billing-address applies this same lock for a coach.
   actor_is_coach := public.current_user_role() = 'coach'
     and p_client is distinct from auth.uid()
     and auth.role() is distinct from 'service_role';
   if actor_is_coach and coalesce(btrim(existing->>'line1'), '') <> '' then
-    raise exception 'A billing address is already on file.';
+    raise exception 'Only the owner can change an address that''s already on file.';
   end if;
 
   if coalesce(p_address->>'line1', '') = '' or coalesce(p_address->>'city', '') = '' then
@@ -105,7 +108,7 @@ $$;
 revoke all on function public.set_client_billing_address(uuid, jsonb) from public, anon;
 grant execute on function public.set_client_billing_address(uuid, jsonb) to authenticated, service_role;
 
--- A direct update follows the same rule. The client's coach may set
+-- A direct update follows the same rule. Any coach may set
 -- billing_address while no street is stored. After that, the previous
 -- value is put back. The client, the owner, and the service role are
 -- unchanged. Stripe and balance columns stay locked for a coach.
@@ -121,7 +124,6 @@ declare
     or public.current_user_role() = 'owner'
     or caller = old.profile_id;
   coach_first_address boolean := public.current_user_role() = 'coach'
-    and old.primary_trainer_id = caller
     and (
       old.billing_address is null
       or coalesce(btrim(old.billing_address->>'line1'), '') = ''
@@ -163,3 +165,39 @@ begin
   return new;
 end;
 $function$;
+
+-- The coach billing screen reads these flags. Any coach may, because a
+-- client is not assigned to one coach. The phone number itself is not
+-- returned; set_client_phone is unchanged.
+create or replace function public.client_file_flags(p_client uuid)
+returns table (phone_on_file boolean, billing_on_file boolean)
+language plpgsql
+stable
+security definer
+set search_path to 'public'
+as $$
+declare
+  phone text;
+  addr jsonb;
+begin
+  select nullif(btrim(p.phone), ''), c.billing_address
+    into phone, addr
+  from public.clients c
+  join public.profiles p on p.id = c.profile_id
+  where c.profile_id = p_client;
+
+  if auth.role() is distinct from 'service_role'
+     and p_client is distinct from auth.uid()
+     and public.current_user_role() is distinct from 'owner'
+     and public.current_user_role() is distinct from 'coach' then
+    raise exception 'Not allowed.';
+  end if;
+
+  phone_on_file := phone is not null;
+  billing_on_file := coalesce(addr->>'line1', '') <> '';
+  return next;
+end;
+$$;
+
+revoke all on function public.client_file_flags(uuid) from public, anon;
+grant execute on function public.client_file_flags(uuid) to authenticated, service_role;

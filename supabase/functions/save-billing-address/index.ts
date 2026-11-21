@@ -1,7 +1,8 @@
 // Saves a billing address for a client and copies it onto their Stripe customer.
 //
-// The client, the owner, or that client's coach may call it. The answer is
-// only whether an address is now on file. The street is not returned.
+// The client, the owner, or any coach may call it. Clients are not assigned
+// to a coach. The answer is only whether an address is now on file. The
+// street is not returned.
 // Deploy with the login check left on:
 //   supabase functions deploy save-billing-address
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
@@ -31,11 +32,11 @@ serve(async (req) => {
     const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
     const { data: clientRow } = await admin
       .from("clients")
-      .select("primary_trainer_id, stripe_customer_id")
+      .select("stripe_customer_id")
       .eq("profile_id", clientId)
       .maybeSingle();
     const role = me?.role ?? "";
-    const allowed = user.id === clientId || role === "owner" || (role === "coach" && clientRow?.primary_trainer_id === user.id);
+    const allowed = user.id === clientId || role === "owner" || role === "coach";
     if (!allowed) throw new Error("Not allowed to update that billing address.");
 
     // A coach may enter the first address and may not replace one. The
@@ -44,7 +45,7 @@ serve(async (req) => {
       const { data: existing } = await admin.from("clients").select("billing_address").eq("profile_id", clientId).maybeSingle();
       const current = existing?.billing_address as { line1?: string } | null;
       if (String(current?.line1 ?? "").trim() !== "") {
-        throw new Error("A billing address is already on file.");
+        throw new Error("Only the owner can change an address that's already on file.");
       }
     }
 

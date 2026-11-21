@@ -2,7 +2,8 @@
 //
 // Proposed replacement. Not deployed until you deploy this function.
 // A client can add a card to their own account. The owner can add one to
-// any client's account. That client's coach can too. The billing address
+// any client's account, and so can any coach. Clients are not assigned to
+// a coach. The billing address
 // is collected in the app before this runs, and a coach is not given the
 // street once an address is already on file.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
@@ -40,13 +41,13 @@ serve(async (req) => {
     if (clientId && clientId !== user.id) targetId = clientId;
     const { data: clientRow } = await admin
       .from("clients")
-      .select("stripe_customer_id, primary_trainer_id")
+      .select("stripe_customer_id")
       .eq("profile_id", targetId)
       .maybeSingle();
     if (targetId !== user.id) {
       const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
       const role = me?.role ?? "";
-      const allowed = role === "owner" || (role === "coach" && clientRow?.primary_trainer_id === user.id);
+      const allowed = role === "owner" || role === "coach";
       if (!allowed) throw new Error("Not allowed to add a payment method for that client.");
     }
 

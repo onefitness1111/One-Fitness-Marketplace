@@ -149,13 +149,21 @@ Future<AddressCommit> commitAddressStep({
   try {
     await save(draft!);
   } catch (error) {
-    final message = error.toString();
-    if (message.contains("already on file")) {
-      return const AddressCommit(error: "A billing address is already on file.");
-    }
-    return const AddressCommit(error: "Couldn't save that address.");
+    return AddressCommit(error: billingSaveMessage(error));
   }
   return AddressCommit(gate: BillingGate(cancelled: false, address: draft));
+}
+
+/// The sentence the server sent, without the Exception wrapper. A blank
+/// failure still gets a short fallback.
+String billingSaveMessage(Object error) {
+  var message = error.toString().trim();
+  const prefix = "Exception: ";
+  while (message.startsWith(prefix)) {
+    message = message.substring(prefix.length).trim();
+  }
+  if (message.isEmpty) return "Couldn't save that address.";
+  return message;
 }
 
 /// Coaches get the on-file flags only. The client and the owner get the values.

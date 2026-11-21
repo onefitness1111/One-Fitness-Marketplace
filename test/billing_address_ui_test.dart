@@ -94,13 +94,15 @@ void main() {
     final sql = File("supabase/migrations/20261121150000_coach_billing_address_lock.sql").readAsStringSync();
     expect(sql, contains("client_billing_locality"));
     expect(sql, contains("revoke select (billing_address)"));
-    expect(sql, contains("A billing address is already on file."));
+    expect(sql, contains("Only the owner can change an address that''s already on file."));
     expect(sql, contains("coach_first_address"));
     expect(sql.contains("grant select (billing_address)"), isFalse);
+    expect(sql.contains("primary_trainer_id"), isFalse);
 
     final save = File("supabase/functions/save-billing-address/index.ts").readAsStringSync();
-    expect(save, contains("A billing address is already on file."));
+    expect(save, contains("Only the owner can change an address that's already on file."));
     expect(save, contains('role === "coach"'));
+    expect(save.contains("primary_trainer_id"), isFalse);
   });
 
   testWidgets("the client payment screen keeps the address with the card", (tester) async {
