@@ -225,25 +225,24 @@ void main() {
     await tester.pump();
 
     final overview = tester.widget<Text>(find.text("Overview"));
-    expect(overview.style?.fontSize, 13);
+    expect(overview.style?.fontSize, 12);
     expect(overview.style?.fontWeight, FontWeight.w700);
-    expect(overview.style?.color, AppColors.gold);
+    expect(overview.style?.color, AppColors.onGold);
     expect(tester.widget<Text>(find.text("Body")).style?.color, AppColors.mute);
-    expect(tester.getSize(find.byKey(const Key("tab-underline"))).height, 2);
 
-    final start = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
+    final start = tester.getTopLeft(find.byKey(const Key("segment-pill"))).dx;
     await tester.tap(find.text("Photos"));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 130));
-    final mid = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
+    final mid = tester.getTopLeft(find.byKey(const Key("segment-pill"))).dx;
     expect(mid, greaterThan(start + 20));
 
     await tester.pumpAndSettle();
-    final end = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
-    final tabWidth = tester.getSize(find.byType(SwipeableTabView)).width / 4;
-    expect(end, closeTo(tabWidth * 3, 1));
-    expect(end, greaterThan(mid));
-    expect(tester.widget<Text>(find.text("Photos")).style?.color, AppColors.gold);
+    final pill = tester.getRect(find.byKey(const Key("segment-pill")));
+    final label = tester.getRect(find.text("Photos"));
+    expect(pill.overlaps(label), isTrue);
+    expect(pill.left, greaterThan(mid));
+    expect(tester.widget<Text>(find.text("Photos")).style?.color, AppColors.onGold);
   });
 
   testWidgets("each Log Progress segment shows only its own content", (tester) async {
