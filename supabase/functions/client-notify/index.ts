@@ -20,6 +20,8 @@ import {
   json,
   memberById,
 } from "../_shared/messagingGuard.ts";
+import { pushStaffForClientMessage, resolveStaffAlertMessageId } from "../_shared/staffAlert.ts";
+import { staffPushCopy } from "../_shared/chatRouting.mjs";
 
 function cleanLabel(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
@@ -129,9 +131,27 @@ serve(async (req) => {
         throw new Error("Clients can only alert their coach or the gym in the app.");
       }
       const text = clip(body.body, 500, "Message");
+      const messageId = await resolveStaffAlertMessageId(admin, {
+        explicitId: String(body.messageId ?? ""),
+        senderId: user.id,
+        staffId: profileId,
+        staffRole: staff.role,
+        body: text,
+      });
+      if (messageId) {
+        const outcome = await pushStaffForClientMessage(admin, {
+          messageId,
+          staffId: profileId,
+          clientName: me.name,
+          body: text,
+        });
+        if (outcome === "skipped") return json({ ok: true, skipped: "already pushed" });
+        return json({ ok: true });
+      }
+      const copy = staffPushCopy(me.name, text);
       const { data: rows } = await admin.from("device_tokens").select("token").eq("profile_id", profileId);
       const tokens = (rows || []).map((r: { token: string }) => r.token);
-      await sendPush(tokens, `New message from ${me.name || "a client"}`, text);
+      await sendPush(tokens, copy.title, copy.body);
       return json({ ok: true });
     }
 

@@ -121,6 +121,11 @@ void main() {
       );
     });
 
+    test("the default stored value is inapp and sms", () {
+      expect(defaultChatChannelValue, "inapp,sms");
+      expect(encodeChannels(defaultChatChannels), "inapp,sms");
+    });
+
     test("an empty set falls back to the default, not an empty string", () {
       // No caller should reach it, but a row that says nothing at all
       // couldn't be read back.
@@ -279,6 +284,50 @@ void main() {
 
     test("SMS alone lands on the default, app and SMS", () {
       expect(afterDeclining({ChatChannel.sms}), {ChatChannel.inapp, ChatChannel.sms});
+    });
+
+    test("a saved In app choice becomes In app and SMS once", () {
+      final first = resolveSavedChatChannels("inapp", null);
+      expect(first.writeBack, isTrue);
+      expect(first.channels, {ChatChannel.inapp, ChatChannel.sms});
+      expect(encodeChannels(first.channels), "inapp,sms");
+
+      final withEmail = resolveSavedChatChannels("inapp,email", null);
+      expect(withEmail.channels, {ChatChannel.inapp, ChatChannel.sms, ChatChannel.email});
+
+      final fresh = resolveSavedChatChannels(null, null);
+      expect(fresh.channels, defaultChatChannels);
+
+      final kept = resolveSavedChatChannels("inapp", chatChannelDefaultMarker);
+      expect(kept.writeBack, isFalse);
+      expect(kept.channels, {ChatChannel.inapp});
+    });
+
+    test("declining the SMS consent prompt unchecks SMS", () {
+      expect(
+        channelsAfterSmsChoice(
+          {ChatChannel.inapp},
+          {ChatChannel.inapp, ChatChannel.sms},
+          smsAllowed: false,
+        ),
+        {ChatChannel.inapp},
+      );
+      expect(
+        channelsAfterSmsChoice(
+          {ChatChannel.inapp},
+          {ChatChannel.inapp, ChatChannel.sms},
+          smsAllowed: true,
+        ),
+        {ChatChannel.inapp, ChatChannel.sms},
+      );
+      expect(
+        channelsAfterSmsChoice(
+          {ChatChannel.inapp, ChatChannel.sms},
+          {ChatChannel.inapp},
+          smsAllowed: false,
+        ),
+        {ChatChannel.inapp},
+      );
     });
 
     test("whatever is left can still be sent", () {

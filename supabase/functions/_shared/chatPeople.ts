@@ -1,6 +1,7 @@
 // Names and consent for a text. Coaches and the owner never contribute a
 // legal name. The owner is always "ONE Fitness Marketplace".
 
+import { hasSmsConsent } from "./chatRouting.mjs";
 import { publicCoachName } from "./coachName.ts";
 
 export const BUSINESS_NAME = "ONE Fitness Marketplace";
@@ -40,14 +41,20 @@ export async function loadParty(admin: Admin, id: string) {
   if (!profile) return null;
   const { data: client } = await admin.from("clients").select("sms_opt_in").eq("profile_id", id).maybeSingle();
   const name = await displayName(admin, id);
+  const role = String(profile.role || "");
   return {
     id: profile.id as string,
-    role: String(profile.role || ""),
+    role,
     displayName: name,
-    coachName: String(profile.role) === "coach" ? name : "",
+    coachName: role === "coach" ? name : "",
     phone: String(profile.phone || "").trim(),
     optedOut: profile.sms_opted_out === true,
-    hasConsent: profile.sms_consent_at != null || client?.sms_opt_in === true,
+    // A client's name here is profiles.name, the name coaches see.
+    hasConsent: hasSmsConsent({
+      role,
+      smsConsentAt: profile.sms_consent_at,
+      smsOptIn: client?.sms_opt_in === true,
+    }),
   };
 }
 

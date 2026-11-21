@@ -40,7 +40,53 @@ const chatChannelLabels = {
 
 /// What a new chat starts on: the app thread and a text, both on.
 /// Email is separate and is not saved on the message.
+/// The stored form is [defaultChatChannelValue], "inapp,sms".
 const defaultChatChannels = {ChatChannel.inapp, ChatChannel.sms};
+
+/// Wire form of [defaultChatChannels]. Also the marker that a saved
+/// preference has already been brought up to this default once.
+const defaultChatChannelValue = "inapp,sms";
+
+const chatChannelDefaultMarker = defaultChatChannelValue;
+
+/// Result of reading a saved picker. [writeBack] means the caller should
+/// store [channels] and [chatChannelDefaultMarker] so a later choice,
+/// including turning SMS off, is not overwritten on the next open.
+class ResolvedChatChannels {
+  const ResolvedChatChannels({required this.channels, required this.writeBack});
+
+  final Set<ChatChannel> channels;
+  final bool writeBack;
+}
+
+/// First open after this default, a saved set gains In app and SMS.
+/// Email that was already on stays on. Once the marker is stored, the
+/// saved set is used as the person left it.
+ResolvedChatChannels resolveSavedChatChannels(String? stored, String? appliedMarker) {
+  final saved = decodeChannels(stored);
+  if (appliedMarker == chatChannelDefaultMarker) {
+    return ResolvedChatChannels(
+      channels: saved.isEmpty ? {...defaultChatChannels} : saved,
+      writeBack: false,
+    );
+  }
+  return ResolvedChatChannels(
+    channels: {...saved, ChatChannel.inapp, ChatChannel.sms},
+    writeBack: true,
+  );
+}
+
+/// A client who declines the SMS consent prompt does not keep SMS selected.
+Set<ChatChannel> channelsAfterSmsChoice(
+  Set<ChatChannel> current,
+  Set<ChatChannel> next, {
+  required bool smsAllowed,
+}) {
+  final turnedSmsOn = next.contains(ChatChannel.sms) && !current.contains(ChatChannel.sms);
+  if (!turnedSmsOn || smsAllowed) return next;
+  final stripped = {...next}..remove(ChatChannel.sms);
+  return stripped.isEmpty ? {ChatChannel.inapp} : stripped;
+}
 
 /// Canonical wire form for `messages.channel` and the remembered
 /// preference: the selected names in [chatChannelOrder], comma-joined —

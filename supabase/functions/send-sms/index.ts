@@ -6,6 +6,7 @@
 // The number is looked up from the member's profile. A client cannot call
 // this. Replies still land in app chat through the existing Twilio webhook.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { hasSmsConsent } from "../_shared/chatRouting.mjs";
 import {
   CORS_HEADERS,
   assertStaffMayMessage,
@@ -42,7 +43,13 @@ serve(async (req) => {
       .eq("profile_id", member.id)
       .maybeSingle();
     const optedOut = gate?.sms_opted_out === true;
-    const consented = gate?.sms_consent_at != null || clientRow?.sms_opt_in === true;
+    // Clients still need a consent record. A coach or the owner is textable
+    // with a phone number unless they opted out.
+    const consented = hasSmsConsent({
+      role: member.role,
+      smsConsentAt: gate?.sms_consent_at,
+      smsOptIn: clientRow?.sms_opt_in === true,
+    });
     if (optedOut) throw new Error("That person has opted out of text messages. The app chat still works.");
     if (!consented) throw new Error("That person hasn't agreed to text messages yet. The app chat still works.");
 

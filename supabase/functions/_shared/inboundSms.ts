@@ -9,7 +9,7 @@
 // checked with Twilio's signature instead.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ThreadBook } from "./chatRouting.mjs";
+import { ThreadBook, hasSmsConsent } from "./chatRouting.mjs";
 import { BUSINESS_NAME, markOptIn, markOptOut, toE164 } from "./chatPeople.ts";
 import { publicCoachName } from "./coachName.ts";
 import { sendSms } from "./sendSms.ts";
@@ -152,7 +152,11 @@ export async function handleInbound(req: Request): Promise<Response> {
         coachName,
         phone: String(profile.phone || "").trim(),
         optedOut: profile.sms_opted_out === true,
-        hasConsent: profile.sms_consent_at != null || optedIn.has(id),
+        hasConsent: hasSmsConsent({
+          role,
+          smsConsentAt: profile.sms_consent_at,
+          smsOptIn: optedIn.has(id),
+        }),
       });
     }
 
