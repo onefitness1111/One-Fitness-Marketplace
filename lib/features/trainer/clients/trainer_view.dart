@@ -1,4 +1,5 @@
 import "../../../core/widgets/animated_screen_switcher.dart";
+import "../../../core/widgets/segmented_toggle.dart";
 import "../../../core/widgets/tap_highlight.dart";
 import "visits_tab.dart";
 import "package:flutter/material.dart";
@@ -221,34 +222,15 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
+          Padding(
             key: const Key("client-tabs"),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: AppColors.line)),
-            ),
-            child: Row(
-              children: [
-                ..._primary.map(
-                  (t) => Expanded(
-                    child: _TabButton(
-                      def: t,
-                      active: _tab == t.key,
-                      onTap: () => _goTab(t.key),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: _TabButton(
-                    def: const _TabDef(
-                      "more",
-                      "More",
-                      LucideIcons.moreHorizontal,
-                    ),
-                    active: activeInMore,
-                    onTap: () => _goTab("more"),
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: SegmentedToggle(
+              labels: [..._primary.map((t) => t.label), "More"],
+              index: activeInMore
+                  ? _primary.length
+                  : _primary.indexWhere((t) => t.key == _tab).clamp(0, _primary.length),
+              onChanged: (i) => _goTab(i >= _primary.length ? "more" : _primary[i].key),
             ),
           ),
           Expanded(
@@ -319,54 +301,6 @@ class _TrainerViewState extends ConsumerState<TrainerView> {
       default:
         return const SizedBox.shrink();
     }
-  }
-}
-
-class _TabButton extends StatelessWidget {
-  const _TabButton({
-    required this.def,
-    required this.active,
-    required this.onTap,
-  });
-  final _TabDef def;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = active ? AppColors.txt : AppColors.mute;
-    return TapHighlight(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: active ? AppColors.txt : Colors.transparent,
-              width: 2,
-            ),
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(def.icon, size: 14, color: color),
-            const SizedBox(height: 2),
-            Text(
-              def.label,
-              maxLines: 1,
-              overflow: TextOverflow.fade,
-              softWrap: false,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 

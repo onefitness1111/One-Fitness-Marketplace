@@ -185,6 +185,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     _dragStart = null;
     if (start == null) return;
     if (_swipeOwnedByScreen.contains(ref.read(clientScreenProvider))) return;
+    if (SwipeableTabView.ownsHorizontalSwipe) return;
     final delta = e.position - start;
     // Ignore drags starting inside the Drawer's own left-edge-swipe-to-
     // open hitbox (Scaffold's default drawerEdgeDragWidth) so the two

@@ -1,11 +1,16 @@
 import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
 
-import "../../../core/theme/app_colors.dart";
+import "../../../core/widgets/swipeable_tab_view.dart";
+import "../../client/log_progress/exercise_lifts_tab.dart";
+import "../../../data/providers/trainer_providers.dart";
+import "coach_health_section.dart";
 import "coach_measurements_tab.dart";
 import "photos_tab.dart";
 
-/// Photos and measurements on one page. Merit badges have their own
-/// entry under More.
+/// Same tab row as the client's Log Progress. Overview is shared health
+/// data. Body and Photos are the measurement log and the photo cards.
+/// Lifts is read only.
 class ProgressTab extends StatelessWidget {
   const ProgressTab({super.key, required this.clientId});
 
@@ -13,25 +18,26 @@ class ProgressTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 28),
+    return SwipeableTabView(
+      labels: const ["Overview", "Body", "Lifts", "Photos"],
       children: [
-        PhotosTab(clientId: clientId, embedded: true),
-        const _SectionRule(),
-        CoachMeasurementsTab(clientId: clientId, embedded: true),
+        CoachHealthSection(clientId: clientId),
+        CoachMeasurementsTab(clientId: clientId),
+        _CoachLifts(clientId: clientId),
+        PhotosTab(clientId: clientId),
       ],
     );
   }
 }
 
-class _SectionRule extends StatelessWidget {
-  const _SectionRule();
+class _CoachLifts extends ConsumerWidget {
+  const _CoachLifts({required this.clientId});
+
+  final String clientId;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Divider(height: 1, thickness: 1, color: AppColors.line),
-    );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final logs = ref.watch(trainerClientRecordsProvider)[clientId]?.workoutLogs ?? const [];
+    return ExerciseLiftsTab(logs: logs, allowShare: false);
   }
 }

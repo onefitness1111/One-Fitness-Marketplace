@@ -1,8 +1,7 @@
-import "tap_highlight.dart";
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "../navigation/local_back_stack.dart";
-import "../theme/app_colors.dart";
+import "segmented_toggle.dart";
 
 /// Flutter's default ScrollBehavior only accepts touch/stylus drags — mouse
 /// is deliberately excluded so desktop users don't accidentally scroll by
@@ -19,12 +18,12 @@ class _SwipeScrollBehavior extends MaterialScrollBehavior {
       };
 }
 
-/// A tab row wired to a swipeable [PageView] — tapping a tab or swiping the
-/// page both keep the two in sync. Shared by Plans (Workout/Nutrition) and
-/// Log Progress (Body/Lifts/Photos) so both get the same swipe-between-tabs
-/// gesture from one implementation. The owning shell must exclude this
-/// screen from its own swipe-to-go-back gesture (see client_shell.dart's
-/// `_swipeOwnedByScreen`) or the two horizontal-drag gestures fight.
+/// A pill row wired to a swipeable [PageView]. Tapping a segment or swiping
+/// the page both keep the two in sync, and the pill follows the page.
+/// Shared by Plans (Workout/Nutrition) and Log Progress (Overview/Body/
+/// Lifts/Photos). The owning shell must exclude this screen from its own
+/// swipe-to-go-back gesture (see client_shell.dart's `_swipeOwnedByScreen`)
+/// or the two horizontal-drag gestures fight.
 class SwipeableTabView extends StatefulWidget {
   const SwipeableTabView({
     super.key,
@@ -36,6 +35,13 @@ class SwipeableTabView extends StatefulWidget {
   final List<String> labels;
   final List<Widget> children;
   final ValueChanged<int>? onIndexChanged;
+
+  /// True while any of these tab rows is on screen. Shells use it so a
+  /// sideways drag changes tabs instead of leaving the screen. Plans is
+  /// also listed by name in the client shell; this covers a tab row that
+  /// sits inside another screen, such as a coach's client Progress page.
+  static bool get ownsHorizontalSwipe => _owners > 0;
+  static int _owners = 0;
 
   @override
   State<SwipeableTabView> createState() => _SwipeableTabViewState();
@@ -53,6 +59,12 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
   /// Set while a tap / back animates to a tab, so the pages it passes over on
   /// the way (0 → 2 goes through 1) aren't recorded as visits.
   int? _animatingTo;
+
+  @override
+  void initState() {
+    super.initState();
+    SwipeableTabView._owners++;
+  }
 
   void _animate(int i) {
     _animatingTo = i;
@@ -87,6 +99,7 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
 
   @override
   void dispose() {
+    SwipeableTabView._owners--;
     _controller.dispose();
     super.dispose();
   }
@@ -103,14 +116,22 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
   Widget _buildTabs() {
     return Column(
       children: [
-        Container(
-          decoration: BoxDecoration(color: AppColors.bg, border: Border(bottom: BorderSide(color: AppColors.line))),
-          child: Row(
-            children: [
-              for (var i = 0; i < widget.labels.length; i++)
-                _TabButton(label: widget.labels[i], selected: _index == i, onTap: () => _goTo(i)),
-            ],
-          ),
+        ListenableBuilder(
+          listenable: _controller,
+          builder: (context, _) {
+            final count = widget.labels.length;
+            final raw = _controller.hasClients ? (_controller.page ?? _index.toDouble()) : _index.toDouble();
+            final page = count <= 1 ? 0.0 : raw.clamp(0.0, (count - 1).toDouble());
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: SegmentedToggle(
+                labels: widget.labels,
+                index: _index,
+                position: page,
+                onChanged: _goTo,
+              ),
+            );
+          },
         ),
         Expanded(
           child: ScrollConfiguration(
@@ -127,29 +148,3 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
   }
 }
 
-class _TabButton extends StatelessWidget {
-  const _TabButton({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: TapHighlight(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 13),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: selected ? AppColors.gold : Colors.transparent, width: 2)),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: selected ? AppColors.gold : AppColors.mute),
-          ),
-        ),
-      ),
-    );
-  }
-}

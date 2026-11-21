@@ -157,7 +157,6 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
             onPressed: _adding ? null : _addPhoto,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
               children: [
                 if (_adding)
                   SizedBox(
@@ -168,7 +167,13 @@ class _PhotosTabState extends ConsumerState<PhotosTab> {
                 else
                   const Icon(LucideIcons.camera, size: 15),
                 const SizedBox(width: 8),
-                Text(_adding ? "Adding…" : "Add a photo for this client"),
+                Flexible(
+                  child: Text(
+                    _adding ? "Adding…" : "Add a photo for this client",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
           ),

@@ -151,6 +151,8 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     final start = _dragStart;
     _dragStart = null;
     if (start == null) return;
+    // A client Progress page owns this drag when its tabs are showing.
+    if (SwipeableTabView.ownsHorizontalSwipe) return;
     final delta = e.position - start;
     // Ignore drags starting inside the Drawer's own left-edge-swipe-to-
     // open hitbox (Scaffold's default drawerEdgeDragWidth) so the two
