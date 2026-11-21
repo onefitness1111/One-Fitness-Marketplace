@@ -15,6 +15,7 @@ class BtnGold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final font = DefaultTextStyle.of(context).style.fontFamily;
     final button = ElevatedButton(
       onPressed: onPressed == null
           ? null
@@ -31,7 +32,7 @@ class BtnGold extends StatelessWidget {
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+        textStyle: TextStyle(fontFamily: font, fontWeight: FontWeight.w700, fontSize: 14),
       ).copyWith(overlayColor: AppTheme.pressedOverlay(AppColors.pressOverlay)),
       child: child,
     );
@@ -50,6 +51,7 @@ class BtnGhost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final font = DefaultTextStyle.of(context).style.fontFamily;
     final button = OutlinedButton(
       onPressed: onPressed == null
           ? null
@@ -63,7 +65,7 @@ class BtnGhost extends StatelessWidget {
         side: BorderSide(color: AppColors.line),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        textStyle: TextStyle(fontFamily: font, fontWeight: FontWeight.w600, fontSize: 14),
       ).copyWith(overlayColor: AppTheme.pressedOverlay(AppColors.pressOverlay)),
       child: child,
     );

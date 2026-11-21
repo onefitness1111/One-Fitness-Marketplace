@@ -4,6 +4,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "balance_booking_warning.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/booking_limits.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
@@ -18,6 +19,7 @@ import "../shell/trainer_shell_state.dart";
 import "client_search_picker.dart";
 import "single_session_staff.dart";
 import "coach_search_picker.dart";
+import "override_prompt.dart";
 
 
 /// Mirrors AddManualBookingModal.jsx — the coach/owner "book anything" tool.
@@ -109,23 +111,294 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
   String? _error;
   bool _saving = false;
 
-  /// Mirrors OverridePrompt.jsx — an owner pushing a manual booking past a
-  /// real conflict/capacity block sees exactly what's being overridden
-  /// before it's stamped `overriddenBy`/`overriddenAt`/`overrideReason`.
-  Future<bool> _confirmOverride(String title, String message) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Override")),
-        ],
-      ),
+  String _rosterName(String clientId) {
+    final matches = ref
+        .read(trainerRosterProvider)
+        .where((c) => c.id == clientId);
+    return matches.isEmpty ? "another client" : matches.first.name;
+  }
+
+  String _coachTitle(String trainerId) {
+    final matches = ref.read(trainersProvider).where((t) => t.id == trainerId);
+    if (matches.isEmpty) return "This coach";
+    return matches.first.displayTitle;
+  }
+
+  Future<void> _book() async {
+    final slot = _start;
+    final trainerId = _trainerId;
+    if (trainerId == null) {
+      setState(() => _error = "Coach, date, and time are all required.");
+      return;
+    }
+    if (_durationMin <= 0) {
+      setState(() => _error = "End time must be after the start time.");
+      return;
+    }
+    final dateIso = isoDate(_date);
+    if (dateIso.compareTo(isoToday()) < 0) {
+      setState(() => _error = "You can't book a session in the past.");
+      return;
+    }
+
+    final isOwner = ref.read(trainerAuthProvider) == "owner";
+    final bookings = ref.read(allBookingsProvider);
+    final isAssessment = _sessionType.startsWith("assessment");
+    final effectiveDiscipline = isAssessment ? "assessment" : _discipline;
+    final coachName = _coachTitle(trainerId);
+
+    final conflict = findTrainerConflict(
+      bookings,
+      trainerId,
+      dateIso,
+      slot,
+      _sessionType,
+      effectiveDiscipline,
     );
-    return result ?? false;
+    String? overrideReason;
+    if (conflict != null) {
+      if (!isOwner) {
+        setState(() => _error = coachOverlapRefusal);
+        return;
+      }
+      final message = ownerOverlapOverrideMessage(
+        coachName: coachName,
+        conflictSlot: conflict.slot,
+        clientName: _rosterName(conflict.clientId),
+      );
+      final ok = await confirmOwnerOverride(
+        context,
+        title: "Scheduling conflict",
+        message: message,
+      );
+      if (!mounted || !ok) return;
+      overrideReason = overrideReasonFor(
+        BookingLimitKind.overlap,
+        detail: overrideDetail(message),
+      );
+    }
+    final cap = capacityInfo(bookings, trainerId, dateIso, slot, _sessionType);
+    if (cap.atCap && conflict == null) {
+      if (!isOwner) {
+        setState(
+          () => _error =
+              "That session is already at capacity (${cap.cap}) — contact the owner to override.",
+        );
+        return;
+      }
+      final message = ownerCapacityOverrideMessage(
+        clientName: _client!.name,
+        count: cap.count,
+        cap: cap.cap,
+      );
+      final ok = await confirmOwnerOverride(
+        context,
+        title: "Session at capacity",
+        message: message,
+      );
+      if (!mounted || !ok) return;
+      overrideReason = overrideReasonFor(
+        BookingLimitKind.capacity,
+        detail: overrideDetail(message),
+      );
+    }
+    if (!await confirmStaffBalanceAdd(
+          context,
+          clientId: _client!.id,
+          isOwner: isOwner,
+        ) ||
+        !mounted)
+      return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    final planForClient = isAssessment
+        ? null
+        : planToChargeFor(
+            _client!,
+            _sessionType,
+            bookings,
+            ref.read(membershipPlansProvider),
+          );
+
+    Future<void> insert(String? reason) async {
+      var draft = Booking(
+        id: "",
+        clientId: _client!.id,
+        trainerId: trainerId,
+        date: dateIso,
+        slot: slot,
+        sessionType: _sessionType,
+        discipline: effectiveDiscipline,
+        isPhysicalAssessment: isAssessment,
+        durationMin: _durationMin,
+        // Charged to the client's own plan, same as a self-booking. An
+        // assessment never costs a session, so it's left unattributed.
+        planId: planForClient,
+      );
+      if (reason != null) draft = draft.withOwnerOverride(reason);
+      final saved = await SupabaseService.insertBooking(draft);
+      ref.read(allBookingsProvider.notifier).addBooking(saved);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    }
+
+    // No plan covers this: charge a single session or book it free (the
+    // client needs a card on file either way). An override skips that and
+    // inserts with the stamp, which is what the trigger accepts.
+    if (!isAssessment &&
+        planForClient == null &&
+        !_client!.isStaff &&
+        overrideReason == null) {
+      final out = await bookClientWithoutPlan(
+        context: context,
+        clientName: _client!.name,
+        clientId: _client!.id,
+        sessionType: _sessionType,
+        trainerId: trainerId,
+        date: dateIso,
+        slot: slot,
+        discipline: effectiveDiscipline,
+        priceCents: ref
+            .read(platformSettingsProvider)
+            .singleSessionPriceFor(_sessionType),
+        isOwner: isOwner,
+      );
+      if (out == null) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
+      if (out.status == "requested") {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(out.message!)));
+        Navigator.of(context).pop();
+        return;
+      }
+      if (!out.booked) {
+        final fresh = findTrainerConflict(
+          ref.read(allBookingsProvider),
+          trainerId,
+          dateIso,
+          slot,
+          _sessionType,
+          effectiveDiscipline,
+        );
+        if (!mounted) return;
+        final retry = await offerBookingOverride(
+          context,
+          error: out.message ?? "",
+          isOwner: isOwner,
+          alreadyOverriding: false,
+          unspecifiedFull:
+              out.full && classifyBookingLimitError(out.message ?? "") == null,
+          coachName: coachName,
+          addingClientName: _client!.name,
+          conflictSlot: fresh?.slot,
+          conflictingClientName: fresh == null
+              ? null
+              : _rosterName(fresh.clientId),
+          capacityCount: cap.atCap ? cap.count : null,
+          capacityCap: cap.atCap ? cap.cap : null,
+          refunded: out.refunded,
+        );
+        if (!mounted) return;
+        if (retry.go) {
+          overrideReason = retry.reason;
+        } else {
+          setState(() => _saving = false);
+          if (retry.declined) {
+            if (out.full && out.refunded) {
+              await showFilledRefundDialog(
+                context,
+                singleSessionFailureMessage(out),
+              );
+            }
+            return;
+          }
+          if (out.full && out.refunded && context.mounted) {
+            await showFilledRefundDialog(
+              context,
+              singleSessionFailureMessage(out),
+            );
+          } else if (mounted) {
+            setState(() => _error = singleSessionFailureMessage(out));
+          }
+          return;
+        }
+      } else {
+        final made = await SupabaseService.loadBookingById(out.bookingId!);
+        if (made != null) {
+          ref.read(allBookingsProvider.notifier).addBooking(made);
+        }
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        return;
+      }
+    }
+
+    try {
+      await insert(overrideReason);
+    } catch (e) {
+      if (!mounted) return;
+      final text = e.toString();
+      if (text.contains("outstanding balance")) {
+        setState(() {
+          _saving = false;
+          _error = staffBalanceWarningFromError(text);
+        });
+        return;
+      }
+      final fresh = findTrainerConflict(
+        ref.read(allBookingsProvider),
+        trainerId,
+        dateIso,
+        slot,
+        _sessionType,
+        effectiveDiscipline,
+      );
+      setState(() => _saving = false);
+      final retry = await offerBookingOverride(
+        context,
+        error: e,
+        isOwner: isOwner,
+        alreadyOverriding: overrideReason != null,
+        coachName: coachName,
+        addingClientName: _client!.name,
+        conflictSlot: classifyBookingLimitError(e) == BookingLimitKind.overlap
+            ? fresh?.slot
+            : null,
+        conflictingClientName: fresh == null
+            ? null
+            : _rosterName(fresh.clientId),
+        capacityCount: capacityPairFromError(e)?.$1,
+        capacityCap: capacityPairFromError(e)?.$2,
+      );
+      if (!mounted || retry.declined) return;
+      if (!retry.go) {
+        setState(() => _error = staffBookingFailureMessage(e));
+        return;
+      }
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      try {
+        await insert(retry.reason);
+      } catch (e2) {
+        if (!mounted) return;
+        final again = e2.toString();
+        setState(() {
+          _saving = false;
+          _error = again.contains("outstanding balance")
+              ? staffBalanceWarningFromError(again)
+              : staffBookingFailureMessage(e2);
+        });
+      }
+    }
   }
 
   Future<void> _pickDate() async {
@@ -166,7 +439,6 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
       );
     }
 
-    final bookings = ref.watch(allBookingsProvider);
     // Customize Platform → Services narrows the menu. Assessments are staff
     // tools rather than a sold service, so they're never hidden.
     final settings = ref.watch(platformSettingsProvider);
@@ -305,125 +577,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
           const SizedBox(height: 16),
           BtnGold(
             full: true,
-            onPressed: _saving
-                ? null
-                : () async {
-                    final slot = _start;
-                    final trainerId = _trainerId;
-                    if (trainerId == null) {
-                      setState(() => _error = "Coach, date, and time are all required.");
-                      return;
-                    }
-                    if (_durationMin <= 0) {
-                      setState(() => _error = "End time must be after the start time.");
-                      return;
-                    }
-                    final dateIso = isoDate(_date);
-                    if (dateIso.compareTo(isoToday()) < 0) {
-                      setState(() => _error = "You can't book a session in the past.");
-                      return;
-                    }
-                    final effectiveDiscipline = isAssessment ? "assessment" : _discipline;
-                    final conflict = findTrainerConflict(bookings, trainerId, dateIso, slot, _sessionType, effectiveDiscipline);
-                    String? overrideReason;
-                    if (conflict != null) {
-                      if (!isOwner) {
-                        setState(() => _error = "This coach already has a different session at that time — contact the owner to override.");
-                        return;
-                      }
-                      final otherMatches = roster.where((c) => c.id == conflict.clientId);
-                      final otherName = otherMatches.isEmpty ? "another client" : otherMatches.first.name;
-                      final ok = await _confirmOverride("Scheduling conflict", "This coach is already booked with $otherName at this time. Double-book anyway?");
-                      if (!mounted || !ok) return;
-                      overrideReason = "conflict";
-                    }
-                    final cap = capacityInfo(bookings, trainerId, dateIso, slot, _sessionType);
-                    if (cap.atCap && conflict == null) {
-                      if (!isOwner) {
-                        setState(() => _error = "That session is already at capacity (${cap.cap}) — contact the owner to override.");
-                        return;
-                      }
-                      final ok = await _confirmOverride("Session at capacity", "This session is at capacity (${cap.count}/${cap.cap}). Add ${_client!.name} anyway?");
-                      if (!mounted || !ok) return;
-                      overrideReason = "capacity";
-                    }
-                    if (!await confirmStaffBalanceAdd(context, clientId: _client!.id, isOwner: isOwner) || !mounted) return;
-                    setState(() {
-                      _saving = true;
-                      _error = null;
-                    });
-                    try {
-                      final planForClient = isAssessment ? null : planToChargeFor(_client!, _sessionType, bookings, ref.read(membershipPlansProvider));
-                      // No plan covers this: charge a single session or book it
-                      // free (client needs a card on file either way).
-                      if (!isAssessment && planForClient == null && !_client!.isStaff && overrideReason == null) {
-                        final out = await bookClientWithoutPlan(
-                          context: context,
-                          clientName: _client!.name,
-                          clientId: _client!.id,
-                          sessionType: _sessionType,
-                          trainerId: trainerId,
-                          date: dateIso,
-                          slot: slot,
-                          discipline: effectiveDiscipline,
-                          priceCents: ref.read(platformSettingsProvider).singleSessionPriceFor(_sessionType),
-                          isOwner: isOwner,
-                        );
-                        if (out == null) {
-                          setState(() => _saving = false);
-                          return;
-                        }
-                        if (out.status == "requested") {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(out.message!)));
-                            Navigator.of(context).pop();
-                          }
-                          return;
-                        }
-                        if (!out.booked) {
-                          setState(() => _saving = false);
-                          if (out.full && out.refunded && context.mounted) {
-                            await showFilledRefundDialog(context, singleSessionFailureMessage(out));
-                          } else if (mounted) {
-                            setState(() => _error = singleSessionFailureMessage(out));
-                          }
-                          return;
-                        }
-                        final made = await SupabaseService.loadBookingById(out.bookingId!);
-                        if (made != null) ref.read(allBookingsProvider.notifier).addBooking(made);
-                        if (context.mounted) Navigator.of(context).pop();
-                        return;
-                      }
-                      final saved = await SupabaseService.insertBooking(Booking(
-                            id: "",
-                            clientId: _client!.id,
-                            trainerId: trainerId,
-                            date: dateIso,
-                            slot: slot,
-                            sessionType: _sessionType,
-                            discipline: effectiveDiscipline,
-                            isPhysicalAssessment: isAssessment,
-                            durationMin: _durationMin,
-                            // Charged to the client's own plan, same as a
-                            // self-booking. An assessment never costs a
-                            // session, so it's left unattributed.
-                            planId: planForClient,
-                            overriddenBy: overrideReason != null ? "owner" : null,
-                            overriddenAt: overrideReason != null ? DateTime.now().toUtc().toIso8601String() : null,
-                            overrideReason: overrideReason,
-                          ));
-                      ref.read(allBookingsProvider.notifier).addBooking(saved);
-                      if (context.mounted) Navigator.of(context).pop();
-                    } catch (e) {
-                      final text = e.toString();
-                      setState(() {
-                        _saving = false;
-                        _error = text.contains("outstanding balance")
-                            ? staffBalanceWarningFromError(text)
-                            : "Couldn't book that session — check your connection and try again.";
-                      });
-                    }
-                  },
+            onPressed: _saving ? null : _book,
             child: Text(_saving ? "Booking…" : "Book session"),
           ),
         ],

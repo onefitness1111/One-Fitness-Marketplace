@@ -30,13 +30,47 @@ const dashboardTrainerColumns =
 
 /// How many network waves a cold launch needs before the dashboard can show.
 ///
-/// One when `dashboard_bootstrap` is installed: that single call returns
-/// the first screen. Two otherwise. Wave 1 runs the directory, bookings,
-/// settings, plans, waivers, records, and the small home-screen extras
-/// together. The directory call itself is two reads back to back (profiles,
-/// then contacts). Wave 2 is the client and trainer rows, which need ids
-/// from the directory, so it cannot start until wave 1's directory returns.
+/// Kept for the bootstrap-RPC comparison. The sign-in path no longer waits
+/// on that RPC: a client paints after one parallel round, a coach or the
+/// owner after two (directory, then the rows that need its ids).
 int coldLaunchWaves({required bool bootstrapRpc}) => bootstrapRpc ? 1 : 2;
+
+/// Rounds the sign-in button actually waits for, after the password token.
+///
+/// A client needs one parallel round (their row, the booking window, plans).
+/// A coach or the owner needs a second round because client and trainer rows
+/// are filtered by ids from the directory. Contacts, billing, and program
+/// blobs are not counted: they do not hold the dashboard.
+int blockingSignInRounds(String role) => role == "client" ? 1 : 2;
+
+/// Reads that must finish before the dashboard is shown.
+Set<String> blockingSignInReads(String role) {
+  if (role == "client") return const {"clients", "bookings", "membership_plans"};
+  return const {"profile_directory", "bookings", "clients", "trainers", "membership_plans"};
+}
+
+/// Started beside the blocking reads, or just after the dashboard is up.
+/// None of these are allowed to delay navigation.
+Set<String> backgroundSignInReads(String role) {
+  if (role == "client") {
+    return const {
+      "client_records_home",
+      "waiver_docs",
+      "platform_settings",
+      "profile_directory",
+      "profile_contact_for",
+      "trainers",
+      "client_billing_for",
+    };
+  }
+  return const {
+    "profile_contact_for",
+    "client_records_programs",
+    "waiver_docs",
+    "platform_settings",
+    "client_billing_for",
+  };
+}
 
 /// True when the home screen should load through the existing queries.
 ///
@@ -71,6 +105,20 @@ const fullDashboardRecordColumns =
 const coachDashboardRecordColumns =
     "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,trainerNotes:data->trainerNotes,programRefresh:data->programRefresh";
 
+/// What the client home screen reads from their own record.
+///
+/// Saved programs, nutrition, photos, and the rest of the blob stay out.
+/// Those were the multi-megabyte body whose decode froze the phone between
+/// network rounds. They load when that screen opens.
+const clientHomeRecordColumns =
+    "profile_id,habitSettings:data->habitSettings,habitLogs:data->habitLogs,tourSeen:data->tourSeen,intake:data->intake,signatures:data->signatures,workoutLogs:data->workoutLogs";
+
+/// Programs, nutrition, notes, and logs for the coach home's attention list
+/// and status dots. Fetched after the schedule is on screen, and decoded
+/// off the UI isolate.
+const staffDetailRecordColumns =
+    "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,trainerNotes:data->trainerNotes,programRefresh:data->programRefresh,workoutLogs:data->workoutLogs";
+
 /// Columns [SupabaseService] turns into a [Booking]. Nothing else on the row
 /// is shown, and a bare `select()` pulls columns the screen never reads.
 const bookingSelectColumns =
@@ -86,7 +134,7 @@ const badgeSelectColumns =
     "id, client_id, badge_key, earned_at, earned_method, granted_by_user_id, note, revoked_at, revoked_by_user_id, celebrated_at";
 
 const chargeSelectColumns =
-    "id, client_id, client_name, type, date, at, amount, category, description, plan_id, plan_name, trainer_id, trainer_name, waived_at";
+    "id, client_id, client_name, type, date, at, amount, category, description, plan_id, plan_name, trainer_id, trainer_name, waived_at, stripe_payment_intent_id";
 
 const blockedTimeSelectColumns = "id, trainer_id, date, full_day, start_min, end_min, reason";
 

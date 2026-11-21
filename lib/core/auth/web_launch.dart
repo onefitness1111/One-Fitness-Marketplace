@@ -6,6 +6,11 @@ import "recovery_link.dart";
 /// Overridden in main when the site was opened from a reset link.
 final webLaunchProvider = Provider<WebLaunchPlan>((ref) => WebLaunchPlan.none);
 
+/// The address the website was opened on. Null on the phone.
+///
+/// The exchange itself waits until Supabase is up, after the first frame.
+final webLaunchUriProvider = Provider<Uri?>((ref) => null);
+
 enum WebLaunchKind { none, setPassword, error }
 
 /// What the website should do with the address it was opened on.

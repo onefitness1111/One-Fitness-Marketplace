@@ -31,6 +31,7 @@ import "../memberships/manage_memberships_screen.dart";
 import "../memberships/manage_products_screen.dart";
 import "../memberships/manage_waivers_screen.dart";
 import "../programs/program_library_page.dart";
+import "../payments/collect_payments_screen.dart";
 import "../reports/reports_hub_screen.dart";
 import "../requests/requests_screen.dart";
 import "../schedule/schedule_screen.dart";
@@ -109,6 +110,7 @@ const _titles = {
   "calendarsync": "Calendar Sync",
   "products": "Products",
   "reports": "Reports",
+  "collect": "Collect Payments",
   "waitlist": "Waitlist",
   "memberships": "Access Hub",
   "waivers": "Waivers & Contracts",
@@ -435,7 +437,10 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       "calendarsync" when isOwner => const SizedBox.shrink(),
                       "coachbadges" when !isOwner => const CoachMeritBadgesScreen(),
                       "mypay" => const MyPayScreen(),
-                      "reports" when isOwner => const ReportsHubScreen(),
+                      "reports" when isOwner => ReportsHubScreen(
+                        initialReportKey: ref.read(trainerModeProvider.notifier).pendingReportKey,
+                      ),
+                      "collect" when isOwner => const CollectPaymentsScreen(),
                       "memberships" when isOwner => const ManageMembershipsScreen(),
                       "products" when isOwner => const ManageProductsScreen(),
                       "waivers" when isOwner => const ManageWaiversScreen(),

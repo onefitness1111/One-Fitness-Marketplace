@@ -1,10 +1,14 @@
+import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:onefitness/features/auth/signing_in_label.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:supabase_flutter/supabase_flutter.dart" show PostgrestException;
 
 import "package:onefitness/core/supabase/supabase_service.dart";
 import "package:onefitness/core/utils/date_utils.dart";
 import "package:onefitness/data/cache/bootstrap_cache.dart";
+import "package:onefitness/core/json/off_main_json.dart";
+import "package:onefitness/core/startup/launch_timing.dart";
 import "package:onefitness/data/providers/dashboard_load.dart";
 
 void main() {
@@ -28,6 +32,39 @@ void main() {
   test("a cold launch is one wave with the bootstrap rpc and two without it", () {
     expect(coldLaunchWaves(bootstrapRpc: true), 1);
     expect(coldLaunchWaves(bootstrapRpc: false), 2);
+  });
+
+  test("sign-in waits on one client round and two staff rounds", () {
+    expect(blockingSignInRounds("client"), 1);
+    expect(blockingSignInRounds("coach"), 2);
+    expect(blockingSignInRounds("owner"), 2);
+  });
+
+  test("the sign-in button does not wait on the duplicate directory, contacts, or program blobs", () {
+    final client = blockingSignInReads("client");
+    expect(client.contains("profile_directory"), isFalse);
+    expect(client.contains("profile_contact_for"), isFalse);
+    expect(client.contains("bookings"), isTrue);
+    expect(client.contains("clients"), isTrue);
+    expect(backgroundSignInReads("client").contains("profile_directory"), isTrue);
+    expect(backgroundSignInReads("client").contains("profile_contact_for"), isTrue);
+    expect(backgroundSignInReads("client").contains("client_records_home"), isTrue);
+
+    final staff = blockingSignInReads("coach");
+    expect(staff.contains("profile_directory"), isTrue);
+    expect(staff.contains("profile_contact_for"), isFalse);
+    expect(backgroundSignInReads("owner").contains("profile_contact_for"), isTrue);
+    expect(backgroundSignInReads("coach").contains("client_records_programs"), isTrue);
+  });
+
+  test("the client home record leaves programs and nutrition for later", () {
+    expect(clientHomeRecordColumns.contains("savedPrograms"), isFalse);
+    expect(clientHomeRecordColumns.contains("nutrition"), isFalse);
+    expect(clientHomeRecordColumns.contains("habitSettings"), isTrue);
+    expect(clientHomeRecordColumns.contains("workoutLogs"), isTrue);
+    expect(clientHomeRecordColumns.contains("signatures"), isTrue);
+    expect(staffDetailRecordColumns.contains("savedPrograms"), isTrue);
+    expect(staffDetailRecordColumns.contains("nutrition"), isTrue);
   });
 
   test("any dashboard bootstrap error falls back to the existing queries", () async {
@@ -81,6 +118,32 @@ void main() {
     expect(sectionsForStaffScreen("schedule"), contains(GymSection.bookingsRest));
     expect(sectionsForStaffScreen("schedule"), contains(GymSection.blocked));
     expect(sectionsForStaffScreen("chat"), {GymSection.messages});
+  });
+
+  test("a large snapshot decodes off the caller and round-trips", () async {
+    final raw = "{\"hello\":\"${'x' * (offMainJsonBytes + 8)}\"}";
+    final decoded = await decodeJsonOffMain(raw);
+    expect(decoded, isA<Map>());
+    expect((decoded as Map)["hello"], startsWith("xxx"));
+
+    final encoded = await encodeJsonOffMain({"hello": "a"}, weight: offMainJsonBytes);
+    expect(encoded, contains("hello"));
+  });
+
+  testWidgets("the sign-in button shows a spinner while it waits", (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Center(child: SigningInLabel()))));
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text("Signing in…"), findsOneWidget);
+  });
+
+  test("launch timings can be marked more than once", () {
+    LaunchTiming.markProcessStart();
+    LaunchTiming.markProcessStart();
+    LaunchTiming.markFirstFrame();
+    LaunchTiming.markSessionRestored();
+    LaunchTiming.markDashboardUsable("test");
+    LaunchTiming.markDashboardUsable("again");
+    LaunchTiming.phase("step");
   });
 
   test("the snapshot is keyed per user and sign-out clears it", () async {

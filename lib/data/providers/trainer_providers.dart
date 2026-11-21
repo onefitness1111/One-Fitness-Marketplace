@@ -161,6 +161,14 @@ final exerciseCatalogProvider = NotifierProvider<ExerciseCatalogNotifier, List<E
 /// The gym's charge ledger (Reports → Financial), coach-mutable for
 /// waive/refund actions (mocked as local-only mutations, no real Stripe).
 class ChargesNotifier extends Notifier<List<Charge>> {
+  /// True once the rows are known to include `stripe_payment_intent_id`.
+  ///
+  /// The dashboard bootstrap payload lists today's charges without that
+  /// column. A collect-count taken from those rows would treat card
+  /// purchases as still due. Set this before assigning [state] so listeners
+  /// see the flag and the rows together.
+  bool paymentIntentKnown = false;
+
   @override
   List<Charge> build() => MockData.charges();
 
@@ -171,12 +179,24 @@ class ChargesNotifier extends Notifier<List<Charge>> {
         id: c.id, clientId: c.clientId, clientName: c.clientName, type: c.type, date: c.date, at: c.at, amount: c.amount,
         category: c.category, description: c.description, planId: c.planId, planName: c.planName,
         trainerId: c.trainerId, trainerName: c.trainerName, waivedAt: isoToday(),
+        stripePaymentIntentId: c.stripePaymentIntentId,
       ) : c).toList();
 
-  void setAll(List<Charge> next) => state = next;
+  void setAll(List<Charge> next, {bool? paymentIntentKnown}) {
+    if (paymentIntentKnown != null) this.paymentIntentKnown = paymentIntentKnown;
+    state = next;
+  }
 }
 
 final chargesProvider = NotifierProvider<ChargesNotifier, List<Charge>>(ChargesNotifier.new);
+
+/// Rebuilds with [chargesProvider]. Reads the flag that was set just before
+/// the list changed, so the dashboard can hide its collect banner until a
+/// load that selected `stripe_payment_intent_id` has landed.
+final chargesPaymentIntentKnownProvider = Provider<bool>((ref) {
+  ref.watch(chargesProvider);
+  return ref.read(chargesProvider.notifier).paymentIntentKnown;
+});
 
 /// Coach Merit Badge System — every coach's earned badges, gym-wide (like
 /// [chargesProvider], not scoped to "my own" — the owner needs to see
