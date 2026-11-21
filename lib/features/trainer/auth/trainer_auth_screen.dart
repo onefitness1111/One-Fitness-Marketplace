@@ -73,7 +73,7 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
       // Re-fetches roster/trainers/bookings/plans as this now-authenticated
       // coach (RLS returns more/different rows than the anonymous startup
       // bootstrap saw) and sets trainerAuth from the restored session.
-      await loadAndSeedCoreData(ref);
+      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -101,7 +101,7 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
         await SupabaseService.signOut();
         throw Exception("This account isn't the owner account.");
       }
-      await loadAndSeedCoreData(ref);
+      await loadAndSeedCoreData(ref, knownRole: profile["role"] as String?);
     } catch (e) {
       if (!mounted) return;
       setState(() {

@@ -53,14 +53,18 @@ class PushService {
   /// Wires the two handlers and replays a notification that launched the app
   /// from cold — `getInitialMessage` is the only place that one appears, and
   /// missing it is why a tap can seem to do nothing.
+  static bool _handlersAttached = false;
+
   static Future<void> attachHandlers() async {
-    if (!_initialised || kIsWeb) return;
+    if (!_initialised || kIsWeb || _handlersAttached) return;
+    _handlersAttached = true;
     try {
       FirebaseMessaging.onMessage.listen((m) => _handle(m, opened: false));
       FirebaseMessaging.onMessageOpenedApp.listen((m) => _handle(m, opened: true));
       final initial = await FirebaseMessaging.instance.getInitialMessage();
       if (initial != null) _handle(initial, opened: true);
     } catch (e) {
+      _handlersAttached = false;
       debugPrint("PushService.attachHandlers failed: $e");
     }
   }

@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
+import "../session/login_prompts.dart";
 import "../theme/app_colors.dart";
 import "../theme/app_theme.dart";
 import "pressable_scale.dart";
@@ -18,6 +19,7 @@ class BtnGold extends StatelessWidget {
       onPressed: onPressed == null
           ? null
           : () {
+              if (LoginPrompts.claim()) return;
               HapticFeedback.lightImpact();
               onPressed!();
             },
@@ -52,6 +54,7 @@ class BtnGhost extends StatelessWidget {
       onPressed: onPressed == null
           ? null
           : () {
+              if (LoginPrompts.claim()) return;
               HapticFeedback.lightImpact();
               onPressed!();
             },

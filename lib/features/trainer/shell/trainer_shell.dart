@@ -8,6 +8,8 @@ import "../../../core/chat/unread_chat.dart";
 import "../../../core/chat/unread_dot.dart";
 import "../../../core/live_log/live_log_store.dart";
 import "../../../core/navigation/local_back_stack.dart";
+import "../../../core/notifications/push_service.dart";
+import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/calendar_sync_section.dart";
@@ -167,7 +169,19 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     super.dispose();
   }
 
+  Future<void> _runFirstTap() async {
+    await LoginPrompts.whenDashboardReady();
+    if (!mounted) return;
+    await runLoginPromptSequence(
+      requestNotifications: PushService.registerForCurrentUser,
+      waiverNeeded: () => false,
+      showWaiver: () async {},
+    );
+    if (mounted) setState(() {});
+  }
+
   void _syncHomeTour(String mode, bool isOwner, String? staffId) {
+    if (LoginPrompts.armed || LoginPrompts.holding) return;
     if (staffId == null || !_homeTourArmed || _homeTourChecking || mode != "dashboard" || _homeTourEntry != null) {
       if (mode != "dashboard" && _homeTourEntry != null) {
         _homeTourArmed = false;
@@ -217,6 +231,16 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     void go(String key) {
       ref.read(trainerModeProvider.notifier).go(key);
       _scaffoldKey.currentState?.closeDrawer();
+      if (!isOwner) unawaited(ensureStaffSections(ref, key));
+    }
+
+    if (!isOwner && LoginPrompts.armed && mode == "dashboard") {
+      LoginPrompts.attach(_runFirstTap);
+    }
+    if (!isOwner) unawaited(ensureStaffSections(ref, mode));
+    final openClient = ref.watch(selectedClientIdProvider);
+    if (!isOwner && mode == "clients" && openClient != null && openClient.isNotEmpty) {
+      unawaited(ensureFullClientRecord(ref, openClient));
     }
 
     final bottomItems = [
@@ -284,10 +308,10 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         Builder(
                           key: kStaffTourKeys["staff-hamburger"],
                           builder: (context) => IconButton(
-                            onPressed: () {
+                            onPressed: gateLoginTap(() {
                               FocusManager.instance.primaryFocus?.unfocus();
                               Scaffold.of(context).openDrawer();
-                            },
+                            }),
                             icon: Icon(
                               LucideIcons.menu,
                               size: 22,
@@ -304,7 +328,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         if (showBack) ...[
                           const SizedBox(width: 8),
                           IconButton(
-                            onPressed: _handleBack,
+                            onPressed: gateLoginTap(_handleBack),
                             tooltip: "Back",
                             icon: Icon(
                               LucideIcons.chevronLeft,
@@ -582,7 +606,7 @@ class _TrainerDrawer extends ConsumerWidget {
                       // walks to Profile mid-session to dim a screen.
                       const ThemeModeToggleButton(),
                       IconButton(
-                        onPressed: () => Scaffold.of(context).closeDrawer(),
+                        onPressed: gateLoginTap(() => Scaffold.of(context).closeDrawer()),
                         tooltip: "Close menu",
                         icon: Icon(
                           LucideIcons.x,

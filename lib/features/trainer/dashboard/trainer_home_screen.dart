@@ -1,4 +1,6 @@
 import "../../../core/notifications/push_prompt.dart";
+import "../../../core/session/login_prompts.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../core/live_log/live_log_store.dart";
 import "../../../core/live_log/live_log_sync.dart";
 import "dart:async";
@@ -98,6 +100,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     });
     try {
       _runClientIds = [for (final b in group) b.clientId];
+      if (ref.read(trainerAuthProvider) != "owner") {
+        await Future.wait(_runClientIds.map((id) => ensureFullClientRecord(ref, id)));
+      }
+      if (!mounted) return;
       final run = await SupabaseService.startSessionRun(
         // The booking's coach, not the signed-in id: an owner's id is the
         // literal "owner", which is not a valid trainer_id.
@@ -182,6 +188,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       final rows = await SupabaseService.loadQuietNudges();
       if (!mounted) return;
       setState(() => _quietNudges = rows);
+      // Quiet-client rows need each person's logs. Those are not in the
+      // dashboard's first read, so fetch just the clients the list names.
+      if (ref.read(trainerAuthProvider) != "owner") {
+        for (final nudge in rows) {
+          unawaited(ensureFullClientRecord(ref, nudge.clientId));
+        }
+      }
     } catch (_) {}
   }
 
@@ -659,10 +672,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 ),
               ),
               OutlinedButton(
-                onPressed: () {
+                onPressed: gateLoginTap(() {
                   SupabaseService.signOut();
                   ref.read(trainerAuthProvider.notifier).signOut();
-                },
+                }),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.mute,
                   side: BorderSide(color: AppColors.line),
@@ -843,7 +856,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
             children: [
               SectionLabel(isOwner ? "Sessions" : "Your sessions"),
               TextButton(
-                onPressed: () => goMode("schedule"),
+                onPressed: gateLoginTap(() => goMode("schedule")),
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.gold,
                   padding: EdgeInsets.zero,
@@ -913,7 +926,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                           ),
                         ),
                         ElevatedButton(
-                          onPressed: mayStart ? () => _beginRun(slot, group) : null,
+                          onPressed: mayStart ? gateLoginTap(() => _beginRun(slot, group)) : null,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.gold,
                             disabledBackgroundColor: AppColors.gold.withValues(alpha: 0.35),
