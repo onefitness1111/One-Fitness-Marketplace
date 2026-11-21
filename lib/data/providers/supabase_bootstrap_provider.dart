@@ -474,11 +474,11 @@ Future<void> _loadFresh(
   Map<String, dynamic>? boot;
   if (!_bootstrapRpcMissing) {
     boot = await SupabaseService.fetchDashboardBootstrap(from: window.from, to: window.to);
-    if (boot == null || boot["directory"] is! List) {
+    if (dashboardBootstrapNeedsFallback(payload: boot)) {
       _bootstrapRpcMissing = true;
       boot = null;
       LaunchQueryLog.note(
-        "dashboard_bootstrap missing; next cold reads in this session skip it. "
+        "dashboard_bootstrap unavailable; next cold reads in this session skip it. "
         "waves=${coldLaunchWaves(bootstrapRpc: false)} "
         "(directory then contacts inside wave 1, then client and trainer rows)",
       );
