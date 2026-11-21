@@ -1,8 +1,8 @@
 // Saved cards and bank accounts. A client sees their own. The owner can open
-// a client's. A coach cannot — bank and card details are owner-only.
+// a client's, and so can that client's coach. The street address is not in
+// this response.
 //
-// Proposed replacement. Not deployed until you deploy this function.
-// The rest of this file matches the live function.
+// Not deployed until you deploy this function.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -31,15 +31,17 @@ serve(async (req) => {
 
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     let targetId = user.id;
-    if (clientId && clientId !== user.id) {
-      const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
-      if (me?.role !== "owner") {
-        throw new Error("Only the owner can see or change a client's card or bank details.");
-      }
-      targetId = clientId;
-    }
+    if (clientId && clientId !== user.id) targetId = clientId;
     const { data: clientRow } = await admin.from("clients")
-      .select("stripe_customer_id, stripe_subscription_id").eq("profile_id", targetId).maybeSingle();
+      .select("stripe_customer_id, stripe_subscription_id, primary_trainer_id")
+      .eq("profile_id", targetId)
+      .maybeSingle();
+    if (targetId !== user.id) {
+      const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      const role = me?.role ?? "";
+      const allowed = role === "owner" || (role === "coach" && clientRow?.primary_trainer_id === user.id);
+      if (!allowed) throw new Error("Not allowed to see or change that client's payment methods.");
+    }
     const customerId = clientRow?.stripe_customer_id as string | null;
 
     const secret = Deno.env.get("STRIPE_SECRET_KEY");

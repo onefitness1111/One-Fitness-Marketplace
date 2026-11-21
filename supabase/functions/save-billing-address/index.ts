@@ -38,6 +38,16 @@ serve(async (req) => {
     const allowed = user.id === clientId || role === "owner" || (role === "coach" && clientRow?.primary_trainer_id === user.id);
     if (!allowed) throw new Error("Not allowed to update that billing address.");
 
+    // A coach may enter the first address and may not replace one. The
+    // answer stays a yes/no. The street is not sent back.
+    if (role === "coach" && user.id !== clientId) {
+      const { data: existing } = await admin.from("clients").select("billing_address").eq("profile_id", clientId).maybeSingle();
+      const current = existing?.billing_address as { line1?: string } | null;
+      if (String(current?.line1 ?? "").trim() !== "") {
+        throw new Error("A billing address is already on file.");
+      }
+    }
+
     const { error } = await admin.rpc("set_client_billing_address", { p_client: clientId, p_address: address });
     if (error) throw new Error(error.message);
 

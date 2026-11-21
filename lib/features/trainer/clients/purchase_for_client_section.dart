@@ -8,6 +8,7 @@ import "../../../core/payments/payment_method_picker.dart";
 import "../../../core/payments/payment_sheet_service.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/privacy/client_contact_privacy.dart";
 import "../../../core/widgets/billing_address_form.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
@@ -426,16 +427,23 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         return;
       }
 
-      // The client's billing address — collected here if they have none yet,
-      // then saved to their profile for future purchases.
-      final billing = await ensureBillingAddress(context, clientId: widget.info.id, clientName: widget.info.name);
-      if (billing == null) {
+      // Address first, the same step as Add payment method. A coach who
+      // already has an address on file confirms city and state only.
+      if (!mounted) return;
+      final billing = await collectBillingAddress(
+        context,
+        clientId: widget.info.id,
+        clientName: widget.info.name,
+        viewer: isOwner ? BillingViewer.owner : BillingViewer.coach,
+      );
+      if (!billing.proceed) {
         if (mounted) setState(() => _busy = false);
         return;
       }
       if (!mounted) return;
       final result = await PaymentSheetService.purchase(
-        billing: billing,
+        billing: billing.address,
+        useStoredBilling: billing.storedOnFile,
         planId: plan.id,
         couponCode: couponCode,
         targetClientId: widget.info.id,

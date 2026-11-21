@@ -28,6 +28,7 @@ import "plan_price_row.dart";
 import "renewal_terms_section.dart";
 import "../../shared/balance_card.dart";
 import "charge_client_section.dart";
+import "../../../core/privacy/client_contact_privacy.dart";
 import "coach_private_fields.dart";
 import "purchase_for_client_section.dart";
 import "../../../core/utils/phone_guard.dart";
@@ -224,6 +225,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         child: PaymentDetailsSection(
           clientId: info.id,
           clientName: info.name,
+          viewer: ref.watch(trainerAuthProvider) == "owner" ? BillingViewer.owner : BillingViewer.coach,
           onBack: () => setState(() => _paymentDetails = false),
         ),
       );
@@ -822,13 +824,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ),
           ),
-          if (ref.watch(trainerAuthProvider) == "owner") ...[
+          if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => setState(() => _paymentDetails = true),
               icon: const Icon(LucideIcons.creditCard, size: 14),
               label: const Text("Payment details (add or remove card)"),
             ),
+          ],
+          if (ref.watch(trainerAuthProvider) == "owner") ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _freezeBusy
@@ -1835,11 +1839,15 @@ class _EditSectionState extends State<_EditSection> {
             const SizedBox(height: 10),
           ],
           CityStateFields(city: _city, state: _state, helper: null),
+          if (widget.showContact) ...[
+            const SizedBox(height: 14),
+            OwnerBillingAddress(clientId: widget.info.id, clientName: widget.info.name),
+          ],
           if (!widget.showContact) ...[
             const SizedBox(height: 14),
             CoachPrivatePhone(clientId: widget.info.id),
             const SizedBox(height: 10),
-            CoachPrivateAddress(clientId: widget.info.id),
+            CoachPrivateAddress(clientId: widget.info.id, clientName: widget.info.name),
           ],
           if (_err != null)
             Padding(
