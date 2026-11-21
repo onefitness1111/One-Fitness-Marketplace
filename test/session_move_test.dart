@@ -86,13 +86,88 @@ void main() {
       expect(result.reason, contains("already in that session"));
     });
 
-    test("a slot running a different session type for that coach is refused", () {
+    test("a slot running a different session type is refused for a coach", () {
       // The coach can't run a one-on-one and a semi-private at 10:00.
       final result = moveClient(booking(), [
         booking(id: "b2", clientId: "c2", slot: 600, sessionType: "one-on-one"),
-      ]);
+      ], isOwner: false);
       expect(result, isA<MoveRefused>());
-      expect((result as MoveRefused).reason, contains("different session"));
+      expect((result as MoveRefused).reason, "This coach already has a session at that time.");
+    });
+
+    test("the owner can confirm a different session type in that slot", () {
+      final result = moveClient(booking(), [
+        booking(id: "b2", clientId: "c2", slot: 600, sessionType: "one-on-one"),
+      ]);
+      expect(result, isA<MoveAllowed>());
+      final allowed = result as MoveAllowed;
+      expect(allowed.conflict?.sessionType, "one-on-one");
+      expect(allowed.needsOverride, isTrue);
+      expect(allowed.needsCapacityOverride, isFalse);
+    });
+
+    test("a session 45 minutes away blocks a coach", () {
+      // 12:00 against an existing 12:45. Under an hour counts, even though the minute differs.
+      final result = moveClient(
+        booking(slot: 8 * 60),
+        [booking(id: "b2", clientId: "c2", slot: 12 * 60 + 45)],
+        toSlot: 12 * 60,
+        isOwner: false,
+      );
+      expect(result, isA<MoveRefused>());
+      expect((result as MoveRefused).reason, "This coach already has a session at that time.");
+    });
+
+    test("the owner can confirm a move that starts under an hour from another session", () {
+      final result = moveClient(
+        booking(slot: 8 * 60),
+        [booking(id: "b2", clientId: "c2", slot: 12 * 60 + 45)],
+        toSlot: 12 * 60,
+      );
+      expect(result, isA<MoveAllowed>());
+      final allowed = result as MoveAllowed;
+      expect(allowed.conflict?.slot, 12 * 60 + 45);
+      expect(allowed.needsOverride, isTrue);
+    });
+
+    test("an hour apart is not an overlap", () {
+      final result = moveClient(
+        booking(slot: 8 * 60),
+        [booking(id: "b2", clientId: "c2", slot: 13 * 60)],
+        toSlot: 12 * 60,
+        isOwner: false,
+      );
+      expect(result, isA<MoveAllowed>());
+      expect((result as MoveAllowed).needsOverride, isFalse);
+    });
+
+    test("sliding the only booking forty-five minutes does not collide with itself", () {
+      final result = moveClient(booking(slot: 12 * 60), [], toSlot: 12 * 60 + 45, isOwner: false);
+      expect(result, isA<MoveAllowed>());
+    });
+
+    test("the client's own other session still stops the owner", () {
+      final result = moveClient(
+        booking(slot: 8 * 60),
+        [
+          booking(id: "near", clientId: "c2", slot: 12 * 60 + 45),
+          booking(id: "busy", clientId: "c1", trainerId: "t2", slot: 12 * 60),
+        ],
+        toSlot: 12 * 60,
+      );
+      expect(result, isA<MoveRefused>());
+      expect((result as MoveRefused).reason, contains("Dana"));
+      expect(result.reason, contains("already has a session"));
+    });
+
+    test("people who stay in the original session still block a short move", () {
+      final result = moveClient(
+        booking(slot: 12 * 60),
+        [booking(id: "b2", clientId: "c2", slot: 12 * 60)],
+        toSlot: 12 * 60 + 30,
+        isOwner: false,
+      );
+      expect(result, isA<MoveRefused>());
     });
 
     test("a client already booked with another coach at that time is refused", () {
@@ -205,12 +280,28 @@ void main() {
       expect(moveSession(pair, [], toDate: "2026-11-09"), isA<MoveAllowed>());
     });
 
-    test("a coach already running something else then is refused", () {
+    test("a coach already running something else that day is refused", () {
+      final result = moveSession(pair, [
+        booking(id: "o1", clientId: "c9", date: "2026-11-12", sessionType: "one-on-one"),
+      ], isOwner: false);
+      expect(result, isA<MoveRefused>());
+      expect((result as MoveRefused).reason, "This coach already has a session at that time.");
+    });
+
+    test("the owner can confirm moving onto a day that already has a session then", () {
       final result = moveSession(pair, [
         booking(id: "o1", clientId: "c9", date: "2026-11-12", sessionType: "one-on-one"),
       ]);
+      expect(result, isA<MoveAllowed>());
+      expect((result as MoveAllowed).needsOverride, isTrue);
+    });
+
+    test("a session under an hour away on the new day blocks a coach", () {
+      final result = moveSession(pair, [
+        booking(id: "o1", clientId: "c9", date: "2026-11-12", slot: 9 * 60 + 45),
+      ], isOwner: false);
       expect(result, isA<MoveRefused>());
-      expect((result as MoveRefused).reason, contains("different session"));
+      expect((result as MoveRefused).reason, "This coach already has a session at that time.");
     });
 
     test("a client in the session who is busy that day is refused", () {

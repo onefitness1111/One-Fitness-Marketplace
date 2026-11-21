@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/booking_limits.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../data/models/single_session_credit.dart";
 
@@ -114,10 +115,21 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
 }
 
 /// A one-line explanation for an outcome that did not end in a booking.
+///
+/// The booking-limit trigger is named in plain words. A dropped connection
+/// is the only case that mentions the connection. Anything else keeps the
+/// server's own sentence when it has one.
 String singleSessionFailureMessage(SingleSessionOutcome o) {
+  final kind = classifyBookingLimitError(o.message ?? "");
+  final refund = o.refunded ? " The charge was refunded." : "";
+  if (kind == BookingLimitKind.overlap) return "$coachOverlapRefusal$refund".trim();
+  if (kind == BookingLimitKind.capacity) return "$coachCapacityRefusal$refund".trim();
   if (o.full && o.refunded && (o.message ?? "").trim().isNotEmpty) return o.message!.trim();
   if (o.full) return "That session filled up${o.refunded ? " — the charge was refunded" : ""}. Nothing was booked.";
-  return o.message ?? "Couldn't book that session.";
+  final message = (o.message ?? "").trim();
+  if (message.isEmpty) return "Couldn't book that session. Please try again.";
+  if (isBookingNetworkError(message)) return bookingConnectionMessage;
+  return message;
 }
 
 /// The on-screen notice when a card was charged and then refunded because

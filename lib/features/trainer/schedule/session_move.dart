@@ -8,21 +8,19 @@
 /// without pumping a widget.
 ///
 /// Every refusal here is also enforced by the database. `enforce_booking_limits`
-/// (migration 07) is a BEFORE INSERT trigger, and both moves below are written
-/// as insert-then-delete for exactly that reason: the server still gets to
+/// is a BEFORE INSERT trigger, and both moves below are written as
+/// insert-then-delete for exactly that reason: the server still gets to
 /// refuse, and a refused insert leaves the original booking where it was. These
 /// checks exist to say *why* in a sentence a coach can act on, not to be the
-/// only thing standing in the way.
+/// only thing standing in the way. A coach overlap uses the same hour as the
+/// trigger ([kTrainerOverlapMinutes]): starts under 60 minutes apart, excluding
+/// the shared session being joined. An owner is allowed through after they
+/// confirm, because the trigger accepts an insert with `overridden_by` set.
 library;
 
+import "../../../core/utils/booking_limits.dart";
 import "../../../core/utils/scheduling_utils.dart";
 import "../../../data/models/booking.dart";
-
-/// Minutes two sessions must be apart before they stop overlapping. Matches
-/// `session_len` in `enforce_booking_limits` and [findTrainerConflict] — if
-/// the app and the database disagree about what overlaps, a move the app
-/// allows gets refused on insert with a raw Postgres message.
-const _sessionLen = 60;
 
 sealed class MoveCheck {
   const MoveCheck();
@@ -45,14 +43,24 @@ class MoveRefused extends MoveCheck {
 /// caller confirms first. Only ever set for an owner; a coach gets a
 /// [MoveRefused] instead, since the database would refuse their insert.
 class MoveAllowed extends MoveCheck {
-  const MoveAllowed({required this.count, required this.cap, this.overBy = 0});
+  const MoveAllowed({
+    required this.count,
+    required this.cap,
+    this.overBy = 0,
+    this.conflict,
+  });
 
   /// What the target session holds now, before the move.
   final int count;
   final int cap;
   final int overBy;
 
-  bool get needsOverride => overBy > 0;
+  /// Another session this coach is already running within the hour.
+  /// Set only for an owner, who can book over it. A coach is refused first.
+  final Booking? conflict;
+
+  bool get needsCapacityOverride => overBy > 0;
+  bool get needsOverride => needsCapacityOverride || conflict != null;
 }
 
 /// Bookings that still hold a seat. A cancelled one occupies nothing, and
@@ -78,7 +86,7 @@ Booking? _clientClash(
         b.date == date &&
         !ignoreIds.contains(b.id) &&
         !(b.trainerId == exceptTrainerId && b.slot == slot) &&
-        (b.slot - slot).abs() < _sessionLen,
+        (b.slot - slot).abs() < kTrainerOverlapMinutes,
   );
   return clashes.isEmpty ? null : clashes.first;
 }
@@ -114,15 +122,25 @@ MoveCheck checkClientMove({
     return MoveRefused("$clientName is already in that session.");
   }
 
-  // The target coach can only run one kind of session per slot. Joining the
-  // same type is fine — that's the whole point — so this only fires when the
-  // slot is already running something else.
-  if (findTrainerConflict(live, toTrainerId, toDate, toSlot, toSessionType, toDiscipline) != null) {
-    return const MoveRefused("That coach is running a different session at that time.");
+  // Same rule as the database: this coach already has a session starting
+  // within the hour, and it isn't the shared session being joined. The
+  // booking being moved doesn't count — a 30-minute slide of the only
+  // person in it is not a clash with itself. Anyone staying behind does.
+  final conflict = findTrainerConflict(
+    live.where((b) => b.id != booking.id).toList(),
+    toTrainerId,
+    toDate,
+    toSlot,
+    toSessionType,
+    toDiscipline,
+  );
+  if (conflict != null && !isOwner) {
+    return const MoveRefused(coachOverlapRefusal);
   }
 
   // The client's own diary. Being double-booked with two coaches at once is
-  // the one clash the target session's own capacity can't catch.
+  // the one clash the target session's own capacity can't catch. An owner
+  // override covers the coach's schedule, not this.
   final clash = _clientClash(
     live,
     booking.clientId,
@@ -132,7 +150,14 @@ MoveCheck checkClientMove({
     exceptTrainerId: toTrainerId,
   );
   if (clash != null) {
-    return MoveRefused("$clientName already has a session at ${_hhmm(clash.slot)} that day.");
+    return MoveRefused(
+      "$clientName already has a session at ${_hhmm(clash.slot)} that day.",
+    );
+  }
+
+  if (conflict != null) {
+    final cap = capFor(toSessionType, semiPrivateCap: semiPrivateCap);
+    return MoveAllowed(count: target.length, cap: cap, conflict: conflict);
   }
 
   final cap = capFor(toSessionType, semiPrivateCap: semiPrivateCap);
@@ -142,7 +167,11 @@ MoveCheck checkClientMove({
         "That session is at its limit of $cap — only the owner can move someone in past it.",
       );
     }
-    return MoveAllowed(count: target.length, cap: cap, overBy: target.length + 1 - cap);
+    return MoveAllowed(
+      count: target.length,
+      cap: cap,
+      overBy: target.length + 1 - cap,
+    );
   }
   return MoveAllowed(count: target.length, cap: cap);
 }
@@ -157,7 +186,8 @@ MoveCheck checkSessionMove({
   required bool isOwner,
   int semiPrivateCap = 4,
 }) {
-  if (group.isEmpty) return const MoveRefused("There's nothing in that session to move.");
+  if (group.isEmpty)
+    return const MoveRefused("There's nothing in that session to move.");
   final first = group.first;
   if (toDate == first.date) return const MoveNoop();
   if (toDate.compareTo(today) < 0) {
@@ -171,16 +201,16 @@ MoveCheck checkSessionMove({
   final live = _live(all).where((b) => !movingIds.contains(b.id)).toList();
   final target = sessionGroup(live, first.trainerId, toDate, first.slot);
 
-  if (findTrainerConflict(
-        live,
-        first.trainerId,
-        toDate,
-        first.slot,
-        first.sessionType,
-        first.discipline,
-      ) !=
-      null) {
-    return const MoveRefused("That coach already has a different session at that time on that day.");
+  final dayConflict = findTrainerConflict(
+    live,
+    first.trainerId,
+    toDate,
+    first.slot,
+    first.sessionType,
+    first.discipline,
+  );
+  if (dayConflict != null && !isOwner) {
+    return const MoveRefused(coachOverlapRefusal);
   }
 
   for (final b in group) {
@@ -193,11 +223,16 @@ MoveCheck checkSessionMove({
       exceptTrainerId: first.trainerId,
     );
     if (clash != null) {
-      return const MoveRefused("Someone in this session is already booked at that time on that day.");
+      return const MoveRefused(
+        "Someone in this session is already booked at that time on that day.",
+      );
     }
   }
 
   final cap = capFor(first.sessionType, semiPrivateCap: semiPrivateCap);
+  if (dayConflict != null) {
+    return MoveAllowed(count: target.length, cap: cap, conflict: dayConflict);
+  }
   final after = target.length + group.length;
   if (after > cap) {
     if (!isOwner) {

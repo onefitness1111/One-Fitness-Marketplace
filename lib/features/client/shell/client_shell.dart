@@ -405,6 +405,9 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     final client = ref.watch(clientRecordProvider);
     final bookings = ref.watch(clientBookingsProvider);
     final earnedBadges = ref.watch(earnedBadgesProvider);
+    // Waiver docs arrive after the dashboard. Watching them lets the prompt
+    // run on the frame they land, instead of only on the empty first frame.
+    ref.watch(waiversProvider);
     _queueBadgeCelebration(info.id, earnedBadges);
     final plan = ref
         .watch(membershipPlansProvider.notifier)

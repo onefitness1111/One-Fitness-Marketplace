@@ -188,8 +188,8 @@ class _ProductDetailState extends ConsumerState<_ProductDetail> {
       _error = null;
     });
     // Billing address first (saved to the profile, reused next time).
-    final billing = await ensureBillingAddress(context, clientId: ref.read(clientInfoProvider).id);
-    if (billing == null) {
+    final billing = await collectBillingAddress(context, clientId: ref.read(clientInfoProvider).id);
+    if (!billing.proceed) {
       if (mounted) setState(() => _busy = false);
       return;
     }
@@ -197,7 +197,8 @@ class _ProductDetailState extends ConsumerState<_ProductDetail> {
     final result = await PaymentSheetService.purchaseProduct(
       productId: widget.product.id,
       size: size,
-      billing: billing,
+      billing: billing.address,
+      useStoredBilling: billing.storedOnFile,
       businessName: ref.read(platformSettingsProvider).businessName,
     );
     if (!mounted) return;
