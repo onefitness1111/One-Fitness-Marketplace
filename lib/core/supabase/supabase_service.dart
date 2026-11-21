@@ -2903,15 +2903,19 @@ class SupabaseService {
     }
   }
 
-  static Future<void> recordSmsConsent(String profileId) async {
+  /// True when at least one of the two consent rows was written. Both
+  /// writes use the same timestamp and the exact disclosure on screen.
+  static Future<bool> recordSmsConsent(String profileId) async {
     final now = DateTime.now().toUtc().toIso8601String();
     final text = smsConsentRecord();
+    var saved = false;
     try {
       await client.from("profiles").update({
         "sms_opted_out": false,
         "sms_consent_at": now,
         "sms_consent_text": text,
       }).eq("id", profileId);
+      saved = true;
     } catch (_) {}
     try {
       await client.from("clients").update({
@@ -2919,7 +2923,21 @@ class SupabaseService {
         "sms_opt_in_at": now,
         "sms_consent_text": text,
       }).eq("profile_id", profileId);
+      saved = true;
     } catch (_) {}
+    return saved;
+  }
+
+  /// STOP (or an equivalent opt-out) lives on the signed-in profile.
+  /// A failed read answers false so the prompt can still be offered to
+  /// someone who has simply never agreed.
+  static Future<bool> mySmsOptedOut() async {
+    try {
+      final prefs = await _myMessagingPrefs();
+      return prefs?["sms_opted_out"] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> setMessageReaction({
@@ -4739,6 +4757,12 @@ class SupabaseService {
   /// Owner only. Sends the draft they typed. Nothing calls this on its own.
   static Future<Map<String, dynamic>> announceAppUpdate({required String text}) =>
       _invokeFunction("announce-app-update", {"title": "ONE Fitness", "text": text});
+
+  /// Owner only. In-app push to clients who have not agreed to texts.
+  /// The function does not send an SMS. Nothing calls this except the
+  /// owner's button.
+  static Future<Map<String, dynamic>> promptSmsOptIn() =>
+      _invokeFunction("prompt-sms-opt-in", {});
 
   /// One note to many clients. Each app-chat copy lands in that client's
   /// own thread with the sender. The server drops anyone the sender is not

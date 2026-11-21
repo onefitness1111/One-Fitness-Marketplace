@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/notifications/push_prompt.dart";
+import "../sms/sms_opt_in_prompt.dart";
 import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -170,6 +171,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
           )),
           const SizedBox(height: 8),
           const TurnOnNotificationsBanner(),
+          const SmsOptInPromptSlot(padding: EdgeInsets.only(bottom: 12)),
           const SizedBox(height: 2),
           stag(Padding(
             padding: const EdgeInsets.only(bottom: 16),

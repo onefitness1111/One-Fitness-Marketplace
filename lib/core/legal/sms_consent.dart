@@ -12,6 +12,7 @@
 ///   * how often                     — "Message frequency varies"
 ///   * cost                          — "Message and data rates may apply"
 ///   * how to stop, and get help     — STOP / HELP
+///   * purchase is not conditioned   — consent is not required to buy
 ///   * where the terms live          — Terms of Use and Privacy Policy
 ///
 /// Consent must also be an affirmative act: this box starts unticked, and
@@ -21,7 +22,7 @@ library;
 /// Bump when the wording changes materially — the text agreed to is stored
 /// per client alongside the timestamp, so old consents stay attributable to
 /// what they actually said.
-const String kSmsConsentVersion = "2026-09-29";
+const String kSmsConsentVersion = "2026-11-21";
 
 /// The single line shown next to the checkbox.
 const String kSmsConsentLabel =
@@ -30,7 +31,8 @@ const String kSmsConsentLabel =
 /// The required disclosures, shown directly under the label.
 const String kSmsConsentDisclosure =
     "Message frequency varies. Message and data rates may apply. "
-    "Reply STOP to unsubscribe or HELP for help. "
+    "Reply STOP to opt out or HELP for help. "
+    "Consent is not required to buy. "
     "See our Terms of Use and Privacy Policy.";
 
 /// What gets stored against the client as the record of what they agreed
