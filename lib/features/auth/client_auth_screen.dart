@@ -1,6 +1,8 @@
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../core/auth/password_rules.dart";
 import "../../core/supabase/supabase_service.dart";
 import "../../core/theme/app_colors.dart";
 import "../../core/utils/auth_error.dart";
@@ -43,7 +45,7 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
     setState(() => _busy = true);
     try {
       await SupabaseService.sendPasswordReset(address);
-      if (mounted) show("Reset email sent. Open it on this phone.");
+      if (mounted) show(passwordResetSentMessage(onWeb: kIsWeb));
     } catch (e) {
       if (mounted) show(authErrorMessage(e));
     } finally {

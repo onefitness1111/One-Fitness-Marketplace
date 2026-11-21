@@ -1,11 +1,10 @@
-import "dart:io" show Platform;
-
 import "package:flutter/material.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:url_launcher/url_launcher.dart";
+import "../platform/host_platform.dart";
 import "../supabase/supabase_service.dart";
 import "../theme/app_colors.dart";
 import "../../data/providers/trainer_providers.dart";
@@ -56,7 +55,7 @@ class _CalendarSyncSectionState extends ConsumerState<CalendarSyncSection> {
   /// True on an iPhone/iPad, where Apple Calendar is a real second option.
   /// Elsewhere Google is the only calendar worth offering directly, so
   /// there is nothing to choose between and the sheet is skipped.
-  bool get _offersAppleCalendar => !kIsWeb && Platform.isIOS;
+  bool get _offersAppleCalendar => !kIsWeb && hostIsIOS;
 
   Future<void> _sync() async {
     setState(() {

@@ -1,0 +1,4 @@
+# Cloudflare Pages and Netlify. A real file (main.dart.js, assets, icons)
+# is served as itself. Every other address, including /login and /profile,
+# loads the app so a refresh does not 404.
+/*    /index.html   200

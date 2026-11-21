@@ -1,8 +1,8 @@
 import "dart:convert";
-import "dart:io";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../platform/local_image.dart";
 import "../theme/app_colors.dart";
 import "../utils/gym_location_link.dart";
 import "../../data/providers/platform_settings_provider.dart";
@@ -159,7 +159,7 @@ class _TransformationFrame extends StatelessWidget {
     if (src == null || src.isEmpty) return null;
     if (src.startsWith("http")) return NetworkImage(src);
     if (src.startsWith("data:")) return MemoryImage(base64Decode(src.substring(src.indexOf(",") + 1)));
-    return FileImage(File(src));
+    return localFileImage(src);
   }
 
   @override

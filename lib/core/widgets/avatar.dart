@@ -1,6 +1,6 @@
 import "dart:convert";
-import "dart:io";
 import "package:flutter/material.dart";
+import "../platform/local_image.dart";
 import "../theme/app_colors.dart";
 
 /// Mirrors FormPrimitives.jsx `Avatar` — circular photo or initials fallback,
@@ -34,7 +34,7 @@ class Avatar extends StatelessWidget {
     );
 
     if (src != null && src!.isNotEmpty) {
-      ImageProvider provider;
+      ImageProvider? provider;
       if (src!.startsWith("http")) {
         provider = NetworkImage(src!);
       } else if (src!.startsWith("data:")) {
@@ -43,7 +43,23 @@ class Avatar extends StatelessWidget {
         // data URL in profiles.photo_url, same convention the web app uses.
         provider = MemoryImage(base64Decode(src!.substring(src!.indexOf(",") + 1)));
       } else {
-        provider = FileImage(File(src!));
+        provider = localFileImage(src!);
+      }
+      if (provider == null) {
+        return Container(
+          width: size,
+          height: size,
+          decoration: decoration,
+          alignment: Alignment.center,
+          child: Text(
+            _initials,
+            style: TextStyle(
+              color: AppColors.gold,
+              fontWeight: FontWeight.bold,
+              fontSize: size * 0.38,
+            ),
+          ),
+        );
       }
       return Container(
         width: size,

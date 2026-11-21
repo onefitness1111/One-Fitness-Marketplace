@@ -1,8 +1,10 @@
 import "dart:convert";
 import "dart:typed_data";
 
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 
+import "../../../core/platform/web_fallback.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/food_catalog.dart";
 import "../../../core/utils/nutrition_helpers.dart";
@@ -69,6 +71,10 @@ class _AddMealScreenState extends State<AddMealScreen> {
   }
 
   Future<void> _pickPhoto(bool camera) async {
+    if (camera && kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(kAvailableInMobileApp)));
+      return;
+    }
     final bytes = await pickPlatePhotoBytes(camera: camera);
     if (bytes != null && mounted) setState(() => _photo = bytes);
   }

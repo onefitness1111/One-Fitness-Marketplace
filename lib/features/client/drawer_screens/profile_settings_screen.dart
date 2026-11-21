@@ -1,4 +1,5 @@
 import "dart:convert";
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
@@ -437,7 +438,9 @@ class _NotificationPreferencesSectionState extends ConsumerState<_NotificationPr
                       Text("App notifications", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                       SizedBox(height: 2),
                       Text(
-                        "Booking confirmations, reminders, messages from your coach and other updates on this phone.",
+                        kIsWeb
+                            ? "Available in the mobile app. This switch is saved for the phone app. The website does not pop up alerts."
+                            : "Booking confirmations, reminders, messages from your coach and other updates on this phone.",
                         style: TextStyle(fontSize: 12, color: AppColors.mute),
                       ),
                     ],

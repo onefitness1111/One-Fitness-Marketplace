@@ -1,7 +1,7 @@
-import "dart:io" show Platform;
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/foundation.dart";
+import "../platform/host_platform.dart";
 import "../supabase/supabase_service.dart";
 
 /// Background/terminated-state handler. Must be a top-level function — the
@@ -100,7 +100,7 @@ class PushService {
       // On iOS the APNs token can lag behind registration; without it FCM
       // returns null rather than a token. Absent APNs config this simply
       // stays null and we skip, instead of throwing.
-      if (!kIsWeb && Platform.isIOS) {
+      if (!kIsWeb && hostIsIOS) {
         final apns = await messaging.getAPNSToken();
         if (apns == null) {
           debugPrint("PushService: no APNs token yet — skipping registration.");
@@ -125,7 +125,7 @@ class PushService {
     try {
       await SupabaseService.registerDeviceToken(
         token,
-        kIsWeb ? "web" : (Platform.isIOS ? "ios" : "android"),
+        kIsWeb ? "web" : (hostIsIOS ? "ios" : "android"),
       );
     } catch (e) {
       debugPrint("PushService: couldn't register token: $e");

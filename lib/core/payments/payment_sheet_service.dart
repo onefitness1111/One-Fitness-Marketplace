@@ -1,7 +1,8 @@
-import "dart:io" show Platform;
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter_stripe/flutter_stripe.dart";
 import "../../data/models/billing_address.dart";
+import "../platform/host_platform.dart";
+import "../platform/web_fallback.dart";
 import "../supabase/supabase_service.dart";
 
 /// Result of an in-app purchase attempt. [cancelled] is separated from
@@ -78,7 +79,7 @@ bool get applePayConfigured => kApplePayMerchantId.isNotEmpty;
 /// modal (the "how would you like to pay" sheet) is still animating closed —
 /// no error, the tap just does nothing. Give the dismissal time to finish.
 Future<void> _letIosSettle() async {
-  if (!kIsWeb && Platform.isIOS) {
+  if (!kIsWeb && hostIsIOS) {
     await Future<void>.delayed(const Duration(milliseconds: 600));
   }
 }
@@ -139,7 +140,7 @@ class PaymentSheetService {
     BillingAddress? billing,
   }) async {
     if (kIsWeb) {
-      return const PaymentResult.failed("In-app payment isn't available on web yet.");
+      return const PaymentResult.failed(kAvailableInMobileApp);
     }
     final Map<String, dynamic> intent;
     try {
@@ -167,7 +168,7 @@ class PaymentSheetService {
     BillingAddress? billing,
   }) async {
     if (kIsWeb) {
-      return (const PaymentResult.failed("In-app payment isn't available on web yet."), null);
+      return (const PaymentResult.failed(kAvailableInMobileApp), null);
     }
     final Map<String, dynamic> intent;
     try {
@@ -190,7 +191,7 @@ class PaymentSheetService {
   /// no-show fees). The server picks the amount from their balance.
   static Future<PaymentResult> payBalance({required String businessName, BillingAddress? billing}) async {
     if (kIsWeb) {
-      return const PaymentResult.failed("In-app payment isn't available on web yet.");
+      return const PaymentResult.failed(kAvailableInMobileApp);
     }
     final Map<String, dynamic> intent;
     try {
@@ -227,7 +228,7 @@ class PaymentSheetService {
     required String businessName,
     BillingAddress? billing,
   }) async {
-    if (kIsWeb) return const PaymentResult.failed("Adding a card isn't available on web yet.");
+    if (kIsWeb) return const PaymentResult.failed(kAvailableInMobileApp);
     final setup = await SupabaseService.chargeClient(clientId: clientId, action: "setup");
     final clientSecret = setup["setupIntentClientSecret"] as String?;
     final publishableKey = setup["publishableKey"] as String?;
@@ -260,7 +261,7 @@ class PaymentSheetService {
 
   static Future<PaymentResult> addPaymentMethod({required String businessName, String? clientId, BillingAddress? billing}) async {
     if (kIsWeb) {
-      return const PaymentResult.failed("Adding a card isn't available on web yet.");
+      return const PaymentResult.failed(kAvailableInMobileApp);
     }
     final Map<String, dynamic> setup;
     try {
@@ -318,7 +319,7 @@ class PaymentSheetService {
     // which this app doesn't ship — failing loudly beats silently doing
     // nothing on a platform where the sheet can't appear.
     if (kIsWeb) {
-      return const PaymentResult.failed("In-app payment isn't available on web yet.");
+      return const PaymentResult.failed(kAvailableInMobileApp);
     }
 
     final Map<String, dynamic> intent;
@@ -352,7 +353,7 @@ class PaymentSheetService {
     BillingAddress? billing,
   }) async {
     if (kIsWeb) {
-      return (const PaymentResult.failed("In-app payment isn't available on web yet."), null);
+      return (const PaymentResult.failed(kAvailableInMobileApp), null);
     }
     final Map<String, dynamic> intent;
     try {

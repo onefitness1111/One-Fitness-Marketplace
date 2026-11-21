@@ -1,7 +1,7 @@
 import "dart:convert";
 import "dart:typed_data";
 
-import "package:flutter/foundation.dart" show compute;
+import "package:flutter/foundation.dart" show compute, kIsWeb;
 import "package:flutter/material.dart";
 import "package:image/image.dart" as img;
 import "package:image_picker/image_picker.dart";
@@ -56,6 +56,9 @@ Future<String?> pickProgressPhotoDataUrl() async {
 /// A plate or meal photo, from the camera or the library, compressed the
 /// same way as a progress photo so it stays small.
 Future<Uint8List?> pickPlatePhotoBytes({required bool camera}) async {
+  // The browser file picker covers "choose a photo". A live camera capture
+  // is left to the phone app; callers tell the person that.
+  if (camera && kIsWeb) return null;
   try {
     final picked = await ImagePicker().pickImage(
       source: camera ? ImageSource.camera : ImageSource.gallery,

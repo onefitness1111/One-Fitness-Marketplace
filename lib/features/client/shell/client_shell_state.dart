@@ -43,6 +43,14 @@ class ClientScreenNotifier extends Notifier<String> {
     _history.clear();
     state = "dashboard";
   }
+
+  /// Opens [screen] with nothing behind it. Used when the website is
+  /// refreshed on /profile, so Back does not return to an empty history.
+  void openFresh(String screen) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _history.clear();
+    state = screen;
+  }
 }
 
 final clientScreenProvider = NotifierProvider<ClientScreenNotifier, String>(

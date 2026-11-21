@@ -15,8 +15,15 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
 
   try {
-    const { profileId } = await req.json();
+    const body = await req.json();
+    const { profileId } = body;
     const id = String(profileId ?? "").trim();
+    // Only these two. Anything else stays the phone link, so a bad
+    // request cannot send people to some other site.
+    const mobileRedirect = "onefitness://reset-password";
+    const portalRedirect = "https://portal.onefitnessworkout.com/reset-password";
+    const requested = String(body.redirectTo ?? "").trim();
+    const redirectTo = requested === portalRedirect ? portalRedirect : mobileRedirect;
     if (!id) throw new Error("Choose an account first.");
 
     const { admin, role } = await requireStaff(req);
@@ -41,7 +48,7 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         email: member.email,
-        redirect_to: "onefitness://reset-password",
+        redirect_to: redirectTo,
       }),
     });
     if (!res.ok) {
