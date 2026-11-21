@@ -5,6 +5,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/squad_chat_message.dart";
+import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
 
@@ -16,7 +17,12 @@ List<Color> get _chartColors => [AppColors.statusGreen, AppColors.gold, Color(0x
 /// Mirrors LogProgressPage.jsx's "Lifts" tab — pick up to 6 exercises from
 /// workout history, chart their heaviest completed set over time.
 class ExerciseLiftsTab extends ConsumerStatefulWidget {
-  const ExerciseLiftsTab({super.key});
+  const ExerciseLiftsTab({super.key, this.logs, this.allowShare = true});
+
+  /// When set, these logs are charted instead of the signed-in client's.
+  /// The coach Progress tab passes the client's logs and turns sharing off.
+  final List<WorkoutLogEntry>? logs;
+  final bool allowShare;
 
   @override
   ConsumerState<ExerciseLiftsTab> createState() => _ExerciseLiftsTabState();
@@ -53,16 +59,16 @@ class _ExerciseLiftsTabState extends ConsumerState<ExerciseLiftsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final client = ref.watch(clientRecordProvider);
+    final clientLogs = widget.logs ?? ref.watch(clientRecordProvider).workoutLogs;
     final info = ref.watch(clientInfoProvider);
-    final squad = ref.watch(squadsProvider.notifier).squadFor(info.id);
+    final squad = widget.allowShare ? ref.watch(squadsProvider.notifier).squadFor(info.id) : null;
 
     // name -> [(date, weight)], mirrors LogProgressPage.jsx's exerciseHistory build-up.
     final history = <String, List<(String, double)>>{};
     // Keyed by workout (date + position), not by date alone: two workouts
     // logged on the same day used to collapse into one point, so the chart
     // still said "need more history" after the client had logged two.
-    final orderedLogs = [...client.workoutLogs.asMap().entries]
+    final orderedLogs = [...clientLogs.asMap().entries]
       ..sort((a, b) {
         final c = a.value.date.compareTo(b.value.date);
         return c != 0 ? c : a.key.compareTo(b.key);

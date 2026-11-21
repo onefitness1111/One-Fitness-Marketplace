@@ -10,7 +10,7 @@
 /// brackets rather than invented: [WEBSITE].
 library;
 
-const String kPrivacyPolicyEffectiveDate = "26 September 2026";
+const String kPrivacyPolicyEffectiveDate = "21 November 2026";
 
 const String kPrivacyPolicy = """
 One Fitness Workout d/b/a ONE Fitness Marketplace ("ONE Fitness," "we,"
@@ -31,6 +31,13 @@ to this policy.
   history, body measurements, injury or health notes you provide on intake
   forms, and nutrition preferences. We use this only to design and deliver
   your program safely.
+• Health data from Apple Health or Health Connect, only if you connect a
+  device and agree: steps, active energy, heart rate, resting heart rate,
+  heart rate variability, sleep, workouts, weight, body fat, and lean mass.
+  This is read from your phone. ONE Fitness does not write anything back
+  to Apple Health or Health Connect. Your coach can see these stats only
+  if you turn on sharing. Your phone number, billing address, and legal
+  name are not included.
 • Technical information: basic website data such as browser type, pages
   visited and cookies.
 
@@ -79,6 +86,8 @@ our business:
   its own marketing.
 • Our coaches and the facility where you train, limited to what is needed to
   schedule and run your sessions (for example, your name for check-in).
+  Health stats from a connected device are shared with your assigned coach
+  only if you turn on sharing in the app.
 • Legal and safety reasons: to comply with law, respond to lawful requests,
   or protect the safety and rights of clients, staff and the public.
 • Business transfer: if ONE Fitness is sold or merged, information may

@@ -178,7 +178,8 @@ class _ClientShellState extends ConsumerState<ClientShell> {
   // sub-tabs) — the shell's swipe-to-go-back gesture below would otherwise
   // fire on the exact same rightward drag a user makes to flip back a tab,
   // navigating the whole screen away instead of just changing tabs.
-  static const _swipeOwnedByScreen = {"plans", "progress", "photos", "measurements"};
+  // Log Progress uses a tap toggle now, so a rightward swipe can go back.
+  static const _swipeOwnedByScreen = {"plans"};
 
   void _onPointerUp(PointerUpEvent e) {
     final start = _dragStart;

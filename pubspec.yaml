@@ -51,8 +51,9 @@ dependencies:
   package_info_plus: ^8.3.0
   uuid: ^4.6.0
   flutter_stripe: ^13.0.0
-  # Apple Health: steps, heart rate, and weight. iOS only in the app.
-  # The plugin also builds for Android, but the screen does not ask there.
+  # Apple Health on iOS and Health Connect on Android. Read only:
+  # steps, active energy, heart rate, resting heart rate, heart rate
+  # variability, sleep, workouts, weight, body fat, and lean mass.
   health: 13.3.1
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0

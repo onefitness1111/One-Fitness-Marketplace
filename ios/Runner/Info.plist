@@ -72,13 +72,16 @@
 		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
 		<key>NSLocationAlwaysUsageDescription</key>
 		<string>ONE Fitness only uses your location while you are using the app, to show which of our gyms is nearest to you when you book a session. It never tracks you in the background. Your location stays on your device.</string>
-		<!-- Apple Health: steps, heart rate, and weight, read only. The
-		     update string is required because the Health connection links
-		     the write APIs too. The app does not write to Apple Health. -->
+		<!-- Apple Health, read only: steps, active energy, heart rate,
+		     resting heart rate, heart rate variability, sleep, workouts,
+		     weight, body fat, and lean mass, including what an Apple Watch
+		     or Oura Ring has saved into Health. The update string is
+		     required because the Health connection links the write APIs.
+		     The app does not write to Apple Health. -->
 		<key>NSHealthShareUsageDescription</key>
-		<string>ONE Fitness reads your steps, heart rate, and weight from Apple Health so they can sit with the progress you log. It only reads those three, and only after you agree. Your Health data stays on your phone and is not shared with other clients.</string>
+		<string>ONE Fitness reads your steps, active energy, heart rate, resting heart rate, heart rate variability, sleep, workouts, weight, body fat, and lean mass from Apple Health, including data your Apple Watch or Oura Ring has saved there. It only reads, and only after you agree. Nothing is written back. Your coach sees these stats only if you turn on sharing. They are not shared with other clients.</string>
 		<key>NSHealthUpdateUsageDescription</key>
-		<string>ONE Fitness does not write steps, heart rate, weight, or workouts back to Apple Health. This message is required because the Apple Health connection is part of the app. ONE Fitness only reads steps, heart rate, and weight, and only after you agree.</string>
+		<string>ONE Fitness does not write steps, heart rate, sleep, workouts, weight, body fat, lean mass, or any other data to Apple Health. This message is required because the Apple Health connection is part of the app. ONE Fitness only reads, and only after you agree.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 		<key>CFBundleURLTypes</key>
