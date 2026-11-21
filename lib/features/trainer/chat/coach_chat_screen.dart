@@ -88,7 +88,16 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   List<Map<String, dynamic>> _staffMessages = [];
   RealtimeChannel? _staffChannel;
 
-  String get _me => SupabaseService.currentUser?.id ?? "";
+  /// Empty before sign-in, and in a widget test that never starts Supabase.
+  /// The shell keeps this page mounted behind the one on screen, so a
+  /// missing client must not take the other pages down with it.
+  String get _me {
+    try {
+      return SupabaseService.currentUser?.id ?? "";
+    } catch (_) {
+      return "";
+    }
+  }
 
   @override
   void initState() {

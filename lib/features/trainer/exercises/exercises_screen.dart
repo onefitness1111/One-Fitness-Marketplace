@@ -17,6 +17,11 @@ import "../../../data/providers/trainer_providers.dart";
 class ExercisesScreen extends ConsumerStatefulWidget {
   const ExercisesScreen({super.key});
 
+  /// Forces [build] to fail so a test can check the fallback message.
+  /// Left false in the app.
+  @visibleForTesting
+  static bool debugThrowInBuild = false;
+
   @override
   ConsumerState<ExercisesScreen> createState() => _ExercisesScreenState();
 }
@@ -35,7 +40,18 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
   @override
   Widget build(BuildContext context) {
     final catalog = ref.watch(exerciseCatalogProvider);
+    try {
+      if (ExercisesScreen.debugThrowInBuild) {
+        throw StateError("exercises");
+      }
+      return _buildLoaded(catalog);
+    } catch (e, st) {
+      debugPrint("Exercises screen failed: $e\n$st");
+      return const _ExercisesLoadError();
+    }
+  }
 
+  Widget _buildLoaded(List<ExerciseDef> catalog) {
     if (_editing != null || _creatingNew) {
       return LocalBackScope(
         isOpen: true,
@@ -114,9 +130,10 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              SectionLabel("Exercises (${catalog.length})"),
+              // The count grows with the catalog, and the label plus the
+              // button are wider than a phone. Let the label give way.
+              Expanded(child: SectionLabel("Exercises (${catalog.length})")),
               TextButton.icon(
                 onPressed: () => setState(() => _creatingNew = true),
                 icon: Icon(
@@ -185,6 +202,23 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
           if (visible.isEmpty)
             const HintBox(text: "No exercises match that search."),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown when the list fails to build. A release build otherwise paints
+/// the framework's blank error box, which on this black page reads as an
+/// empty screen.
+class _ExercisesLoadError extends StatelessWidget {
+  const _ExercisesLoadError();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(18),
+      child: HintBox(
+        text: "Exercises couldn't be shown. Go back and open them again.",
       ),
     );
   }
