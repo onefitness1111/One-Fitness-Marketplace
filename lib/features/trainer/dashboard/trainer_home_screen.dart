@@ -18,8 +18,8 @@ import "../../../core/utils/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../data/providers/platform_settings_provider.dart";
-import "../../../core/utils/charges_due.dart";
 import "../../../core/utils/client_status_utils.dart";
+import "../../../core/utils/payments_to_collect.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/session_start.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -32,6 +32,7 @@ import "../../../data/models/live_session.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/beep_providers.dart";
+import "../../../data/providers/client_balances_provider.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/trainer_providers.dart";
@@ -41,7 +42,6 @@ import "update_announcement_card.dart";
 import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
 import "../../../core/widgets/session_timer.dart";
-import "../reports/reports_hub_screen.dart";
 import "../shell/trainer_shell_state.dart";
 
 /// Mirrors TrainerHome.jsx — the coach/owner dashboard: greeting header,
@@ -182,6 +182,14 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       if (saved.openClientId != null) _openedClientIds.add(saved.openClientId!);
     }
     _sweepStaleAttendance();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshBalances());
+  }
+
+  void _refreshBalances() {
+    if (!mounted) return;
+    if (ref.read(trainerAuthProvider) != "owner") return;
+    final ids = ref.read(trainerRosterProvider).map((c) => c.id).toList();
+    ref.read(clientBalancesProvider.notifier).refresh(ids);
   }
 
   /// Opportunistic, one-shot per screen visit — same "no cron, safe to call
@@ -240,11 +248,9 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final bookings = ref.watch(allBookingsProvider);
     final liveRuns = ref.watch(liveSessionsProvider);
     final clientRecords = ref.watch(trainerClientRecordsProvider);
-    // Hidden until a load that selected stripe_payment_intent_id has
-    // landed. The dashboard bootstrap list omits that column, so counting
-    // it would treat today's card purchases as still due.
-    final paymentIntentKnown = ref.watch(chargesPaymentIntentKnownProvider);
-    final todayUnpaid = chargesToCollectOn(ref.watch(chargesProvider), isoToday());
+    final paymentsToCollect = paymentsToCollectCount(balanceCents: ref.watch(clientBalancesProvider).values);
+    ref.listen(trainerRosterProvider, (_, _) => _refreshBalances());
+    ref.listen(trainerAuthProvider, (_, _) => _refreshBalances());
 
     final me = trainers.where((t) => t.id == trainerAuth);
     final myName = isOwner
@@ -1160,14 +1166,15 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 ),
               );
             }),
-          // Collecting charges is the owner's job only — coaches don't see it.
-          // Hidden when nothing is still unpaid (paid purchases, card
-          // charges that stored a PaymentIntent, and waived fees).
-          if (isOwner && paymentIntentKnown && todayUnpaid.isNotEmpty)
+          // Collecting payments is the owner's job only — coaches don't see it.
+          // Hidden when nobody owes a balance and there is no declined
+          // charge on file. Declined attempts are not stored separately,
+          // so this count is the clients whose balance is below zero.
+          if (isOwner && paymentsToCollect > 0)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: TapHighlight(
-                onTap: () => ref.read(trainerModeProvider.notifier).openReport(realtimeChargesReportKey),
+                onTap: () => goMode("collect"),
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
                   padding: const EdgeInsets.all(12),
@@ -1186,7 +1193,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          "${todayUnpaid.length} charge${todayUnpaid.length != 1 ? "s" : ""} to collect today",
+                          paymentsToCollectLabel(paymentsToCollect),
                           style: TextStyle(
                             fontSize: 13,
                             color: AppColors.txt,

@@ -1,12 +1,11 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
-import "package:shared_preferences/shared_preferences.dart";
 
 import "package:onefitness/core/supabase/supabase_service.dart";
 import "package:onefitness/core/utils/charges_due.dart";
-import "package:onefitness/core/utils/date_utils.dart";
 import "package:onefitness/data/models/charge.dart";
+import "package:onefitness/data/providers/client_balances_provider.dart";
 import "package:onefitness/data/providers/client_providers.dart";
 import "package:onefitness/data/providers/dashboard_load.dart";
 import "package:onefitness/data/providers/trainer_providers.dart";
@@ -255,133 +254,57 @@ void main() {
     },
   );
 
-  testWidgets(
-    "the owner banner counts only unpaid charges and opens the charge ledger",
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final today = isoToday();
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      tester.view.physicalSize = const Size(800, 8000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets("the owner banner counts negative balances and opens Collect Payments", (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    tester.view.physicalSize = const Size(800, 8000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      container.read(trainerAuthProvider.notifier).signIn("owner");
-      container.read(chargesProvider.notifier).setAll([
-        row(
-          type: "purchase",
-          date: today,
-          amount: 229,
-          stripePaymentIntentId: "pi_sale",
-          clientName: "Paid Buyer",
-        ),
-        row(
-          type: "late",
-          date: today,
-          waivedAt: today,
-          clientName: "Waived Fee",
-        ),
-        row(
-          type: "late",
-          date: today,
-          stripePaymentIntentId: "pi_fee",
-          clientName: "Card Charged",
-        ),
-        row(type: "manual", date: today, amount: 15, clientName: "Riley Quinn"),
-        row(
-          type: "manual",
-          date: "2020-01-01",
-          amount: 40,
-          clientName: "Old fee",
-        ),
-      ], paymentIntentKnown: true);
+    container.read(trainerAuthProvider.notifier).signIn("owner");
+    container.read(clientBalancesProvider.notifier).seed({"a": -1500, "b": -2500, "c": 0, "d": 400});
 
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MaterialApp(home: Scaffold(body: TrainerHomeScreen())),
-        ),
-      );
-      await tester.pump();
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: TrainerHomeScreen())),
+      ),
+    );
+    await tester.pump();
 
-      final banner = find.text("1 charge to collect today");
-      expect(banner, findsOneWidget);
-      await tester.ensureVisible(banner);
-      await tester.pump();
-      await tester.tap(banner);
-      await tester.pump();
+    final banner = find.text("2 payments to collect");
+    expect(banner, findsOneWidget);
+    await tester.ensureVisible(banner);
+    await tester.pump();
+    await tester.tap(banner);
+    await tester.pump();
+    expect(container.read(trainerModeProvider), "collect");
+  });
 
-      expect(container.read(trainerModeProvider), "reports");
-      expect(
-        container.read(trainerModeProvider.notifier).pendingReportKey,
-        realtimeChargesReportKey,
-      );
+  testWidgets("the banner is hidden for a coach and when nobody owes money", (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp(
-            home: Scaffold(
-              body: ReportsHubScreen(
-                initialReportKey: container
-                    .read(trainerModeProvider.notifier)
-                    .pendingReportKey,
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
+    container.read(trainerAuthProvider.notifier).signIn("owner");
+    container.read(clientBalancesProvider.notifier).seed({"a": 0, "b": 1200});
 
-      expect(find.text("Real-Time Charges"), findsOneWidget);
-      expect(find.text("Search reports…"), findsNothing);
-      expect(find.textContaining("Riley Quinn"), findsOneWidget);
-      expect(find.textContaining("Old fee"), findsNothing);
-    },
-  );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: TrainerHomeScreen())),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining("payment"), findsNothing);
 
-  testWidgets(
-    "the banner is hidden for a coach, when nothing is unpaid, and before PaymentIntent ids are loaded",
-    (tester) async {
-      final today = isoToday();
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      container.read(trainerAuthProvider.notifier).signIn("owner");
-      container.read(chargesProvider.notifier).setAll([
-        row(type: "purchase", date: today, stripePaymentIntentId: "pi_sale"),
-        row(type: "manual", date: today, waivedAt: today),
-      ], paymentIntentKnown: true);
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MaterialApp(home: Scaffold(body: TrainerHomeScreen())),
-        ),
-      );
-      await tester.pump();
-      expect(find.textContaining("to collect today"), findsNothing);
-
-      container.read(chargesProvider.notifier).setAll([
-        row(type: "manual", date: today, amount: 15),
-      ], paymentIntentKnown: false);
-      await tester.pump();
-      expect(container.read(chargesPaymentIntentKnownProvider), isFalse);
-      expect(find.textContaining("to collect today"), findsNothing);
-
-      container.read(chargesProvider.notifier).setAll([
-        row(type: "manual", date: today, amount: 15),
-      ], paymentIntentKnown: true);
-      container
-          .read(trainerAuthProvider.notifier)
-          .signIn(container.read(trainersProvider).first.id);
-      await tester.pump();
-      expect(find.textContaining("to collect today"), findsNothing);
-    },
-  );
+    container.read(clientBalancesProvider.notifier).seed({"a": -2500});
+    container.read(trainerAuthProvider.notifier).signIn(container.read(trainersProvider).first.id);
+    await tester.pump();
+    expect(find.textContaining("payment"), findsNothing);
+  });
 }
