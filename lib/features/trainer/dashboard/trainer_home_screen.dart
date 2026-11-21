@@ -10,6 +10,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/web/portal_layout.dart";
 import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
 import "../../../core/utils/intake_resubmit.dart";
@@ -613,9 +614,10 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     // fade in one after another.
     Widget stag(Widget child) => child;
 
+    final wide = portalIsWide(context);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(wide ? 28 : 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -696,7 +698,9 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           if (needsAttention.isEmpty)
             const HintBox(text: "Nothing needs your attention right now ✓", bordered: false)
           else
-            ...grouped.entries.map(
+            _AttentionColumns(
+              wide: wide,
+              children: grouped.entries.map(
               (entry) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Column(
@@ -777,6 +781,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                   ],
                 ),
               ),
+            ).toList(),
             ),
           TapHighlight(
             onTap: () => setState(() => _calendarOpen = !_calendarOpen),
@@ -1195,6 +1200,29 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _AttentionColumns extends StatelessWidget {
+  const _AttentionColumns({required this.wide, required this.children});
+  final bool wide;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!wide || children.length < 2) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = (constraints.maxWidth - 16) / 2;
+        return Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          children: [for (final child in children) SizedBox(width: width, child: child)],
+        );
+      },
     );
   }
 }

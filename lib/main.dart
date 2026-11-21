@@ -3,11 +3,18 @@ import "package:app_links/app_links.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
+import "core/auth/web_launch.dart";
 import "core/chat/unread_chat.dart";
 import "core/live_log/live_log_store.dart";
 import "core/notifications/push_service.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
 import "core/supabase/supabase_service.dart";
+import "core/web/browser_path.dart";
+import "core/web/portal_frame.dart";
+import "core/web/portal_path.dart";
+import "core/web/portal_route.dart";
+import "core/web/url_strategy.dart";
+import "features/client/shell/client_shell_state.dart";
 import "core/notifications/push_prompt.dart";
 import "core/widgets/change_password_form.dart";
 import "core/motion/skeleton.dart";
@@ -29,6 +36,7 @@ import "features/trainer/shell/trainer_shell_state.dart";
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  configureUrlStrategy();
   // Supabase and Firebase don't depend on each other, so initialise them
   // side by side rather than paying for both one after the other.
   // Firebase only — the permission prompt and token registration wait
@@ -39,11 +47,16 @@ Future<void> main() async {
   // it. Having the answer before the first frame is what stops a cold start
   // flashing the wrong palette.
   final storedTheme = ThemeModeNotifier.readStored();
+  // Read the address before startup. Supabase does not consume it
+  // (detectSessionInUri is off), so a reset link can be exchanged once.
+  final launchUri = kIsWeb ? Uri.base : null;
   await Future.wait([SupabaseService.initialize(), PushService.init()]);
+  final launch = launchUri == null ? WebLaunchPlan.none : await consumeWebLaunch(launchUri);
   runApp(
     ProviderScope(
       overrides: [
         initialThemeModeProvider.overrideWithValue(await storedTheme),
+        webLaunchProvider.overrideWithValue(launch),
       ],
       child: const OneFitnessApp(),
     ),
@@ -69,12 +82,21 @@ class OneFitnessApp extends StatelessWidget {
         title: "ONE Fitness",
         debugShowCheckedModeBanner: false,
         theme: theme,
-        builder: (context, child) => GestureDetector(
-          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-          child: child ?? const SizedBox.shrink(),
-        ),
+        builder: (context, child) {
+          final content = GestureDetector(
+            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+            child: child ?? const SizedBox.shrink(),
+          );
+          if (!kIsWeb) return content;
+          return PortalFrame(child: content);
+        },
         scaffoldMessengerKey: scaffoldMessengerKey,
-        home: const _RootGate(),
+        onGenerateRoute: (settings) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => _RootGate(initialPath: settings.name ?? PortalPath.home),
+          );
+        },
       ),
     );
   }
@@ -88,7 +110,9 @@ class OneFitnessApp extends StatelessWidget {
 /// the real Supabase session restore + roster/trainers/bookings fetch —
 /// same as App.jsx awaiting its own bootstrap Promise.all before mounting.
 class _RootGate extends ConsumerStatefulWidget {
-  const _RootGate();
+  const _RootGate({this.initialPath = PortalPath.home});
+
+  final String initialPath;
 
   @override
   ConsumerState<_RootGate> createState() => _RootGateState();
@@ -96,10 +120,10 @@ class _RootGate extends ConsumerStatefulWidget {
 
 class _RootGateState extends ConsumerState<_RootGate> {
   bool _checkedStripeReturn = false;
+  bool _portalApplied = false;
   AppUpdateConfig? _updateConfig;
   UpdatePrompt _updatePrompt = UpdatePrompt.none;
   bool _updateDismissed = false;
-  final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
   StreamSubscription<AuthState>? _authSub;
   bool _setPassword = false;
@@ -128,6 +152,21 @@ class _RootGateState extends ConsumerState<_RootGate> {
   @override
   void initState() {
     super.initState();
+    final launch = ref.read(webLaunchProvider);
+    _setPassword = launch.kind == WebLaunchKind.setPassword;
+    if (launch.message != null) {
+      final message = launch.message!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        scaffoldMessengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
+        );
+      });
+    }
+    if (_setPassword && kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        replaceBrowserPath(PortalPath.resetPassword);
+      });
+    }
     // Uri.base's own `?stripe=...` only exists on Flutter web (the browser
     // reloads this same "page"); on mobile the equivalent is Stripe's
     // browser handing off to the app's own "onefitness://checkout-return"
@@ -161,14 +200,25 @@ class _RootGateState extends ConsumerState<_RootGate> {
   }
 
   Future<void> _initDeepLinks() async {
+    final links = AppLinks();
     try {
-      final initial = await _appLinks.getInitialLink();
+      final initial = await links.getInitialLink();
       if (initial != null) _handleDeepLink(initial);
     } catch (_) {
       // No initial link, or the platform channel isn't ready yet — either
       // way there's nothing to recover from here.
     }
-    _linkSub = _appLinks.uriLinkStream.listen(_handleDeepLink, onError: (_) {});
+    _linkSub = links.uriLinkStream.listen(_handleDeepLink, onError: (_) {});
+  }
+
+  void _schedulePortalRoute() {
+    if (!kIsWeb || _portalApplied) return;
+    _portalApplied = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      applyInitialPortalPath(ref, widget.initialPath);
+      syncPortalAddress(ref, settingPassword: _setPassword);
+    });
   }
 
   void _handleDeepLink(Uri uri) {
@@ -270,9 +320,14 @@ class _RootGateState extends ConsumerState<_RootGate> {
         backgroundColor: AppColors.bg,
         body: const AppLoading(),
       ),
-      error: (err, st) => const _RootContent(), // fall back to mock/signed-out state rather than block the app
+      error: (err, st) {
+        // fall back to mock/signed-out state rather than block the app
+        _schedulePortalRoute();
+        return const _RootContent();
+      },
       data: (_) {
         _checkStripeReturn();
+        _schedulePortalRoute();
         return _withUpdateNotice(const _RootContent());
       },
     );
@@ -293,7 +348,22 @@ class _RootContent extends ConsumerWidget {
     // synchronously inside the signIn/signOut call, before the next build,
     // so the stale screen never renders even for a frame.
     ref.listen<String?>(trainerAuthProvider, (prev, next) {
-      if (prev != next) ref.read(trainerModeProvider.notifier).reset();
+      if (prev != next) {
+        ref.read(trainerModeProvider.notifier).reset();
+        if (kIsWeb && next != null) openPendingProfile(ref, client: false);
+      }
+      if (kIsWeb) syncPortalAddress(ref, settingPassword: false);
+    });
+    ref.listen(clientSignedInProvider, (prev, next) {
+      if (!kIsWeb) return;
+      if (next == true && prev != true) openPendingProfile(ref, client: true);
+      syncPortalAddress(ref, settingPassword: false);
+    });
+    ref.listen(clientScreenProvider, (_, _) {
+      if (kIsWeb) syncPortalAddress(ref, settingPassword: false);
+    });
+    ref.listen(trainerModeProvider, (_, _) {
+      if (kIsWeb) syncPortalAddress(ref, settingPassword: false);
     });
 
     final role = ref.watch(roleProvider);

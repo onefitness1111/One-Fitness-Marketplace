@@ -1,4 +1,3 @@
-import "dart:io";
 import "dart:typed_data";
 import "dart:ui" as ui;
 
@@ -6,8 +5,7 @@ import "package:flutter/material.dart";
 import "package:flutter/rendering.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:http/http.dart" as http;
-import "package:path_provider/path_provider.dart";
-import "package:share_plus/share_plus.dart";
+import "../../../core/platform/share_bytes.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/booking_utils.dart";
@@ -109,14 +107,13 @@ class _ResultsShareButtonState extends ConsumerState<ResultsShareButton> {
       final image = await boundary.toImage(pixelRatio: 3);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       if (data == null) return;
-      final dir = await getTemporaryDirectory();
-      final file = File("${dir.path}/one-fitness-results.png");
-      await file.writeAsBytes(data.buffer.asUint8List());
       if (!origin.mounted) return;
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: "image/png")],
+      await shareLocalBytes(
+        filename: "one-fitness-results.png",
+        bytes: data.buffer.asUint8List(),
+        mimeType: "image/png",
         sharePositionOrigin: shareOriginFrom(origin),
-      ));
+      );
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't open the share sheet.")));

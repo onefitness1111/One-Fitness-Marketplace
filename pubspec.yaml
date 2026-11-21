@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -48,6 +50,8 @@ dependencies:
   shared_preferences: ^2.5.5
   supabase_flutter: ^2.17.1
   url_launcher: ^6.3.1
+  # Browser history for the portal. The phone build never calls it.
+  web: ^1.1.0
   package_info_plus: ^8.3.0
   uuid: ^4.6.0
   flutter_stripe: ^13.0.0

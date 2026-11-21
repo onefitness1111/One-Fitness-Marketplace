@@ -67,6 +67,14 @@ class TrainerModeNotifier extends Notifier<String> {
     _history.clear();
     state = "dashboard";
   }
+
+  /// Opens [mode] with nothing behind it. Used when the website is
+  /// refreshed on /profile.
+  void openFresh(String mode) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _history.clear();
+    state = mode;
+  }
 }
 
 final trainerModeProvider = NotifierProvider<TrainerModeNotifier, String>(

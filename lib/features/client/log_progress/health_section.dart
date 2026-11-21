@@ -1,9 +1,11 @@
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 
 import "../../../core/health/health_stats.dart";
 import "../../../core/health/health_sync.dart";
 import "../../../core/health/wearable_reader.dart";
+import "../../../core/platform/web_fallback.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/coach_names.dart";
@@ -98,8 +100,10 @@ class _HealthSectionState extends ConsumerState<HealthSection> {
   }
 
   Future<void> _connect() async {
-    if (_platform == HealthPlatform.other && widget.read == null) {
-      setState(() => _note = "Connect Apple Health on iPhone, or Health Connect on Android.");
+    if (kIsWeb || (_platform == HealthPlatform.other && widget.read == null)) {
+      setState(() => _note = kIsWeb
+          ? kAvailableInMobileApp
+          : "Connect Apple Health on iPhone, or Health Connect on Android.");
       return;
     }
     final choice = await showConnectDeviceSheet(context, platform: _platform);
@@ -182,7 +186,9 @@ class _HealthSectionState extends ConsumerState<HealthSection> {
                 Text(
                   connected
                       ? syncedLine(reading.syncedAt, DateTime.now(), reading.sourceLabel, reading.deviceNames)
-                      : "Nothing connected yet. Read only.",
+                      : kIsWeb
+                          ? kAvailableInMobileApp
+                          : "Nothing connected yet. Read only.",
                   style: TextStyle(fontSize: 12, height: 1.35, color: AppColors.mute),
                 ),
                 const SizedBox(height: 8),

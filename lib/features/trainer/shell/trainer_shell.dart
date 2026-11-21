@@ -12,6 +12,8 @@ import "../../../core/notifications/push_service.dart";
 import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/web/portal_layout.dart";
+import "../../../core/web/portal_sidebar.dart";
 import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/tour_step.dart";
@@ -55,6 +57,43 @@ const _bottomItemsBase = [
   _NavItem("schedule", "Schedule", LucideIcons.calendar),
 ];
 const _staffBottomItem = _NavItem("staff", "Staff", LucideIcons.user);
+
+List<PortalNavEntry> _trainerWideNav({
+  required bool isOwner,
+  required List<_NavItem> bottom,
+  required int newCoachCount,
+}) {
+  final entries = <PortalNavEntry>[
+    for (final item in bottom) PortalNavEntry(item.key, item.label, item.icon),
+  ];
+  void add(String id, String label, IconData icon) {
+    if (entries.any((entry) => entry.id == id)) return;
+    entries.add(PortalNavEntry(id, label, icon));
+  }
+
+  add("requests", "Requests", LucideIcons.clipboardList);
+  add("waitlist", "Waitlist", LucideIcons.clock);
+  add("exercises", "Exercises", LucideIcons.dumbbell);
+  add("equipment", "Equipment Library", LucideIcons.wrench);
+  add("challenges", "Challenges", LucideIcons.trophy);
+  if (isOwner) {
+    add("builderWorkout", "Build Workout Program", LucideIcons.clipboardList);
+    add("builderNutrition", "Build Nutrition Program", LucideIcons.apple);
+    add("memberships", "Access Hub", LucideIcons.clipboardList);
+    add("products", "Products", LucideIcons.package);
+    add("coaches", newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches", LucideIcons.users);
+    add("reports", "Reports", LucideIcons.clipboardCheck);
+    add("platformSettings", "Customize Platform", LucideIcons.slidersHorizontal);
+    add("waivers", "Waivers & Contracts", LucideIcons.fileSignature);
+  } else {
+    add("myprofile", "My Profile", LucideIcons.user);
+    add("coachbadges", "Merit Badges", LucideIcons.award);
+    add("mypay", "My Pay", LucideIcons.clipboardCheck);
+    add("calendarsync", "Calendar Sync", LucideIcons.calendar);
+  }
+  add("support", "Support", LucideIcons.phone);
+  return entries;
+}
 
 const _titles = {
   "dashboard": "Dashboard",
@@ -258,6 +297,8 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     // A page other than Dashboard always has somewhere to go back to — home
     // at worst — so back only exits the app from Dashboard itself.
     final showBack = mode != "dashboard" || canGoBack || hasLocalBack;
+    final wide = portalIsWide(context);
+    final newCoachCount = ref.watch(trainersProvider).where((t) => !t.reviewedByOwner).length;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -279,8 +320,21 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
       child: Scaffold(
         key: _scaffoldKey,
         backgroundColor: AppColors.bg,
-        drawer: _TrainerDrawer(mode: mode, isOwner: isOwner, onGo: go),
-        body: Listener(
+        drawer: wide ? null : _TrainerDrawer(mode: mode, isOwner: isOwner, onGo: go),
+        body: PortalBody(
+          wide: wide,
+          sidebar: PortalSidebar(
+            entries: _trainerWideNav(isOwner: isOwner, bottom: bottomItems, newCoachCount: newCoachCount),
+            selected: mode,
+            onSelect: go,
+            footer: PortalSignOutButton(
+              onTap: () {
+                SupabaseService.signOut();
+                ref.read(trainerAuthProvider.notifier).signOut();
+              },
+            ),
+          ),
+          child: Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: _onPointerDown,
           onPointerUp: _onPointerUp,
@@ -307,6 +361,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                         // on nothing, or opened the drawer when back was
                         // meant, which read as "back is broken". Same fix as
                         // ClientShell's top bar.
+                        if (!wide)
                         Builder(
                           key: kStaffTourKeys["staff-hamburger"],
                           builder: (context) => IconButton(
@@ -394,7 +449,8 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
             ),
           ),
         ),
-        bottomNavigationBar: DecoratedBox(
+        ),
+        bottomNavigationBar: wide ? null : DecoratedBox(
           decoration: BoxDecoration(
             color: AppColors.bottomBarBg,
             border: Border(top: BorderSide(color: AppColors.line)),

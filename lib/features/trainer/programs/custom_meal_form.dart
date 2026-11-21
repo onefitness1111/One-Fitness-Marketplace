@@ -1,8 +1,10 @@
 import "dart:convert";
 import "dart:typed_data";
 
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/platform/web_fallback.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/food_catalog.dart";
 import "../../../core/utils/nutrition_helpers.dart";
@@ -140,6 +142,10 @@ class _CustomMealFormState extends State<CustomMealForm> {
           Row(
             children: [
               TextButton(onPressed: () async {
+                if (kIsWeb) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(kAvailableInMobileApp)));
+                  return;
+                }
                 final bytes = await pickPlatePhotoBytes(camera: true);
                 if (bytes != null) setState(() => _photo = bytes);
               }, child: Text("Take photo", style: TextStyle(color: AppColors.gold))),

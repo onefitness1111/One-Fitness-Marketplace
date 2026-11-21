@@ -1,4 +1,5 @@
 import "dart:convert";
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
@@ -7,6 +8,7 @@ import "../../../core/payments/billing_address_rules.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../data/models/billing_address.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/web/portal_layout.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/write_failure.dart";
 import "../../../core/utils/photo_picker_utils.dart";
@@ -179,10 +181,11 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
         ? membershipStatusLabel(info, plan, bookings)
         : null;
 
+    final wide = portalIsWide(context);
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: EdgeInsets.all(wide ? 28 : 18),
+      child: _profileLayout(
+        wide: wide,
         children: [
           const SectionLabel("Profile Settings"),
           BalanceCard(clientId: info.id),
@@ -293,6 +296,28 @@ String membershipStatusLabel(
   List<Booking> bookings,
 ) {
   return "${sessionsRemainingBalance(info, plan, bookings)}";
+}
+
+Widget _profileLayout({required bool wide, required List<Widget> children}) {
+  if (!wide) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final half = (constraints.maxWidth - 16) / 2;
+      return Wrap(
+        spacing: 16,
+        runSpacing: 4,
+        children: [
+          for (final child in children)
+            SizedBox(
+              width: child is _SettingRow || child is BalanceCard ? half : constraints.maxWidth,
+              child: child,
+            ),
+        ],
+      );
+    },
+  );
 }
 
 class _SettingRow extends StatelessWidget {
@@ -437,7 +462,9 @@ class _NotificationPreferencesSectionState extends ConsumerState<_NotificationPr
                       Text("App notifications", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                       SizedBox(height: 2),
                       Text(
-                        "Booking confirmations, reminders, messages from your coach and other updates on this phone.",
+                        kIsWeb
+                            ? "Available in the mobile app. This switch is saved for the phone app. The website does not pop up alerts."
+                            : "Booking confirmations, reminders, messages from your coach and other updates on this phone.",
                         style: TextStyle(fontSize: 12, color: AppColors.mute),
                       ),
                     ],

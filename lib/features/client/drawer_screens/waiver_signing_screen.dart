@@ -1,8 +1,8 @@
 import "dart:convert";
-import "dart:io";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/platform/host_platform.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/merge_token_utils.dart";
@@ -143,7 +143,7 @@ class _WaiverSigningScreenState extends ConsumerState<WaiverSigningScreen> {
       _error = null;
     });
     try {
-      final device = "${Platform.operatingSystem} ${Platform.operatingSystemVersion}";
+      final device = "$hostOperatingSystem $hostOperatingSystemVersion".trim();
       final result = await SupabaseService.signWaiver(
         waiverId: widget.doc.id,
         sections: [

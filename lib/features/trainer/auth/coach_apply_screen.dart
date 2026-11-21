@@ -1,12 +1,15 @@
 import "dart:async";
-import "dart:io";
 import "dart:typed_data";
 
 import "package:file_picker/file_picker.dart";
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:image_picker/image_picker.dart";
 import "package:path_provider/path_provider.dart";
 import "package:record/record.dart";
+
+import "../../../core/platform/read_bytes.dart";
+import "../../../core/platform/web_fallback.dart";
 
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -36,7 +39,7 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
   final _locationName = TextEditingController();
   final _locationAddress = TextEditingController();
 
-  final _recorder = AudioRecorder();
+  final AudioRecorder? _recorder = kIsWeb ? null : AudioRecorder();
   Timer? _tick;
   int _seconds = 0;
   bool _recording = false;
@@ -52,7 +55,8 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
   @override
   void dispose() {
     _tick?.cancel();
-    unawaited(_recorder.dispose());
+    final recorder = _recorder;
+    if (recorder != null) unawaited(recorder.dispose());
     _first.dispose();
     _last.dispose();
     _email.dispose();
@@ -66,8 +70,13 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
   }
 
   Future<void> _toggleRecord() async {
+    final recorder = _recorder;
+    if (recorder == null) {
+      setState(() => _error = kAvailableInMobileApp);
+      return;
+    }
     if (_recording) {
-      final path = await _recorder.stop();
+      final path = await recorder.stop();
       _tick?.cancel();
       setState(() {
         _recording = false;
@@ -75,14 +84,14 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
       });
       return;
     }
-    final allowed = await _recorder.hasPermission();
+    final allowed = await recorder.hasPermission();
     if (!allowed) {
       setState(() => _error = "Microphone permission is needed for the optional clip.");
       return;
     }
     final dir = await getTemporaryDirectory();
     final path = "${dir.path}/coach-answer.m4a";
-    await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
     setState(() {
       _recording = true;
       _seconds = 0;
@@ -93,7 +102,7 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
     _tick = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (!mounted) return;
       if (_seconds >= 19) {
-        final stopped = await _recorder.stop();
+        final stopped = await recorder.stop();
         _tick?.cancel();
         setState(() {
           _recording = false;
@@ -218,7 +227,7 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
       }
 
       if (_clipPath != null) {
-        await put("clip", await File(_clipPath!).readAsBytes(), "audio/mp4");
+        await put("clip", await readLocalBytes(_clipPath!), "audio/mp4");
       }
       for (var i = 0; i < docs.length; i++) {
         await put("doc-$i", docs[i].bytes!, "application/octet-stream");
@@ -318,14 +327,17 @@ class _CoachApplyScreenState extends State<CoachApplyScreen> {
               style: TextStyle(fontSize: 12, height: 1.4),
             ),
             const SizedBox(height: 8),
-            BtnGhost(
-              onPressed: _busy ? null : _toggleRecord,
-              child: Text(_recording
-                  ? "Stop (${20 - _seconds}s left)"
-                  : _clipPath == null
-                      ? "Record a 20-second answer"
-                      : "Recorded. Tap to record again"),
-            ),
+            if (kIsWeb)
+              const HintBox(text: "A spoken answer is available in the mobile app. The written questions are enough to apply here.")
+            else
+              BtnGhost(
+                onPressed: _busy ? null : _toggleRecord,
+                child: Text(_recording
+                    ? "Stop (${20 - _seconds}s left)"
+                    : _clipPath == null
+                        ? "Record a 20-second answer"
+                        : "Recorded. Tap to record again"),
+              ),
             const SizedBox(height: 16),
             const SectionLabel("Bio"),
             AppField(controller: _bio, maxLines: 4),

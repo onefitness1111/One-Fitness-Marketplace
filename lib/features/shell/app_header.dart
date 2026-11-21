@@ -2,6 +2,7 @@ import "../../core/widgets/tap_highlight.dart";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/theme/app_colors.dart";
+import "../../core/web/portal_layout.dart";
 import "../../data/providers/role_provider.dart";
 
 /// Mirrors AppShell.jsx's `Header` — the Coach/Client pill toggle used to
@@ -23,14 +24,24 @@ class AppHeader extends ConsumerWidget {
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
-          child: Container(
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(50), border: Border.all(color: AppColors.line)),
-            child: Row(
-              children: [
-                _PillButton(label: "Coach", selected: role == "trainer", onTap: () => ref.read(roleProvider.notifier).set("trainer")),
-                _PillButton(label: "Client", selected: role == "client", onTap: () => ref.read(roleProvider.notifier).set("client")),
-              ],
+          child: Align(
+            alignment: Alignment.center,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: portalIsWide(context) ? 480 : double.infinity),
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(50),
+                  border: Border.all(color: AppColors.line),
+                ),
+                child: Row(
+                  children: [
+                    _PillButton(label: "Coach", selected: role == "trainer", onTap: () => ref.read(roleProvider.notifier).set("trainer")),
+                    _PillButton(label: "Client", selected: role == "client", onTap: () => ref.read(roleProvider.notifier).set("client")),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

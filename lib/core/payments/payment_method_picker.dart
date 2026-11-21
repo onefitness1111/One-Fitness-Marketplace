@@ -1,8 +1,8 @@
 import "../widgets/tap_highlight.dart";
-import "dart:io" show Platform;
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../platform/host_platform.dart";
 import "../theme/app_colors.dart";
 import "../../data/models/membership_plan.dart";
 import "payment_sheet_service.dart" show applePayConfigured;
@@ -28,7 +28,7 @@ List<PayTender> tendersFor(MembershipPlan plan) {
     // A build with no merchant identifier is a dead button for the same
     // reason — the sheet can't show the wallet, so picking it here would
     // land on a plain card form.
-    if (isPackage && !kIsWeb && Platform.isIOS && applePayConfigured) PayTender.applePay,
+    if (isPackage && !kIsWeb && hostIsIOS && applePayConfigured) PayTender.applePay,
   ];
 }
 

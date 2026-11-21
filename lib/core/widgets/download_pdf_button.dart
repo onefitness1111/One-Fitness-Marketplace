@@ -1,10 +1,9 @@
 import "dart:convert";
-import "dart:io";
 
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
-import "package:path_provider/path_provider.dart";
 import "package:share_plus/share_plus.dart";
+import "../platform/share_bytes.dart";
 import "../theme/app_colors.dart";
 import "../utils/share_origin.dart";
 
@@ -45,17 +44,14 @@ class _DownloadPdfButtonState extends State<DownloadPdfButton> {
     try {
       final b64 = widget.pdfDataUrl.split(",").last;
       final bytes = base64Decode(b64);
-      final dir = await getTemporaryDirectory();
-      final file = File("${dir.path}/${safeFileName(widget.filename)}");
-      await file.writeAsBytes(bytes);
       if (!mounted) return;
-      final result = await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(file.path, mimeType: "application/pdf")],
-          subject: widget.filename,
-          // iOS refuses to show the sheet without this — see shareOriginFrom.
-          sharePositionOrigin: shareOriginFrom(context),
-        ),
+      final result = await shareLocalBytes(
+        filename: safeFileName(widget.filename),
+        bytes: bytes,
+        mimeType: "application/pdf",
+        subject: widget.filename,
+        // iOS refuses to show the sheet without this — see shareOriginFrom.
+        sharePositionOrigin: shareOriginFrom(context),
       );
       // Nothing was picked (the sheet was dismissed) — say so rather than
       // leaving the tap looking like it did nothing at all.

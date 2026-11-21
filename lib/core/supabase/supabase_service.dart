@@ -1,7 +1,11 @@
 import "dart:convert";
 import "dart:typed_data";
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:http/http.dart" as http;
 import "package:supabase_flutter/supabase_flutter.dart";
+import "../auth/password_rules.dart";
+import "../auth/portal_session.dart";
+import "../auth/recovery_link.dart";
 import "package:uuid/uuid.dart";
 import "../../data/cache/bootstrap_cache.dart";
 import "../../data/providers/dashboard_load.dart";
@@ -88,6 +92,17 @@ class SupabaseService {
     await Supabase.initialize(
       url: SupabaseConfig.url,
       publishableKey: SupabaseConfig.publishableKey,
+      // The phone and the website share this. The session is written to
+      // device storage (the browser's local storage on the website) and the
+      // access token is refreshed before it expires. On the phone, Supabase
+      // keeps watching reset links itself. On the website that watcher is
+      // off, and [adoptRecoveryLink] exchanges the link once so a bad link
+      // cannot take startup down.
+      authOptions: FlutterAuthClientOptions(
+        autoRefreshToken: PortalSessionPolicy.autoRefreshToken,
+        persistSession: PortalSessionPolicy.persistSession,
+        detectSessionInUri: !kIsWeb,
+      ),
     );
   }
 
@@ -2297,17 +2312,40 @@ class SupabaseService {
   /// account (a brand-new signup sets the initial password directly, see
   /// signUpClient/signUpCoach).
   static Future<void> sendPasswordReset(String email) =>
-      client.auth.resetPasswordForEmail(email.trim(), redirectTo: "onefitness://reset-password");
+      client.auth.resetPasswordForEmail(
+        email.trim(),
+        redirectTo: passwordResetRedirectFor(onWeb: kIsWeb),
+      );
 
   static Future<void> updatePassword(String password) =>
       client.auth.updateUser(UserAttributes(password: password));
 
   static Future<void> recoverSessionFromUrl(Uri uri) => client.auth.getSessionFromUrl(uri);
 
+  /// Turns a reset-email redirect into a signed-in recovery session.
+  /// A token hash (custom email template) and a PKCE `code` both work.
+  static Future<void> adoptRecoveryLink(Uri uri) async {
+    final link = RecoveryLink.parse(uri);
+    if (link == null || !link.canExchange || link.hasError) {
+      throw Exception(kRecoveryLinkFailed);
+    }
+    if (link.tokenHash != null) {
+      await client.auth.verifyOTP(tokenHash: link.tokenHash!, type: OtpType.recovery);
+      return;
+    }
+    await client.auth.getSessionFromUrl(uri);
+  }
+
   /// Staff sends a reset link. The address stays on the server, so a coach
   /// can do this for a client without being shown the email.
   static Future<void> sendPasswordResetFor(String profileId) =>
-      _invokeFunction("send-password-reset", {"profileId": profileId});
+      _invokeFunction("send-password-reset", {
+        "profileId": profileId,
+        // The phone app keeps the mobile link. The website asks for the
+        // portal link. The function ignores anything that is not on its list,
+        // and an older deployed copy ignores this field entirely.
+        if (kIsWeb) "redirectTo": kWebPasswordResetRedirect,
+      });
 
   /// A fixed notice the client is allowed to trigger (booking, welcome, a
   /// chat alert to their coach). The server writes the wording.

@@ -1,11 +1,13 @@
 import "dart:convert";
 import "dart:math" as math;
 
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
+import "../../../core/platform/web_fallback.dart";
 import "../../../core/nutrition/food_log_view.dart";
 import "../../../core/nutrition/quick_add_macros.dart";
 import "../../../core/supabase/supabase_service.dart";
@@ -260,6 +262,10 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
       ),
     );
     if (source == null || !context.mounted) return null;
+    if (source && kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(kAvailableInMobileApp)));
+      return null;
+    }
     final bytes = await pickPlatePhotoBytes(camera: source);
     if (bytes == null || !context.mounted) return null;
     showDialog<void>(

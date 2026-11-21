@@ -1,10 +1,9 @@
 import "dart:convert";
-import "dart:io";
+import "dart:typed_data";
 
 import "package:flutter/material.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
-import "package:path_provider/path_provider.dart";
-import "package:share_plus/share_plus.dart";
+import "../platform/share_bytes.dart";
 import "../theme/app_colors.dart";
 import "../utils/share_origin.dart";
 import "../utils/csv_utils.dart";
@@ -30,17 +29,16 @@ class _DownloadCsvButtonState extends State<DownloadCsvButton> {
     setState(() => _busy = true);
     try {
       final csv = buildCsv(widget.rows);
-      final dir = await getTemporaryDirectory();
-      final file = File("${dir.path}/${widget.filename}");
-      await file.writeAsString(csv, encoding: utf8);
       if (!mounted) return;
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: "text/csv")],
+      await shareLocalBytes(
+        filename: widget.filename,
+        bytes: Uint8List.fromList(utf8.encode(csv)),
+        mimeType: "text/csv",
         subject: widget.filename,
         // Same reason as the PDF button: without this, every CSV export in
         // Reports throws on iPhone instead of opening the share sheet.
         sharePositionOrigin: shareOriginFrom(context),
-      ));
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
