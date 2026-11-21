@@ -10,6 +10,8 @@ import "../../../core/notifications/push_service.dart";
 import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/web/portal_layout.dart";
+import "../../../core/web/portal_sidebar.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/membership_utils.dart";
@@ -471,6 +473,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     final hasLocalBack = ref.watch(localBackStackProvider).isNotEmpty;
     final canGoBack = ref.watch(clientScreenProvider.notifier).canGoBack;
     final showBack = screen != "dashboard" || canGoBack || hasLocalBack;
+    final wide = portalIsWide(context);
 
     return PopScope(
       // Exit the app only from Dashboard, with nothing open and nothing
@@ -483,8 +486,24 @@ class _ClientShellState extends ConsumerState<ClientShell> {
       child: Scaffold(
         key: _scaffoldKey,
         backgroundColor: AppColors.bg,
-        drawer: _ClientDrawer(info: info, screen: screen, onGo: go),
-        body: Listener(
+        drawer: wide ? null : _ClientDrawer(info: info, screen: screen, onGo: go),
+        body: PortalBody(
+          wide: wide,
+          sidebar: PortalSidebar(
+            entries: [
+              for (final item in _bottomItems) PortalNavEntry(item.key, item.label, item.icon),
+              for (final item in _drawerItems) PortalNavEntry(item.key, item.label, item.icon),
+            ],
+            selected: screen,
+            onSelect: (key) => key == "booking" ? goBooking() : go(key),
+            footer: PortalSignOutButton(
+              onTap: () {
+                SupabaseService.signOut();
+                ref.read(clientSignedInProvider.notifier).signOut();
+              },
+            ),
+          ),
+          child: Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: _onPointerDown,
           onPointerUp: _onPointerUp,
@@ -518,6 +537,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                             // A widget test never catches it (it taps the
                             // exact centre), so they're now full 44px targets
                             // with real space between them.
+                            if (!wide)
                             Builder(
                               key: kDashboardTourKeys["dash-hamburger"],
                               builder: (context) => IconButton(
@@ -751,7 +771,8 @@ class _ClientShellState extends ConsumerState<ClientShell> {
             ],
           ),
         ),
-        bottomNavigationBar: DecoratedBox(
+        ),
+        bottomNavigationBar: wide ? null : DecoratedBox(
           decoration: BoxDecoration(
             color: AppColors.bottomBarBg,
             border: Border(top: BorderSide(color: AppColors.line)),

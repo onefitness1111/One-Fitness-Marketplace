@@ -81,6 +81,7 @@ For a practice run on your own computer, also add the exact address Flutter prin
 - A client opens the client dashboard. A coach opens the coach dashboard. The owner opens the owner dashboard (the staff side).
 - The browser remembers the session. Closing the tab or refreshing does not sign them out. The session is refreshed in the background before it expires. **Sign out** clears it.
 - `/login` is the sign-in page. `/profile` opens Profile Settings for a client, or My Profile for a coach or the owner. Refreshing those addresses stays on the same page.
+- On a desktop or tablet browser the pages use the full window, with a menu down the left side. A phone browser keeps the same bottom tabs as the app.
 - Forgot password on the website emails a link that returns to `https://portal.onefitnessworkout.com/reset-password`. Open that link in the **same browser** you used to request it. Then choose a new password. The phone app's own Forgot password still opens the phone app.
 - A reset sent by a coach or the owner from inside the app still opens the **phone** until you choose to deploy the updated `send-password-reset` function (see below). This project does not deploy that function.
 

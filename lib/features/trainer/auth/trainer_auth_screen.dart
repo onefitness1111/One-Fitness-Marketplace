@@ -5,6 +5,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/auth/password_rules.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/web/portal_layout.dart";
 import "../../../core/utils/auth_error.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
@@ -164,7 +165,11 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
                           // the logo lands centered in the top half regardless
                           // of how tall the staff sign-in form is below it.
                           SizedBox(height: constraints.maxHeight * 0.5),
-                          Padding(
+                          Align(
+                            alignment: Alignment.topCenter,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(maxWidth: portalIsWide(context) ? 480 : double.infinity),
+                              child: Padding(
                             padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -241,11 +246,17 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
                                 ),
                               ],
                             ),
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
-                    Padding(
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: portalIsWide(context) ? 480 : double.infinity),
+                        child: Padding(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -351,6 +362,8 @@ class _TrainerAuthScreenState extends ConsumerState<TrainerAuthScreen> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
                       ),
                     ),
                   ],

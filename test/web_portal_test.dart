@@ -1,5 +1,8 @@
+import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:onefitness/core/web/portal_layout.dart";
+import "package:onefitness/core/web/portal_sidebar.dart";
 import "package:onefitness/core/auth/password_rules.dart";
 import "package:onefitness/core/auth/portal_session.dart";
 import "package:onefitness/core/auth/recovery_link.dart";
@@ -8,6 +11,8 @@ import "package:onefitness/core/platform/web_fallback.dart";
 import "package:onefitness/core/web/portal_path.dart";
 import "package:onefitness/features/client/shell/client_shell_state.dart";
 import "package:onefitness/features/trainer/shell/trainer_shell_state.dart";
+
+void _ignore(String _) {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +27,35 @@ void main() {
     expect(passwordResetRedirectFor(onWeb: true), isNot(contains("onefitness://")));
     expect(passwordResetSentMessage(onWeb: false), contains("this phone"));
     expect(passwordResetSentMessage(onWeb: true), contains("this browser"));
+  });
+
+  test("a wide website uses the side menu and a phone stays on the bottom bar", () {
+    expect(kPortalWideBreakpoint, 840);
+    expect(portalWideChrome(web: false, width: 1440), isFalse);
+    expect(portalWideChrome(web: true, width: 390), isFalse);
+    expect(portalWideChrome(web: true, width: 839), isFalse);
+    expect(portalWideChrome(web: true, width: 1024), isTrue);
+    expect(portalWideChrome(web: true, width: 1280), isTrue);
+    expect(portalWideChrome(web: true, width: 1440), isTrue);
+  });
+
+  testWidgets("the side menu is only built for a wide page", (tester) async {
+    const sidebar = PortalSidebar(
+      entries: [PortalNavEntry("dashboard", "Dashboard", Icons.home)],
+      selected: "dashboard",
+      onSelect: _ignore,
+    );
+    await tester.pumpWidget(const MaterialApp(
+      home: PortalBody(wide: true, sidebar: sidebar, child: Text("page")),
+    ));
+    expect(find.byKey(const Key("portal-sidebar")), findsOneWidget);
+    expect(find.text("page"), findsOneWidget);
+
+    await tester.pumpWidget(const MaterialApp(
+      home: PortalBody(wide: false, sidebar: sidebar, child: Text("page")),
+    ));
+    expect(find.byKey(const Key("portal-sidebar")), findsNothing);
+    expect(find.text("page"), findsOneWidget);
   });
 
   test("the website keeps the Supabase session and refreshes it", () {

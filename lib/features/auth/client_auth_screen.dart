@@ -5,6 +5,7 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../core/auth/password_rules.dart";
 import "../../core/supabase/supabase_service.dart";
 import "../../core/theme/app_colors.dart";
+import "../../core/web/portal_layout.dart";
 import "../../core/utils/auth_error.dart";
 import "../../core/widgets/widgets.dart";
 import "../../data/providers/client_providers.dart";
@@ -152,7 +153,11 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
                         // bottom half without needing a scroll on a typical
                         // phone — starts right at the midpoint.
                         SizedBox(height: constraints.maxHeight * 0.5),
-                        Padding(
+                        Align(
+                          alignment: Alignment.topCenter,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: portalIsWide(context) ? 480 : double.infinity),
+                            child: Padding(
                           padding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -261,6 +266,8 @@ class _ClientAuthScreenState extends ConsumerState<ClientAuthScreen> {
                                 ),
                               ),
                             ],
+                          ),
+                            ),
                           ),
                         ),
                       ],

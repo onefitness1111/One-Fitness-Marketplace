@@ -11,6 +11,7 @@ import "../../../core/utils/intake_entitlements.dart";
 import "../../../core/utils/onboarding_utils.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../core/web/portal_layout.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
@@ -154,11 +155,12 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
     // fade in one after another.
     Widget stag(Widget child) => child;
 
+    final wide = portalIsWide(context);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: EdgeInsets.all(wide ? 28 : 18),
+      child: _portalDashboard(
+        wide: wide,
         children: [
           stag(Text(
             firstName.isEmpty
@@ -238,7 +240,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               ),
             )),
 
-          stag(WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate)),
+          stag(_Span(child: WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate))),
 
           const SizedBox(height: 4),
           stag(AppCard(
@@ -335,6 +337,51 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
       ),
     );
   }
+}
+
+/// On a wide website the calendar fills the right side and the cards fill
+/// the left, together using the whole content area. A phone stays one column.
+Widget _portalDashboard({required bool wide, required List<Widget> children}) {
+  if (!wide) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+  final headers = <Widget>[];
+  final side = <Widget>[];
+  final main = <Widget>[];
+  for (final child in children) {
+    if (child is _Span) {
+      main.add(child);
+    } else if (child is AppCard ||
+        child is _OnboardingSection ||
+        child is SessionsRemainingBadge ||
+        child is PackageRenewalCard ||
+        child is BalanceDueBanner) {
+      side.add(child);
+    } else {
+      headers.add(child);
+    }
+  }
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      ...headers,
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: side)),
+          const SizedBox(width: 20),
+          Expanded(flex: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: main)),
+        ],
+      ),
+    ],
+  );
+}
+
+class _Span extends StatelessWidget {
+  const _Span({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => child;
 }
 
 /// Mirrors the "Complete your onboarding" block in ClientDashboard.jsx: the
