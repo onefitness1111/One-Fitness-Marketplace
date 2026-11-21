@@ -104,6 +104,24 @@ const _billingConfig = BillingDetailsCollectionConfiguration(
   attachDefaultsToPaymentMethod: true,
 );
 
+/// The address is already on the Stripe customer. Attach it to the new
+/// payment method without putting the street on this device.
+const _storedBillingConfig = BillingDetailsCollectionConfiguration(
+  address: AddressCollectionMode.never,
+  attachDefaultsToPaymentMethod: true,
+);
+
+BillingDetailsCollectionConfiguration? _collectionFor(
+  BillingAddress? billing, {
+  bool useStoredBilling = false,
+  bool collectFullBilling = false,
+}) {
+  if (collectFullBilling) return _fullBillingConfig;
+  if (billing != null) return _billingConfig;
+  if (useStoredBilling) return _storedBillingConfig;
+  return null;
+}
+
 const _fullBillingConfig = BillingDetailsCollectionConfiguration(
   name: CollectionMode.always,
   address: AddressCollectionMode.full,
@@ -138,6 +156,7 @@ class PaymentSheetService {
     int quantity = 1,
     required String businessName,
     BillingAddress? billing,
+    bool useStoredBilling = false,
   }) async {
     if (kIsWeb) {
       return const PaymentResult.failed(kAvailableInMobileApp);
@@ -152,7 +171,7 @@ class PaymentSheetService {
     } catch (e) {
       return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));
     }
-    return _present(intent, businessName, billing);
+    return _present(intent, businessName, billing, useStoredBilling: useStoredBilling);
   }
 
   /// Pay for ONE session. Returns the result and the PaymentIntent id, which
@@ -259,7 +278,15 @@ class PaymentSheetService {
     }
   }
 
-  static Future<PaymentResult> addPaymentMethod({required String businessName, String? clientId, BillingAddress? billing}) async {
+  static Future<PaymentResult> addPaymentMethod({
+    required String businessName,
+    String? clientId,
+    BillingAddress? billing,
+    bool useStoredBilling = false,
+  }) async {
+    if (billing == null && !useStoredBilling) {
+      return const PaymentResult.failed("Add a billing address before saving a payment method.");
+    }
     if (kIsWeb) {
       return const PaymentResult.failed(kAvailableInMobileApp);
     }
@@ -290,7 +317,7 @@ class PaymentSheetService {
           customerEphemeralKeySecret: setup["ephemeralKey"] as String?,
           merchantDisplayName: businessName,
           billingDetails: _billingDetails(billing),
-          billingDetailsCollectionConfiguration: billing == null ? null : _billingConfig,
+          billingDetailsCollectionConfiguration: _collectionFor(billing, useStoredBilling: useStoredBilling),
           allowsDelayedPaymentMethods: true,
         ),
       );
@@ -314,6 +341,7 @@ class PaymentSheetService {
     int? priceOverrideCents,
     String? accessExpiresAt,
     BillingAddress? billing,
+    bool useStoredBilling = false,
   }) async {
     // The native sheet is iOS/Android only. Web would need Stripe Elements,
     // which this app doesn't ship — failing loudly beats silently doing
@@ -336,7 +364,7 @@ class PaymentSheetService {
       return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));
     }
 
-    final result = await _present(intent, businessName, billing);
+    final result = await _present(intent, businessName, billing, useStoredBilling: useStoredBilling);
     if (!result.ok) return result;
     final receipt = intent["receiptText"] as String?;
     if (receipt == null || receipt.isEmpty) return result;
@@ -351,6 +379,7 @@ class PaymentSheetService {
     required String enrollmentStart,
     required String businessName,
     BillingAddress? billing,
+    bool useStoredBilling = false,
   }) async {
     if (kIsWeb) {
       return (const PaymentResult.failed(kAvailableInMobileApp), null);
@@ -367,7 +396,7 @@ class PaymentSheetService {
     if (intent["alreadyRenewed"] == true) {
       return (const PaymentResult.success(), intent["paymentIntentId"] as String?);
     }
-    final result = await _present(intent, businessName, billing);
+    final result = await _present(intent, businessName, billing, useStoredBilling: useStoredBilling);
     return (result, intent["paymentIntentId"] as String?);
   }
 
@@ -379,6 +408,7 @@ class PaymentSheetService {
     String businessName,
     BillingAddress? billing, {
     bool collectFullBilling = false,
+    bool useStoredBilling = false,
   }) async {
     if (intent["requiresPayment"] == false) return const PaymentResult.nothingDue();
 
@@ -408,11 +438,11 @@ class PaymentSheetService {
           customerEphemeralKeySecret: intent["ephemeralKey"] as String?,
           merchantDisplayName: businessName,
           billingDetails: _billingDetails(billing),
-          billingDetailsCollectionConfiguration: collectFullBilling
-              ? _fullBillingConfig
-              : billing == null
-                  ? null
-                  : _billingConfig,
+          billingDetailsCollectionConfiguration: _collectionFor(
+            billing,
+            useStoredBilling: useStoredBilling,
+            collectFullBilling: collectFullBilling,
+          ),
           // Apple Pay is a card wallet layered on top of the sheet, so it's
           // switched on here rather than in the server's method list — and
           // only for packages, per the product-type rules, and only when

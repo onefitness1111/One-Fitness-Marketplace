@@ -199,15 +199,17 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
         // with no browser and nothing to redirect back from. The plan is
         // still only ever granted by stripe-webhook once Stripe confirms the
         // payment, never by this call returning.
-        // Billing address first — asked once, saved to the profile.
-        final billing = await ensureBillingAddress(context, clientId: clientId);
-        if (billing == null) {
+        // Billing address first — the same step as Add payment method.
+        if (!mounted) return;
+        final billing = await collectBillingAddress(context, clientId: clientId);
+        if (!billing.proceed) {
           if (mounted) setState(() => _busyPlanId = null);
           return;
         }
         if (!mounted) return;
         final result = await PaymentSheetService.purchase(
-          billing: billing,
+          billing: billing.address,
+          useStoredBilling: billing.storedOnFile,
           planId: plan.id,
           couponCode: couponCode.isEmpty ? null : couponCode,
           paymentMethod: tender == PayTender.ach ? "ach" : "card",

@@ -1,8 +1,11 @@
 // Add a card without buying anything.
 //
 // Proposed replacement. Not deployed until you deploy this function.
-// A client can add a card to their own account. Only the owner can add one
-// to someone else's account. A coach cannot.
+// A client can add a card to their own account. The owner can add one to
+// any client's account, and so can any coach. Clients are not assigned to
+// a coach. The billing address
+// is collected in the app before this runs, and a coach is not given the
+// street once an address is already on file.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
@@ -35,14 +38,18 @@ serve(async (req) => {
 
     const { clientId } = await req.json().catch(() => ({}));
     let targetId = user.id;
-    if (clientId && clientId !== user.id) {
+    if (clientId && clientId !== user.id) targetId = clientId;
+    const { data: clientRow } = await admin
+      .from("clients")
+      .select("stripe_customer_id")
+      .eq("profile_id", targetId)
+      .maybeSingle();
+    if (targetId !== user.id) {
       const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
-      if (me?.role !== "owner") {
-        throw new Error("Only the owner can add a card to a client's account.");
-      }
-      targetId = clientId;
+      const role = me?.role ?? "";
+      const allowed = role === "owner" || role === "coach";
+      if (!allowed) throw new Error("Not allowed to add a payment method for that client.");
     }
-    const { data: clientRow } = await admin.from("clients").select("stripe_customer_id").eq("profile_id", targetId).maybeSingle();
 
     let customerId = clientRow?.stripe_customer_id as string | null;
     if (!customerId || !(await customerIsUsable(stripe, customerId))) {

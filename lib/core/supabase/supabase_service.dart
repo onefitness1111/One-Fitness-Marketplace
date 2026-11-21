@@ -6299,6 +6299,22 @@ class SupabaseService {
     }
   }
 
+  /// City and state only. For a coach, after an address is on file.
+  static Future<({String? city, String? state})?> loadBillingLocality(String clientId) async {
+    try {
+      final rows = await client.rpc("client_billing_locality", params: {"p_client": clientId});
+      if (rows is! List || rows.isEmpty || rows.first is! Map) return null;
+      final row = Map<String, dynamic>.from(rows.first as Map);
+      String? clean(Object? value) {
+        final text = value?.toString().trim() ?? "";
+        return text.isEmpty ? null : text;
+      }
+      return (city: clean(row["city"]), state: clean(row["state"]));
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Saves (or replaces) the billing address on a client's profile.
   static Future<Map<String, dynamic>> chargeClient({
     required String clientId,
