@@ -42,9 +42,10 @@ class Booking {
   final String? locationName;
   final bool isPhysicalAssessment;
 
-  /// Set only when an owner pushed a manual booking past a real conflict or
-  /// capacity block (AddManualBookingModal.jsx's override confirmation) —
-  /// `overrideReason` is "conflict" | "capacity".
+  /// Set only when an owner pushed a booking past a real conflict or a full
+  /// class. The live trigger allows the insert when [overriddenBy] is set
+  /// and the caller really is the owner. [overrideReason] starts with
+  /// "conflict" or "capacity" and then names what was in the way.
   final String? overriddenBy;
   final String? overriddenAt;
   final String? overrideReason;
@@ -80,6 +81,28 @@ class Booking {
         overriddenBy: overriddenBy,
         overriddenAt: overriddenAt,
         overrideReason: overrideReason,
+        planId: planId,
+        durationMin: durationMin,
+        countsTowardPay: countsTowardPay,
+      );
+
+  /// Stamps the owner override the booking trigger looks for.
+  Booking withOwnerOverride(String reason) => Booking(
+        id: id,
+        clientId: clientId,
+        trainerId: trainerId,
+        date: date,
+        slot: slot,
+        sessionType: sessionType,
+        discipline: discipline,
+        status: status,
+        attendanceStatus: attendanceStatus,
+        clientStartedAt: clientStartedAt,
+        locationName: locationName,
+        isPhysicalAssessment: isPhysicalAssessment,
+        overriddenBy: "owner",
+        overriddenAt: DateTime.now().toUtc().toIso8601String(),
+        overrideReason: reason,
         planId: planId,
         durationMin: durationMin,
         countsTowardPay: countsTowardPay,
