@@ -44,12 +44,12 @@ serve(async (req) => {
     const role = String(me?.role ?? "");
     const { data: clientRow } = await admin
       .from("clients")
-      .select("primary_trainer_id, stripe_customer_id")
+      .select("stripe_customer_id")
       .eq("profile_id", clientId)
       .maybeSingle();
     if (!clientRow) throw new Error("That client was not found.");
-    const allowed = role === "owner" || (role === "coach" && clientRow.primary_trainer_id === user.id);
-    if (!allowed) throw new Error("You can only charge your own clients.");
+    const allowed = role === "owner" || role === "coach";
+    if (!allowed) throw new Error("Only a coach or the owner can charge a client.");
 
     const secret = Deno.env.get("STRIPE_SECRET_KEY");
     if (!secret) throw new Error("Card payments aren't set up yet.");

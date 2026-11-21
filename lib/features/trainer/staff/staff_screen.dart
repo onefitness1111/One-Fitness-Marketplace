@@ -181,8 +181,8 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
                   setState(() => _editing = null);
                   // Best-effort freshness — the server-side cleanup already
                   // cleared every client's dangling primary/referred trainer
-                  // id, this just pulls that down so the roster doesn't keep
-                  // scoping a client out of an "own"-scoped coach's view.
+                  // id. Pull the roster so those stored ids match the server.
+                  // They do not hide any client.
                   try {
                     final freshRoster = await SupabaseService.loadRoster();
                     ref.read(trainerRosterProvider.notifier).setAll(freshRoster);

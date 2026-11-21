@@ -183,9 +183,19 @@ CoachBadgeProgress prFactoryBadge(Trainer coach, List<CoachPrEvent> prEvents, Re
   );
 }
 
+/// Clients this coach has a session with. Badge credit follows the coach
+/// on the booking, not an assigned coach.
+List<ClientInfo> _clientsCoachedBy(String coachId, List<ClientInfo> roster, List<Booking> bookings) {
+  final ids = <String>{
+    for (final booking in bookings)
+      if (booking.trainerId == coachId) booking.clientId,
+  };
+  return [for (final client in roster) if (ids.contains(client.id)) client];
+}
+
 /// Check-In — every at-risk trigger (no-show, 2+ late-cancels within a
-/// trailing 14 days, or a fresh red transition) for this coach's roster in
-/// range, and whether each got a real same-window chat follow-up.
+/// trailing 14 days, or a fresh red transition) for clients this coach
+/// has a session with, and whether each got a real same-window chat follow-up.
 CoachBadgeProgress checkInBadge(
   Trainer coach,
   List<ClientInfo> roster,
@@ -194,7 +204,7 @@ CoachBadgeProgress checkInBadge(
   ReportRange range, {
   double completionBar = 0.90,
 }) {
-  final myClients = roster.where((c) => c.primaryTrainerId == coach.id).toList();
+  final myClients = _clientsCoachedBy(coach.id, roster, bookings);
   var triggerCount = 0;
   var completedCount = 0;
   for (final c in myClients) {
@@ -244,7 +254,7 @@ CoachBadgeProgress comebackBadge(
   int sustainDays = 14,
   int sustainSessions = 3,
 }) {
-  final myClients = roster.where((c) => c.primaryTrainerId == coach.id).toList();
+  final myClients = _clientsCoachedBy(coach.id, roster, bookings);
   var qualifying = 0;
   for (final c in myClients) {
     final record = clientRecords[c.id];
@@ -278,11 +288,12 @@ CoachBadgeProgress habitCoachBadge(
   List<ClientInfo> roster,
   Map<String, ClientRecord> clientRecords,
   ReportRange range, {
+  required List<Booking> bookings,
   required int habitPercent,
   required int consecutiveWeeks,
   double coachThreshold = 0.70,
 }) {
-  final myClients = roster.where((c) => c.primaryTrainerId == coach.id).toList();
+  final myClients = _clientsCoachedBy(coach.id, roster, bookings);
   final eligible = <ClientInfo>[];
   for (final c in myClients) {
     final record = clientRecords[c.id];
@@ -324,18 +335,19 @@ CoachBadgeProgress habitCoachBadge(
   );
 }
 
-/// Challenge Coach — share of the coach's roster enrolled in any challenge
-/// active during the month. No active challenge that month = not
-/// attainable (shown as such, not silently 0%).
+/// Challenge Coach — share of the clients this coach has a session with
+/// who are enrolled in any challenge active during the month. No active
+/// challenge that month = not attainable (shown as such, not silently 0%).
 CoachBadgeProgress challengeCoachBadge(
   Trainer coach,
   List<ClientInfo> roster,
   List<Challenge> challenges,
   ReportRange range, {
+  required List<Booking> bookings,
   double requiredRate = 0.50,
 }) {
   final active = challenges.where((ch) => ch.startDate.compareTo(range.end) <= 0 && ch.endDate.compareTo(range.start) >= 0).toList();
-  final myClients = roster.where((c) => c.primaryTrainerId == coach.id).toList();
+  final myClients = _clientsCoachedBy(coach.id, roster, bookings);
   if (active.isEmpty || myClients.isEmpty) {
     return CoachBadgeProgress(
       badgeKey: "challenge_coach",
@@ -343,7 +355,7 @@ CoachBadgeProgress challengeCoachBadge(
       current: 0,
       target: myClients.length,
       qualifies: false,
-      detail: active.isEmpty ? "No active challenge this month." : "No clients assigned.",
+      detail: active.isEmpty ? "No active challenge this month." : "No clients with a session.",
     );
   }
   final participantIds = active.expand((ch) => ch.participantIds).toSet();
@@ -450,8 +462,8 @@ List<CoachBadgeProgress> computeAllCoachBadges({
       prFactoryBadge(coach, prEvents, range),
       checkInBadge(coach, roster, clientRecords, bookings, range),
       comebackBadge(coach, roster, clientRecords, bookings, range),
-      habitCoachBadge(coach, roster, clientRecords, range, habitPercent: habitPercent, consecutiveWeeks: habitConsecutiveWeeks),
-      challengeCoachBadge(coach, roster, challenges, range),
+      habitCoachBadge(coach, roster, clientRecords, range, bookings: bookings, habitPercent: habitPercent, consecutiveWeeks: habitConsecutiveWeeks),
+      challengeCoachBadge(coach, roster, challenges, range, bookings: bookings),
       sessionsCoachedBadge(coach, bookings, range),
       clientMilestoneBadge(coach, bookings, range),
       retentionStreakBadge(coach, bookings, range),
@@ -510,7 +522,7 @@ CoachCompositeScore coachCompositeScore(
   final comebackRate = _rateOf(badges, "comeback");
   final habitRate = _rateOf(badges, "habit_coach");
   final challengeRate = _rateOf(badges, "challenge_coach");
-  final activeClients = roster.where((c) => c.primaryTrainerId == coach.id).length;
+  final activeClients = bookings.where((b) => b.trainerId == coach.id).map((b) => b.clientId).toSet().length;
   final completedSessions = bookings.where((b) => b.trainerId == coach.id && b.attendanceStatus == "checked-in" && range.includes(b.date)).length;
   final composite = 0.30 * fullHouseRate + 0.20 * prRate + 0.20 * checkInRate + 0.15 * comebackRate + 0.10 * habitRate + 0.05 * challengeRate;
   return CoachCompositeScore(

@@ -11,6 +11,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/chat/chat_entry.dart";
+import "../../../core/chat/staff_alert.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/widgets/chat_gate.dart";
 import "../../../core/widgets/send_via_chips.dart";
@@ -32,6 +33,7 @@ enum _ChatView { list, thread, picker }
 
 const _prefRecipientKey = "chat_recipient_id";
 const _prefChannelKey = "chat_channel";
+const _prefChannelMarkerKey = "chat_channel_default";
 
 /// Mirrors Comms.jsx (who: "client") — a timestamped communication log,
 /// restyled to read as a real chat: a one-time "who are you messaging"
@@ -91,11 +93,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // — "inappSms" becomes In app + SMS, so nobody's remembered choice
     // changes under them. Anything unreadable falls back to the default
     // rather than leaving the thread with nothing selected.
-    final saved = decodeChannels(prefs.getString(_prefChannelKey));
+    final resolved = resolveSavedChatChannels(
+      prefs.getString(_prefChannelKey),
+      prefs.getString(_prefChannelMarkerKey),
+    );
+    if (resolved.writeBack) {
+      await prefs.setString(_prefChannelKey, encodeChannels(resolved.channels));
+      await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
+    }
     if (!mounted) return;
     setState(() {
       _recipientId = savedRecipient;
-      _channels = saved.isEmpty ? defaultChatChannels : saved;
+      _channels = resolved.channels;
       _prefsLoaded = true;
     });
     if (_isSetUp && _view == _ChatView.thread && _recipientId != null) {
@@ -114,6 +123,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefRecipientKey, recipientId);
     await prefs.setString(_prefChannelKey, encodeChannels(chosen));
+    await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
     if (!mounted) return;
     setState(() {
       _recipientId = recipientId;
@@ -132,15 +142,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } else {
       _scrollController.jumpTo(target);
     }
-  }
-
-  List<Trainer> _scopedCoaches(ClientInfo info, List<Trainer> trainers, PlatformSettings settings) {
-    // "Allow clients to message any coach" off (the default) scopes the
-    // picker to coaches the client actually has a relationship with.
-    final scoped = settings.clientsCanMessageAnyCoach
-        ? trainers
-        : trainers.where((t) => t.id == info.primaryTrainerId).toList();
-    return scoped.isNotEmpty ? scoped : trainers;
   }
 
   Future<void> _openChangeSheet({
@@ -203,6 +204,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(comms: [pending, ...r.comms]));
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     var savedOk = false;
+    CommMessage? savedRow;
     try {
       final saved = await SupabaseService.sendMessage(
         clientId: info.id,
@@ -217,6 +219,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               comms: r.comms.map((c) => c.id == tempId ? saved : c).toList(),
             ),
           );
+      savedRow = saved;
       savedOk = true;
     } catch (e) {
       // Rejected (or offline): take the bubble back so the client never
@@ -251,11 +254,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // SMS is saved on the message. The database trigger texts the coach
     // from the business number. Email is not saved on the thread; it is
     // sent on its own, from ONE Fitness, to the coach's address.
-    if (selectedCoach.id != "business") {
-      SupabaseService.clientNotify("chat-to-staff", {
-        "profileId": selectedCoach.id,
-        "body": text,
-      });
+    if (selectedCoach.id != "business" && savedRow != null) {
+      SupabaseService.clientNotify(
+        "chat-to-staff",
+        chatToStaffNotifyFields(
+          profileId: selectedCoach.id,
+          body: text,
+          messageId: savedRow.id,
+        ),
+      );
     }
     if (emailToo) {
       final profileId = selectedCoach.id == "business" ? _ownerProfileId() : selectedCoach.id;
@@ -326,7 +333,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final trainers = ref.watch(trainersProvider);
     final settings = ref.watch(platformSettingsProvider);
     final owners = ref.watch(ownerDirectoryProvider);
-    final scoped = _scopedCoaches(info, trainers, settings);
+    final scoped = trainers;
     final reach = clientRecipients(
       coachIds: scoped.map((t) => t.id),
       ownerIds: owners.map((o) => o.id).toSet(),
@@ -705,7 +712,20 @@ class _RecipientSetupState extends ConsumerState<_RecipientSetup> {
             channels: _shownChannels,
             businessSelected: _recipientId == "business",
             needsPhone: (ref.watch(clientInfoProvider).phone ?? "").trim().isEmpty,
-            onChanged: (next) => setState(() => _channels = _recipientId == "business" ? withoutBusinessSms(next) : next),
+            onChanged: (next) {
+              final chosen = _recipientId == "business" ? withoutBusinessSms(next) : next;
+              final turnedSmsOn = chosen.contains(ChatChannel.sms) && !_channels.contains(ChatChannel.sms);
+              if (!turnedSmsOn) {
+                setState(() => _channels = chosen);
+                return;
+              }
+              ensureSmsConsent(context).then((agreed) {
+                if (!mounted) return;
+                setState(() {
+                  _channels = channelsAfterSmsChoice(_channels, chosen, smsAllowed: agreed);
+                });
+              });
+            },
             onAddPhone: _openAddPhone,
           ),
           const SizedBox(height: 20),

@@ -70,6 +70,7 @@ import "../../data/providers/platform_settings_provider.dart";
 import "../utils/package_renewal.dart";
 import "contact_reads.dart";
 import "supabase_config.dart";
+import "../json/off_main_json.dart";
 
 /// Thin wrapper around the real Supabase project (same backend the web app
 /// uses), mirroring src/lib/supabaseData.js's field-name mapping 1:1 —
@@ -88,7 +89,10 @@ class SupabaseService {
 
   static SupabaseClient get client => Supabase.instance.client;
 
+  static bool _started = false;
+
   static Future<void> initialize() async {
+    if (_started) return;
     await Supabase.initialize(
       url: SupabaseConfig.url,
       publishableKey: SupabaseConfig.publishableKey,
@@ -104,6 +108,7 @@ class SupabaseService {
         detectSessionInUri: !kIsWeb,
       ),
     );
+    _started = true;
   }
 
   static User? get currentUser => client.auth.currentUser;
@@ -138,6 +143,27 @@ class SupabaseService {
     final role = await currentRole();
     if (role == null) return null;
     return {"id": user.id, "role": role};
+  }
+
+  /// Name and photo from the auth user, with no network round trip.
+  ///
+  /// Sign-up stores the name in user metadata. The directory is the source
+  /// of truth and replaces this once it arrives. The client home can greet
+  /// them before that download finishes.
+  static Map<String, dynamic> provisionalProfile({required String role}) {
+    final user = currentUser;
+    final meta = user?.userMetadata ?? const <String, dynamic>{};
+    final named = (meta["name"] as String?)?.trim() ?? "";
+    return {
+      "id": user?.id ?? "",
+      "role": role,
+      "name": named,
+      "first_name": meta["first_name"],
+      "last_name": meta["last_name"],
+      "photo_url": meta["photo_url"],
+      "email": user?.email,
+      "push_opt_in": true,
+    };
   }
 
   static Future<void> signIn(String email, String password) async {
@@ -552,6 +578,66 @@ class SupabaseService {
     return [for (final r in rows) Map<String, dynamic>.from(r as Map)];
   }
 
+  /// Same directory, with the JSON decode off the UI isolate.
+  ///
+  /// The client library decodes on the UI isolate before the future
+  /// completes, so a large directory froze the phone for a second or more
+  /// and held back the next request (the contact read). This path reads
+  /// the raw body and decodes it in the background.
+  static Future<List<Map<String, dynamic>>> loadProfileDirectoryOffMain() async {
+    final decoded = await _getJson(
+      Uri.parse("${SupabaseConfig.url}/rest/v1/rpc/profile_directory"),
+      method: "POST",
+      jsonBody: "{}",
+    );
+    return _maps(decoded);
+  }
+
+  /// [columns] is a PostgREST select list. [profileId] limits it to one row.
+  /// The body is decoded off the UI isolate. Used for record blobs, which
+  /// are the largest payload in a sign-in.
+  static Future<List<Map<String, dynamic>>> fetchRecordRowsOffMain(
+    String columns, {
+    String? profileId,
+  }) async {
+    final decoded = await _getJson(
+      Uri.parse("${SupabaseConfig.url}/rest/v1/client_records").replace(queryParameters: {
+        "select": columns,
+        if (profileId != null) "profile_id": "eq.$profileId",
+      }),
+    );
+    return _maps(decoded);
+  }
+
+  static List<Map<String, dynamic>> _maps(dynamic decoded) {
+    if (decoded is! List) return const [];
+    return [
+      for (final row in decoded)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
+
+  static Future<dynamic> _getJson(Uri uri, {String method = "GET", String? jsonBody}) async {
+    final token = client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception("You're signed out — sign in and try again.");
+    }
+    final headers = {
+      "apikey": SupabaseConfig.publishableKey,
+      "Authorization": "Bearer $token",
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+    };
+    final res = method == "POST"
+        ? await http.post(uri, headers: headers, body: jsonBody ?? "{}")
+        : await http.get(uri, headers: headers);
+    if (res.statusCode >= 400) {
+      throw Exception("Request failed (${res.statusCode}).");
+    }
+    if (res.body.isEmpty) return const [];
+    return decodeJsonOffMain(res.body);
+  }
+
   /// One directory read plus one contact read. Sign-in reuses this list for
   /// the session profile, the roster, and the coach names.
   static Future<List<Map<String, dynamic>>> directoryWithContacts() async {
@@ -581,6 +667,10 @@ class SupabaseService {
       return const [];
     }
   }
+
+  static Future<void> attachContacts(List<Map<String, dynamic>> profiles) => _attachContacts(profiles);
+
+  static Future<void> attachBilling(List<Map<String, dynamic>> clients) => _attachBilling(clients);
 
   static Future<void> _attachContacts(List<Map<String, dynamic>> profiles) async {
     if (profiles.isEmpty) return;
@@ -661,14 +751,19 @@ class SupabaseService {
     return rosterFromDirectory(await directoryWithContacts());
   }
 
-  static Future<List<Map<String, dynamic>>> fetchClientRows(List<String> ids) async {
+  static Future<List<Map<String, dynamic>>> fetchClientRows(
+    List<String> ids, {
+    bool includeBilling = true,
+  }) async {
     if (ids.isEmpty) return [];
     final clients = await client
         .from("clients")
         .select(_clientColumns)
         .inFilter("profile_id", ids);
     final clientRows = [for (final c in clients as List) Map<String, dynamic>.from(c as Map)];
-    await _attachBilling(clientRows);
+    // Billing is a second RPC. The home screen paints from the client row
+    // itself; the balance banner fills in when billing returns.
+    if (includeBilling) await _attachBilling(clientRows);
     return clientRows;
   }
 
@@ -984,6 +1079,12 @@ class SupabaseService {
           "workoutLogs": pick("workoutLogs"),
           "trainerNotes": pick("trainerNotes"),
           "programRefresh": pick("programRefresh"),
+          "habitSettings": pick("habitSettings"),
+          "habitLogs": pick("habitLogs"),
+          "tourSeen": pick("tourSeen"),
+          "intake": pick("intake"),
+          "signatures": pick("signatures"),
+          "logs": pick("logs"),
         });
       } catch (e) {
         // ignore: avoid_print
@@ -6318,6 +6419,22 @@ class SupabaseService {
     try {
       final raw = await client.rpc("client_billing_address", params: {"p_client": clientId});
       return BillingAddress.tryParse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// City and state only. For a coach, after an address is on file.
+  static Future<({String? city, String? state})?> loadBillingLocality(String clientId) async {
+    try {
+      final rows = await client.rpc("client_billing_locality", params: {"p_client": clientId});
+      if (rows is! List || rows.isEmpty || rows.first is! Map) return null;
+      final row = Map<String, dynamic>.from(rows.first as Map);
+      String? clean(Object? value) {
+        final text = value?.toString().trim() ?? "";
+        return text.isEmpty ? null : text;
+      }
+      return (city: clean(row["city"]), state: clean(row["state"]));
     } catch (_) {
       return null;
     }

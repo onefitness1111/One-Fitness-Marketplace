@@ -8,6 +8,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../core/theme/app_colors.dart";
 import "package:shared_preferences/shared_preferences.dart";
+import "../../../core/utils/booking_limits.dart";
 import "../../../core/utils/booking_location.dart";
 import "../../../core/utils/booking_places.dart";
 import "../../../core/utils/session_places.dart";
@@ -943,30 +944,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   /// capacity, coach double-booking and the waiver as the last word (the app's
   /// own copy of the schedule can be a few seconds stale), so its reason is
   /// the accurate one — "check your connection" is only for a real failure.
-  String _bookingErrorMessage(Object e) {
-    final text = e.toString();
-    if (text.contains("BALANCE_DUE")) {
-      final start = text.indexOf("You have an outstanding balance");
-      if (start >= 0) {
-        final end = text.indexOf("book sessions.");
-        if (end > start) return text.substring(start, end + "book sessions.".length);
-      }
-      return "You have an outstanding balance. Please pay your balance to book sessions.";
-    }
-    if (text.contains("waiver-required")) {
-      return "Please sign the waiver under Signatures (in the menu) before booking.";
-    }
-    if (text.contains("already at capacity")) {
-      return "That session just filled up. Pick another time, or join the waitlist.";
-    }
-    if (text.contains("overlaps this time slot")) {
-      return "This coach was just booked for another session at that time. Please pick another time.";
-    }
-    if (text.contains("membership") || text.contains("plan")) {
-      return "That session isn't covered by your current plan — see Membership for what each plan covers.";
-    }
-    return "Couldn't book that session — check your connection and try again.";
-  }
+  /// Clients are never offered an override.
+  String _bookingErrorMessage(Object e) => clientBookingErrorMessage(e);
 
   @override
   Widget build(BuildContext context) {

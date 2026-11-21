@@ -47,7 +47,7 @@ void main() {
     expect(sanitizeGroupName("x" * 50).length, 40);
   });
 
-  test("a coach reaches only their own clients", () {
+  test("a coach reaches every client", () {
     final own = scopeBroadcast(
       senderIsOwner: false,
       senderId: "chris",
@@ -55,7 +55,7 @@ void main() {
       requestedIds: const [],
       clients: clients,
     );
-    expect(own.allowed.map((c) => c.id), ["a", "b"]);
+    expect(own.allowed.map((c) => c.id), ["a", "b", "c"]);
     expect(own.refused, isEmpty);
 
     final picked = scopeBroadcast(
@@ -65,11 +65,11 @@ void main() {
       requestedIds: const ["a", "c"],
       clients: clients,
     );
-    expect(picked.allowed.map((c) => c.id), ["a"]);
-    expect(picked.refused, ["c"]);
+    expect(picked.allowed.map((c) => c.id), ["a", "c"]);
+    expect(picked.refused, isEmpty);
   });
 
-  test("the owner reaches every client, including another coach's", () {
+  test("the owner reaches every client", () {
     final everyone = scopeBroadcast(
       senderIsOwner: true,
       senderId: "owner",

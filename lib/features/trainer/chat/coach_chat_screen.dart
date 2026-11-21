@@ -46,6 +46,7 @@ enum _ChatView { list, thread, picker, broadcast }
 
 const _prefRecipientKey = "coach_chat_client_id";
 const _prefChannelKey = "coach_chat_channel";
+const _prefChannelMarkerKey = "coach_chat_channel_default";
 
 /// Mirrors the client-side chat_screen.dart's redesign, reversed: the coach
 /// picks a client (searchable, from their scoped roster) instead of a
@@ -88,7 +89,16 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   List<Map<String, dynamic>> _staffMessages = [];
   RealtimeChannel? _staffChannel;
 
-  String get _me => SupabaseService.currentUser?.id ?? "";
+  /// Empty before sign-in, and in a widget test that never starts Supabase.
+  /// The shell keeps this page mounted behind the one on screen, so a
+  /// missing client must not take the other pages down with it.
+  String get _me {
+    try {
+      return SupabaseService.currentUser?.id ?? "";
+    } catch (_) {
+      return "";
+    }
+  }
 
   @override
   void initState() {
@@ -274,11 +284,18 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final savedRecipient = prefs.getString(_prefRecipientKey);
     // Values written by an older build come through the legacy spellings,
     // so a coach's remembered choice survives the update.
-    final saved = decodeChannels(prefs.getString(_prefChannelKey));
+    final resolved = resolveSavedChatChannels(
+      prefs.getString(_prefChannelKey),
+      prefs.getString(_prefChannelMarkerKey),
+    );
+    if (resolved.writeBack) {
+      await prefs.setString(_prefChannelKey, encodeChannels(resolved.channels));
+      await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
+    }
     if (!mounted) return;
     setState(() {
       _recipientId = savedRecipient;
-      _channels = saved.isEmpty ? defaultChatChannels : saved;
+      _channels = resolved.channels;
       _prefsLoaded = true;
     });
     if (_isSetUp) {
@@ -297,6 +314,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefRecipientKey, recipientId);
     await prefs.setString(_prefChannelKey, encodeChannels(channels));
+    await prefs.setString(_prefChannelMarkerKey, chatChannelDefaultMarker);
     if (!mounted) return;
     setState(() {
       _recipientId = recipientId;
@@ -509,14 +527,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
-    // Platform → Coaches, Access & Security controls this — matches
-    // RosterBar's own scoping so Chat and Clients never disagree about
-    // which roster a coach can see.
-    final coachClientScope = ref.watch(platformSettingsProvider).coachClientScope;
-    final roster = ref
-        .watch(trainerRosterProvider)
-        .where((c) => isOwner || coachClientScope != "own" || c.primaryTrainerId == trainerAuth)
-        .toList();
+    final roster = ref.watch(trainerRosterProvider);
     final records = ref.watch(trainerClientRecordsProvider);
     final unreadKeys = ref.watch(unreadChatKeysProvider);
     final settings = ref.watch(platformSettingsProvider);

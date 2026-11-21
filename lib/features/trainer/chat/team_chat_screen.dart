@@ -91,7 +91,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
   String? _pick;
   final _text = TextEditingController();
   final _scroll = ScrollController();
-  Set<ChatChannel> _channels = {ChatChannel.inapp};
+  Set<ChatChannel> _channels = {...defaultChatChannels};
   bool _sending = false;
 
   String get _me => SupabaseService.currentUser?.id ?? "";

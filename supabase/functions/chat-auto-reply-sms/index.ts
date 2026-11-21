@@ -11,14 +11,18 @@
 // input we trust is a message id. Everything else is re-read with the
 // service key. A repeat call for the same message does not text twice.
 //
-// Likes never call this. Someone who has opted out, or who has not agreed
-// to texts, is not texted. The app thread is unaffected.
+// Likes never call this. A client who has opted out, or who has not agreed
+// to texts, is not texted. A coach or the owner is texted when they have a
+// phone and have not opted out. A client's message to staff is texted
+// whatever channel the client picked. The app thread is unaffected.
+// The staff push is claimed per message so client-notify does not push twice.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { planTextsForSavedMessage } from "../_shared/chatRouting.mjs";
+import { clientToStaff, planTextsForSavedMessage } from "../_shared/chatRouting.mjs";
 import { lineType, loadCoaches, loadParty, toE164 } from "../_shared/chatPeople.ts";
 import { sendSms } from "../_shared/sendSms.ts";
+import { pushStaffForClientMessage } from "../_shared/staffAlert.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -96,6 +100,8 @@ serve(async (req) => {
     }
 
     const coaches = sender.role === "owner" ? await loadCoaches(admin) : [];
+    const relayToStaff = clientToStaff(sender, recipient);
+    const includeSms = relayToStaff || channelHasSms(msg.channel as string | null);
     const plan = planTextsForSavedMessage({
       sender,
       recipient,
@@ -103,7 +109,7 @@ serve(async (req) => {
       originChannel: (msg.origin_channel as string | null) || (msg.channel === "sms" ? "sms" : "app"),
       routedTo: (msg.routed_to as string | null) || (msg.trainer_id ? "conversation" : "business"),
       coaches,
-      includeSms: channelHasSms(msg.channel as string | null),
+      includeSms,
       groupName: msg.group_name,
     });
 
@@ -120,7 +126,16 @@ serve(async (req) => {
       if (copyErr) console.warn(`chat-auto-reply-sms: pass-along not saved: ${copyErr.message}`);
     }
 
-    if (!channelHasSms(msg.channel as string | null)) return await record("skipped: sms not chosen");
+    if (relayToStaff && recipient) {
+      await pushStaffForClientMessage(admin, {
+        messageId,
+        staffId: recipient.id,
+        clientName: sender.displayName,
+        body: String(msg.body || ""),
+      });
+    }
+
+    if (!includeSms) return await record("skipped: sms not chosen");
     if (plan.sms.length === 0) return await record("skipped: recipient cannot be texted");
 
     const sid = Deno.env.get("TWILIO_ACCOUNT_SID");

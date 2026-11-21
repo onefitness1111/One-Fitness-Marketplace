@@ -34,9 +34,9 @@ test("any mix of in app, text, and email is allowed, and empty is not", () => {
   assert.equal(sanitizeGroupName(" \n "), "");
 });
 
-test("a coach reaches only their own clients", () => {
+test("a coach reaches every client", () => {
   const own = scopeBroadcast({ senderIsOwner: false, senderId: "chris", all: true, clients });
-  assert.deepEqual(own.allowed.map((c) => c.id), ["a", "b"]);
+  assert.deepEqual(own.allowed.map((c) => c.id), ["a", "b", "c"]);
   const picked = scopeBroadcast({
     senderIsOwner: false,
     senderId: "chris",
@@ -44,8 +44,8 @@ test("a coach reaches only their own clients", () => {
     requestedIds: ["a", "c"],
     clients,
   });
-  assert.deepEqual(picked.allowed.map((c) => c.id), ["a"]);
-  assert.deepEqual(picked.refused, ["c"]);
+  assert.deepEqual(picked.allowed.map((c) => c.id), ["a", "c"]);
+  assert.deepEqual(picked.refused, []);
 });
 
 test("the owner reaches every client", () => {

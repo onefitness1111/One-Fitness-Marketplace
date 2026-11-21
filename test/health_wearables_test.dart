@@ -90,6 +90,11 @@ void main() {
       expect(sql, contains("enable row level security"));
       expect(sql, contains("primary_trainer_id"));
       expect(sql, contains("health_shared_with_me"));
+      final opened = File("supabase/migrations/20261121180000_open_coach_client_access.sql").readAsStringSync().toLowerCase();
+      expect(opened, contains("health_shared_with_me"));
+      expect(opened, contains("current_user_role() = 'coach'"));
+      expect(opened, isNot(contains("c.primary_trainer_id = uid")));
+      expect(opened, isNot(contains("primary_trainer_id = auth.uid()")));
       expect(sql, isNot(contains("to anon")));
     });
   });

@@ -30,7 +30,7 @@ serve(async (req) => {
     if (!booking) throw new Error("That booking is already gone.");
     const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
     const role = me?.role ?? "";
-    const allowed = user.id === booking.client_id || role === "owner" || (role === "coach" && user.id === booking.trainer_id);
+    const allowed = user.id === booking.client_id || role === "owner" || role === "coach";
     if (!allowed) throw new Error("You can't cancel that session.");
 
     const result = await collectSessionFee(admin, bookingId, "cancel", false);

@@ -58,11 +58,9 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
 
   @override
   Widget build(BuildContext context) {
-    final trainerAuth = ref.watch(trainerAuthProvider);
-    final isOwner = trainerAuth == "owner";
     final roster = ref.watch(trainerRosterProvider);
     final active = ref.watch(dashboardExtrasProvider).liveDays;
-    final mine = roster.where((c) => active.containsKey(c.id) && (isOwner || c.primaryTrainerId == trainerAuth)).toList();
+    final mine = roster.where((c) => active.containsKey(c.id)).toList();
     if (mine.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -116,12 +114,9 @@ class LiveWorkoutPage extends ConsumerWidget {
       final rec = ref.read(trainerClientRecordsProvider)[clientId];
       final logs = [...?rec?.workoutLogs.where((l) => l.id != entry.id), entry];
       await SupabaseService.appendWorkoutLog(clientId, entry);
-      final roster = ref.read(trainerRosterProvider);
-      final matches = roster.where((c) => c.id == clientId);
       flagSessionSwaps(
         entry: entry,
         clientName: clientName,
-        coachId: matches.isEmpty ? null : matches.first.primaryTrainerId,
       );
       ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(workoutLogs: logs));
     }

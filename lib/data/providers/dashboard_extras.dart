@@ -3,8 +3,8 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../models/quiet_nudge.dart";
 
 /// Home-screen pieces that used to load inside each card after the
-/// dashboard was already on screen. They are filled before the shell
-/// opens, so the first frame is the finished screen.
+/// dashboard was already on screen. Balance, renewals, and nudges still
+/// fill in behind the first paint; the cards hide themselves until then.
 class DashboardExtras {
   const DashboardExtras({
     this.balanceCents,
@@ -39,7 +39,24 @@ class DashboardExtrasNotifier extends Notifier<DashboardExtras> {
   DashboardExtras build() => const DashboardExtras();
 
   void replace(DashboardExtras next) => state = next;
+
+  void update(DashboardExtras Function(DashboardExtras current) change) {
+    state = change(state);
+  }
 }
 
 final dashboardExtrasProvider =
     NotifierProvider<DashboardExtrasNotifier, DashboardExtras>(DashboardExtrasNotifier.new);
+
+/// False while the home screen is still waiting on the heavy record fields
+/// (programs, nutrition, habit logs, signatures). The schedule and the
+/// greeting paint first; those sections show a skeleton instead of a
+/// wrong empty state ("no one has a program").
+class HomeDetailsReady extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void set(bool value) => state = value;
+}
+
+final homeDetailsReadyProvider = NotifierProvider<HomeDetailsReady, bool>(HomeDetailsReady.new);

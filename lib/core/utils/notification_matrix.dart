@@ -2,11 +2,10 @@ import "coach_names.dart";
 
 /// Who should hear about something that happened to a client.
 ///
-/// A coach hears it only when it is their own session, they are that
-/// client's coach, or it happened at their location. A coach in another
-/// location hears nothing. The owner hears internal updates (photos,
-/// measurements, programs, intake). The client always gets a confirmation
-/// of what they themselves did.
+/// A session notifies the coach who ran it. Anything without a session
+/// coach, such as a sign-up, notifies every coach. The owner hears
+/// internal updates (photos, measurements, programs, intake). The client
+/// always gets a confirmation of what they themselves did.
 class NotifyAudience {
   const NotifyAudience({required this.clientIds, required this.coachIds, required this.ownerIds});
   final List<String> clientIds;
@@ -25,37 +24,26 @@ class CoachAudience {
   final String? publicName;
 }
 
-/// [eventTrainerId] is the coach on the booking or the coach who started
-/// the challenge. [eventLocation] is where that session is. [primaryTrainerId]
-/// is the client's own coach. [clientLocation] is the client's home location
-/// or city, used when an event has no session of its own (a sign-up).
+/// [eventTrainerId] is the coach on the booking or the coach who created
+/// the challenge. When that is empty, every coach is notified.
 NotifyAudience audienceFor({
   required String clientId,
   required List<CoachAudience> coaches,
   required List<String> ownerIds,
   String? eventTrainerId,
-  String? eventLocation,
-  String? primaryTrainerId,
-  String? clientLocation,
   bool internal = false,
 }) {
   if (internal) {
     return NotifyAudience(clientIds: const [], coachIds: const [], ownerIds: ownerIds);
   }
   final heard = <String>{};
-  final place = _norm(eventLocation);
-  final home = _norm(clientLocation);
-  for (final coach in coaches) {
-    if (eventTrainerId != null && eventTrainerId.isNotEmpty) {
-      if (coach.id == eventTrainerId) heard.add(coach.id);
-      continue;
+  final sessionCoach = (eventTrainerId ?? "").trim();
+  if (sessionCoach.isNotEmpty) {
+    for (final coach in coaches) {
+      if (coach.id == sessionCoach) heard.add(coach.id);
     }
-    if (primaryTrainerId != null && coach.id == primaryTrainerId) {
-      heard.add(coach.id);
-      continue;
-    }
-    final coachPlace = _norm(coach.location);
-    if (coachPlace.isNotEmpty && (coachPlace == place || coachPlace == home)) {
+  } else {
+    for (final coach in coaches) {
       heard.add(coach.id);
     }
   }

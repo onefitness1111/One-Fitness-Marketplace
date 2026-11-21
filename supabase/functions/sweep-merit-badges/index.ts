@@ -56,7 +56,6 @@ async function finalizeCoachMonth(admin: any) {
   const semiPrivateCap = Number(scheduling.semiPrivateCap) || 4;
 
   const { data: trainers } = await admin.from("trainers").select("profile_id, availability, unavailability");
-  const { data: clients } = await admin.from("clients").select("profile_id, primary_trainer_id");
   const { data: bookingRows } = await admin.from("bookings")
     .select("client_id, trainer_id, date, slot_min, attendance_status, cancelled_at");
   const { data: prs } = await admin.from("coach_pr_events").select("trainer_id, client_id, earned_at");
@@ -94,7 +93,8 @@ async function finalizeCoachMonth(admin: any) {
   for (const trainer of trainers || []) {
     const id = trainer.profile_id;
     const mine = allBookings.filter((b: any) => b.trainerId === id);
-    const rosterIds = (clients || []).filter((c: any) => c.primary_trainer_id === id).map((c: any) => c.profile_id);
+    // Badge credit follows sessions this coach ran, not an assigned roster.
+    const rosterIds = [...new Set(mine.filter((b: any) => !b.cancelled).map((b: any) => b.clientId))];
     const myPrs = (prs || []).filter((p: any) => p.trainer_id === id).map((p: any) => ({ clientId: p.client_id, earnedAt: p.earned_at }));
     const args = { rosterIds, recordsByClient, bookings: mine, coachId: id, start: range.start, end: range.end };
     const earned: string[] = [];

@@ -11,8 +11,12 @@ import {
   matchClientTag,
   parseTapback,
   pickProfileForSms,
+  canText,
+  clientToStaff,
+  hasSmsConsent,
   planTextsForSavedMessage,
   prefixBody,
+  staffPushCopy,
   quoteMatches,
   windowOpen,
   WINDOW_MS,
@@ -387,4 +391,149 @@ test("a broadcast text uses the group name, and a one-on-one text keeps its stor
     coaches: [],
   });
   assert.equal(direct.sms[0].body, "Coach Chris: See you at 6");
+});
+
+test("a client's in-app message still texts a coach who never consented", () => {
+  const book = gym();
+  book.person("chris").hasConsent = false;
+  const sent = book.sendApp({
+    fromId: "sam",
+    toId: "chris",
+    text: "In the lobby",
+    now: T0,
+    includeSms: false,
+  });
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].toId, "chris");
+  assert.equal(sent.sms[0].body, "Sam: In the lobby");
+  const reply = book.sendApp({
+    fromId: "chris",
+    toId: "sam",
+    text: "On my way",
+    now: T0 + MIN,
+    includeSms: false,
+  });
+  assert.equal(reply.message.body, "Coach Chris: On my way");
+  assert.equal(reply.sms.length, 0);
+});
+
+test("an inbound text reaches a coach or the owner without a consent timestamp", () => {
+  const book = gym();
+  book.person("chris").hasConsent = false;
+  book.person("owner").hasConsent = false;
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0, includeSms: false });
+  const reply = book.receiveSms({ fromId: "sam", text: "Here", now: T0 + MIN });
+  assert.equal(reply.sms.length, 1);
+  assert.equal(reply.sms[0].toId, "chris");
+  assert.equal(reply.sms[0].body, "Sam: Here");
+  book.person("chris").optedOut = true;
+  const blocked = book.receiveSms({ fromId: "sam", text: "Still here", now: T0 + 2 * MIN });
+  assert.equal(blocked.sms.length, 0);
+  const cold = new ThreadBook([
+    { id: "sam", role: "client", displayName: "Sam", phone: "+15551110002", hasConsent: true },
+    { id: "owner", role: "owner", displayName: BUSINESS_NAME, phone: "+15551235455", hasConsent: false },
+  ]);
+  const toOwner = cold.receiveSms({ fromId: "sam", text: "Hello?", now: T0 });
+  assert.equal(toOwner.kind, "fallthrough");
+  assert.equal(toOwner.sms[0].toId, "owner");
+});
+
+test("a client without consent is not texted, and a coach with no phone is not texted", () => {
+  const book = gym();
+  book.person("sam").hasConsent = false;
+  const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
+  assert.equal(sent.sms.length, 0);
+  assert.equal(sent.message.body, "Coach Chris: See you");
+  book.person("chris").phone = "";
+  book.person("sam").hasConsent = true;
+  const back = book.sendApp({ fromId: "sam", toId: "chris", text: "Ok", now: T0 + MIN, includeSms: false });
+  assert.equal(back.sms.length, 0);
+});
+
+test("a saved in-app client message texts staff with the coach-facing name", () => {
+  const coach = planTextsForSavedMessage({
+    sender: { id: "sam", role: "client", displayName: "Sam Rivera" },
+    recipient: { id: "chris", role: "coach", phone: "+15551110001", optedOut: false, hasConsent: false },
+    body: "In the lobby",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: false,
+  });
+  assert.equal(coach.sms.length, 1);
+  assert.equal(coach.sms[0].toId, "chris");
+  assert.equal(coach.sms[0].body, "Sam Rivera: In the lobby");
+
+  const already = planTextsForSavedMessage({
+    sender: { id: "sam", role: "client", displayName: "Sam Rivera" },
+    recipient: { id: "owner", role: "owner", phone: "+15551235455", optedOut: false, hasConsent: false },
+    body: "Sam Rivera: In the lobby",
+    originChannel: "app",
+    routedTo: "business",
+    coaches: [],
+    includeSms: false,
+  });
+  assert.equal(already.sms[0].body, "Sam Rivera: In the lobby");
+
+  const notice = planTextsForSavedMessage({
+    sender: { id: "sam", role: "client", displayName: "Sam" },
+    recipient: { id: "owner", role: "owner", phone: "+15551235455", optedOut: false, hasConsent: false },
+    body: "Sam: Hello",
+    originChannel: "sms",
+    routedTo: "business",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(notice.sms[0].body, "New message from Sam in ONE Fitness Marketplace.");
+});
+
+test("staff to client still follows the channel picker and client consent", () => {
+  const quiet = planTextsForSavedMessage({
+    sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: true },
+    body: "Coach Chris: On my way",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: false,
+  });
+  assert.equal(quiet.sms.length, 0);
+  const unconsented = planTextsForSavedMessage({
+    sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: false },
+    body: "Coach Chris: On my way",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(unconsented.sms.length, 0);
+  const optedOut = planTextsForSavedMessage({
+    sender: { id: "sam", role: "client", displayName: "Sam" },
+    recipient: { id: "chris", role: "coach", phone: "+15551110001", optedOut: true, hasConsent: false },
+    body: "Sam: Hi",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: false,
+  });
+  assert.equal(optedOut.sms.length, 0);
+});
+
+test("staff consent does not depend on a timestamp, and the push copy names the client", () => {
+  assert.equal(hasSmsConsent({ role: "coach", smsConsentAt: null, smsOptIn: false }), true);
+  assert.equal(hasSmsConsent({ role: "owner" }), true);
+  assert.equal(hasSmsConsent({ role: "client", smsConsentAt: null, smsOptIn: false }), false);
+  assert.equal(hasSmsConsent({ role: "client", smsConsentAt: "2026-11-19", smsOptIn: false }), true);
+  assert.equal(hasSmsConsent({ role: "client", smsOptIn: true }), true);
+  assert.equal(canText({ role: "coach", phone: "555", optedOut: false, hasConsent: false }), true);
+  assert.equal(canText({ role: "coach", phone: "", hasConsent: false }), false);
+  assert.equal(canText({ role: "owner", phone: "555", optedOut: true }), false);
+  assert.equal(canText({ role: "client", phone: "555", hasConsent: false }), false);
+  assert.equal(clientToStaff({ role: "client" }, { role: "coach" }), true);
+  assert.equal(clientToStaff({ role: "client" }, { role: "owner" }), true);
+  assert.equal(clientToStaff({ role: "coach" }, { role: "client" }), false);
+  const push = staffPushCopy("Sam Rivera", "Sam Rivera: In the lobby");
+  assert.equal(push.title, "New message from Sam Rivera");
+  assert.equal(push.body, "Sam Rivera: In the lobby");
 });

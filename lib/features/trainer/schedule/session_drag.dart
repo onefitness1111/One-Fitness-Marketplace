@@ -2,7 +2,9 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/booking_limits.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/scheduling_utils.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
@@ -11,6 +13,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "balance_booking_warning.dart";
+import "override_prompt.dart";
 import "session_move.dart";
 
 /// Carrying out the two drags on the Schedule screen, once [session_move.dart]
@@ -52,6 +55,19 @@ class SessionDragData {
 void _say(ScaffoldMessengerState messenger, String message) {
   if (!messenger.mounted) return;
   messenger.showSnackBar(SnackBar(content: Text(message)));
+}
+
+String _rosterName(WidgetRef ref, String clientId) {
+  final matches = ref
+      .read(trainerRosterProvider)
+      .where((c) => c.id == clientId);
+  return matches.isEmpty ? "another client" : matches.first.name;
+}
+
+String _coachTitle(WidgetRef ref, String trainerId) {
+  final matches = ref.read(trainersProvider).where((t) => t.id == trainerId);
+  if (matches.isEmpty) return "This coach";
+  return matches.first.displayTitle;
 }
 
 /// The one thing staff are allowed to do that the rules say no to: put more
@@ -108,26 +124,53 @@ Future<void> performClientMove(
     semiPrivateCap: settings.semiPrivateCap,
   );
 
-  var override = false;
+  String? overrideReason;
   switch (check) {
     case MoveNoop():
       return;
     case MoveRefused(:final reason):
       _say(messenger, reason);
       return;
-    case MoveAllowed(:final needsOverride, :final cap, :final count):
-      if (needsOverride) {
+    case MoveAllowed(
+      :final conflict,
+      :final needsCapacityOverride,
+      :final cap,
+      :final count,
+    ):
+      if (conflict != null) {
+        final message = ownerOverlapOverrideMessage(
+          coachName: toTrainerName,
+          conflictSlot: conflict.slot,
+          clientName: _rosterName(ref, conflict.clientId),
+        );
+        final ok = await confirmOwnerOverride(
+          context,
+          title: "Scheduling conflict",
+          message: message,
+        );
+        if (!ok || !context.mounted) return;
+        overrideReason = overrideReasonFor(
+          BookingLimitKind.overlap,
+          detail: overrideDetail(message),
+        );
+      } else if (needsCapacityOverride) {
         final ok = await _confirmOverCap(
           context,
           "${sessionTypeLabel(toSessionType)} at ${fmtSlot(toSlot)} is limited to $cap. "
           "Moving ${drag.clientName} in makes it ${count + 1} of $cap — more than the limit for this class.",
         );
         if (!ok || !context.mounted) return;
-        override = true;
+        overrideReason = "capacity";
       }
   }
 
-  if (!await confirmStaffBalanceAdd(context, clientId: drag.booking.clientId, isOwner: isOwner) || !context.mounted) return;
+  if (!await confirmStaffBalanceAdd(
+        context,
+        clientId: drag.booking.clientId,
+        isOwner: isOwner,
+      ) ||
+      !context.mounted)
+    return;
   final original = drag.booking;
   // A move keeps whichever plan the booking was charged to — the client is
   // attending the same thing at a different time, so nothing about what they
@@ -135,33 +178,39 @@ Future<void> performClientMove(
   // session, which their old plan may not cover at all.
   var planId = original.planId;
   if (toSessionType != original.sessionType) {
-    final matches = ref.read(trainerRosterProvider).where((c) => c.id == original.clientId);
+    final matches = ref
+        .read(trainerRosterProvider)
+        .where((c) => c.id == original.clientId);
     planId = matches.isEmpty
         ? null
-        : planToChargeFor(matches.first, toSessionType, all, ref.read(membershipPlansProvider));
+        : planToChargeFor(
+            matches.first,
+            toSessionType,
+            all,
+            ref.read(membershipPlansProvider),
+          );
   }
 
-  final now = DateTime.now().toUtc().toIso8601String();
-  try {
-    final saved = await SupabaseService.insertBooking(Booking(
-      id: "",
-      clientId: original.clientId,
-      trainerId: toTrainerId,
-      date: toDate,
-      slot: toSlot,
-      sessionType: toSessionType,
-      discipline: toDiscipline,
-      planId: planId,
-      durationMin: toDurationMin,
-      locationName: toLocationName ?? original.locationName,
-      isPhysicalAssessment: original.isPhysicalAssessment,
-      // Only after the owner confirmed above. Without the stamp the booking
-      // trigger refuses the insert as over capacity; with it, the trigger
-      // also checks the caller really is the owner.
-      overriddenBy: override ? "owner" : null,
-      overriddenAt: override ? now : null,
-      overrideReason: override ? "capacity" : null,
-    ));
+  final draft = Booking(
+    id: "",
+    clientId: original.clientId,
+    trainerId: toTrainerId,
+    date: toDate,
+    slot: toSlot,
+    sessionType: toSessionType,
+    discipline: toDiscipline,
+    planId: planId,
+    durationMin: toDurationMin,
+    locationName: toLocationName ?? original.locationName,
+    isPhysicalAssessment: original.isPhysicalAssessment,
+  );
+
+  Future<Booking> write(String? reason) {
+    final row = reason == null ? draft : draft.withOwnerOverride(reason);
+    return SupabaseService.insertBooking(row);
+  }
+
+  Future<void> settle(Booking saved) async {
     final bookings = ref.read(allBookingsProvider.notifier);
     bookings.addBooking(saved);
     // Only now that the new seat exists. The freed one is offered to the
@@ -171,7 +220,8 @@ Future<void> performClientMove(
     notifyPush(
       profileId: original.clientId,
       title: "Session moved",
-      body: "Your session is now ${niceDate(toDate)} at ${fmtSlot(toSlot)} with $toTrainerName.",
+      body:
+          "Your session is now ${niceDate(toDate)} at ${fmtSlot(toSlot)} with $toTrainerName.",
       sms: true,
     );
     if (planId == null && original.planId != null) {
@@ -182,8 +232,72 @@ Future<void> performClientMove(
     } else {
       _say(messenger, "${drag.clientName} moved to ${fmtSlot(toSlot)}.");
     }
+  }
+
+  Booking? saved;
+  try {
+    saved = await write(overrideReason);
   } catch (e) {
-    _say(messenger, "Couldn't move ${drag.clientName} — nothing was changed.");
+    // The local schedule can be a few seconds stale. The trigger is the
+    // last word, and an owner may still stamp the insert and retry once.
+    final kind = classifyBookingLimitError(e);
+    final serverConflict = kind == BookingLimitKind.overlap
+        ? findTrainerConflict(
+            ref
+                .read(allBookingsProvider)
+                .where((b) => b.id != original.id)
+                .toList(),
+            toTrainerId,
+            toDate,
+            toSlot,
+            toSessionType,
+            toDiscipline,
+          )
+        : null;
+    if (!context.mounted) {
+      _say(
+        messenger,
+        moveFailureMessage(e, whatFailed: "Couldn't move ${drag.clientName}"),
+      );
+      return;
+    }
+    final retry = await offerBookingOverride(
+      context,
+      error: e,
+      isOwner: isOwner,
+      alreadyOverriding: overrideReason != null,
+      coachName: toTrainerName,
+      addingClientName: drag.clientName,
+      conflictSlot: serverConflict?.slot,
+      conflictingClientName: serverConflict == null
+          ? null
+          : _rosterName(ref, serverConflict.clientId),
+    );
+    if (retry.declined || !context.mounted) return;
+    if (!retry.go) {
+      _say(
+        messenger,
+        moveFailureMessage(e, whatFailed: "Couldn't move ${drag.clientName}"),
+      );
+      return;
+    }
+    try {
+      saved = await write(retry.reason);
+    } catch (e2) {
+      _say(
+        messenger,
+        moveFailureMessage(e2, whatFailed: "Couldn't move ${drag.clientName}"),
+      );
+      return;
+    }
+  }
+  try {
+    await settle(saved);
+  } catch (e) {
+    _say(
+      messenger,
+      moveFailureMessage(e, whatFailed: "Couldn't move ${drag.clientName}"),
+    );
   }
 }
 
@@ -206,38 +320,78 @@ Future<void> performSessionMove(
     semiPrivateCap: settings.semiPrivateCap,
   );
 
-  var override = false;
+  String? overrideReason;
   switch (check) {
     case MoveNoop():
       return;
     case MoveRefused(:final reason):
       _say(messenger, reason);
       return;
-    case MoveAllowed(:final needsOverride, :final cap, :final count):
-      if (needsOverride) {
+    case MoveAllowed(
+      :final conflict,
+      :final needsCapacityOverride,
+      :final cap,
+      :final count,
+    ):
+      if (conflict != null) {
+        final message = ownerOverlapOverrideMessage(
+          coachName: _coachTitle(ref, drag.group.first.trainerId),
+          conflictSlot: conflict.slot,
+          clientName: _rosterName(ref, conflict.clientId),
+        );
+        final ok = await confirmOwnerOverride(
+          context,
+          title: "Scheduling conflict",
+          message: message,
+        );
+        if (!ok || !context.mounted) return;
+        overrideReason = overrideReasonFor(
+          BookingLimitKind.overlap,
+          detail: overrideDetail(message),
+        );
+      } else if (needsCapacityOverride) {
         final ok = await _confirmOverCap(
           context,
           "${niceDate(toDate)} at ${fmtSlot(drag.group.first.slot)} already holds $count of $cap. "
           "Moving ${drag.group.length} more there makes it ${count + drag.group.length} — over the limit for this class.",
         );
         if (!ok || !context.mounted) return;
-        override = true;
+        overrideReason = "capacity";
       }
   }
 
-  final now = DateTime.now().toUtc().toIso8601String();
   for (final b in drag.group) {
     if (!context.mounted) return;
-    if (!await confirmStaffBalanceAdd(context, clientId: b.clientId, isOwner: isOwner) || !context.mounted) return;
+    if (!await confirmStaffBalanceAdd(
+          context,
+          clientId: b.clientId,
+          isOwner: isOwner,
+        ) ||
+        !context.mounted)
+      return;
   }
   // Every replacement is created before any original is removed. A class
   // half-moved — three clients on Tuesday and two still on Monday — is worse
   // than one that didn't move, so a failure part-way undoes what it managed
   // and leaves the session exactly where it started.
   final inserted = <Booking>[];
-  try {
+  final first = drag.group.first;
+
+  Future<void> discardInserted() async {
+    for (final s in inserted) {
+      // discardBooking, not deleteBooking: these rows existed for a moment
+      // and never freed a real seat, so offering them to the waitlist would
+      // hand someone a session that isn't there.
+      try {
+        await SupabaseService.discardBooking(s.id);
+      } catch (_) {}
+    }
+    inserted.clear();
+  }
+
+  Future<void> writeAll(String? reason) async {
     for (final b in drag.group) {
-      inserted.add(await SupabaseService.insertBooking(Booking(
+      var draft = Booking(
         id: "",
         clientId: b.clientId,
         trainerId: b.trainerId,
@@ -249,22 +403,71 @@ Future<void> performSessionMove(
         durationMin: b.durationMin,
         locationName: b.locationName,
         isPhysicalAssessment: b.isPhysicalAssessment,
-        overriddenBy: override ? "owner" : null,
-        overriddenAt: override ? now : null,
-        overrideReason: override ? "capacity" : null,
-      )));
+      );
+      if (reason != null) draft = draft.withOwnerOverride(reason);
+      inserted.add(await SupabaseService.insertBooking(draft));
     }
+  }
+
+  try {
+    await writeAll(overrideReason);
   } catch (e) {
-    for (final s in inserted) {
-      // discardBooking, not deleteBooking: these rows existed for a moment
-      // and never freed a real seat, so offering them to the waitlist would
-      // hand someone a session that isn't there.
-      try {
-        await SupabaseService.discardBooking(s.id);
-      } catch (_) {}
+    await discardInserted();
+    final movingIds = {for (final b in drag.group) b.id};
+    final kind = classifyBookingLimitError(e);
+    final serverConflict = kind == BookingLimitKind.overlap
+        ? findTrainerConflict(
+            ref
+                .read(allBookingsProvider)
+                .where((b) => !movingIds.contains(b.id))
+                .toList(),
+            first.trainerId,
+            toDate,
+            first.slot,
+            first.sessionType,
+            first.discipline,
+          )
+        : null;
+    if (!context.mounted) {
+      _say(
+        messenger,
+        moveFailureMessage(e, whatFailed: "Couldn't move the session"),
+      );
+      return;
     }
-    _say(messenger, "Couldn't move the session — nothing was changed.");
-    return;
+    final adding = drag.group.length == 1
+        ? _rosterName(ref, first.clientId)
+        : "everyone in this session";
+    final retry = await offerBookingOverride(
+      context,
+      error: e,
+      isOwner: isOwner,
+      alreadyOverriding: overrideReason != null,
+      coachName: _coachTitle(ref, first.trainerId),
+      addingClientName: adding,
+      conflictSlot: serverConflict?.slot,
+      conflictingClientName: serverConflict == null
+          ? null
+          : _rosterName(ref, serverConflict.clientId),
+    );
+    if (retry.declined || !context.mounted) return;
+    if (!retry.go) {
+      _say(
+        messenger,
+        moveFailureMessage(e, whatFailed: "Couldn't move the session"),
+      );
+      return;
+    }
+    try {
+      await writeAll(retry.reason);
+    } catch (e2) {
+      await discardInserted();
+      _say(
+        messenger,
+        moveFailureMessage(e2, whatFailed: "Couldn't move the session"),
+      );
+      return;
+    }
   }
 
   final bookings = ref.read(allBookingsProvider.notifier);
@@ -283,7 +486,8 @@ Future<void> performSessionMove(
     notifyPush(
       profileId: b.clientId,
       title: "Session moved",
-      body: "Your session has moved to ${niceDate(toDate)} at ${fmtSlot(b.slot)}.",
+      body:
+          "Your session has moved to ${niceDate(toDate)} at ${fmtSlot(b.slot)}.",
       sms: true,
     );
   }

@@ -167,21 +167,16 @@ int _newestFirst(WorkoutLogEntry a, WorkoutLogEntry b) {
   return (b.loggedAt ?? "").compareTo(a.loggedAt ?? "");
 }
 
-/// Tells the client's coach that today's session used different equipment.
-/// The program itself is not changed.
+/// Tells every coach that today's session used different equipment.
+/// There is no assigned coach to single out. The program itself is not changed.
 void flagSessionSwaps({
   required WorkoutLogEntry entry,
   required String clientName,
-  String? coachId,
 }) {
   if (entry.swaps.isEmpty) return;
   final detail = entry.swaps.map((swap) => "${swap.fromName} for ${swap.toName}").join(", ");
   final body = "$clientName swapped $detail today. The program was not changed.";
-  if (coachId != null && coachId.isNotEmpty) {
-    notifyPush(profileId: coachId, title: "Exercise swap", body: body);
-  } else {
-    notifyOwnerInternal(title: "Exercise swap", body: body);
-  }
+  notifyAllCoaches(title: "Exercise swap", body: body);
 }
 
 String _ymd(DateTime day) {

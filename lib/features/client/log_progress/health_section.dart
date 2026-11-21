@@ -8,7 +8,6 @@ import "../../../core/health/wearable_reader.dart";
 import "../../../core/platform/web_fallback.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/coach_names.dart";
 import "../../../core/widgets/app_buttons.dart";
 import "../../../core/widgets/app_card.dart";
 import "../../../data/providers/client_providers.dart";
@@ -65,13 +64,7 @@ class _HealthSectionState extends ConsumerState<HealthSection> {
     }
   }
 
-  String _coachName() {
-    final info = ref.read(clientInfoProvider);
-    for (final trainer in ref.read(trainersProvider)) {
-      if (trainer.id == info.primaryTrainerId) return trainer.displayTitle;
-    }
-    return coachPublicName();
-  }
+  String _coachName() => "your coaches";
 
   double? _weightGoal() {
     final goal = ref.read(clientRecordProvider).progressGoal;

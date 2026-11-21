@@ -26,6 +26,7 @@ import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/workout_logging.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/motion/skeleton.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/live_session.dart";
@@ -233,7 +234,6 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     flagSessionSwaps(
       entry: entry,
       clientName: person?.name ?? "A client",
-      coachId: person?.primaryTrainerId,
     );
     ref
         .read(trainerClientRecordsProvider.notifier)
@@ -242,6 +242,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final detailsReady = ref.watch(homeDetailsReadyProvider);
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
     final roster = ref.watch(trainerRosterProvider);
@@ -258,16 +259,16 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         ? "Owner"
         : (me.isNotEmpty ? me.first.name : "Coach");
 
-    // Dashboard/schedule scope to just this coach's own clients; owner sees everyone.
-    final myRoster = isOwner
-        ? roster
-        : roster.where((c) => c.primaryTrainerId == trainerAuth).toList();
+    // Every coach sees every client. Unlogged attendance stays on the sessions
+    // this coach ran. A Coach Code alert stays with the coach whose code was used.
+    final sessionBookings = isOwner ? bookings : bookings.where((b) => b.trainerId == trainerAuth).toList();
+    final codeAlerts = isOwner ? roster : roster.where((c) => c.referredByTrainerId == trainerAuth).toList();
 
     final needsAttention = [
-      ...computeNeedsAttention(myRoster, clientRecords),
-      ...computeUnloggedAttendance(myRoster, bookings),
-      ...computeCoachCodeAlerts(myRoster),
-      ...programRefreshAttention(myRoster, clientRecords, forOwner: isOwner),
+      ...computeNeedsAttention(roster, clientRecords),
+      ...computeUnloggedAttendance(roster, sessionBookings),
+      ...computeCoachCodeAlerts(codeAlerts),
+      ...programRefreshAttention(roster, clientRecords, forOwner: isOwner),
       ...quietClientAttention(
         nudges: ref.watch(dashboardExtrasProvider).nudges,
         records: clientRecords,
@@ -686,7 +687,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 children: [
                   _StatBox(
                     label: "Clients",
-                    value: "${myRoster.length}",
+                    value: "${roster.length}",
                     onTap: () => goMode("clients"),
                   ),
                   const SizedBox(width: 10),
@@ -706,7 +707,21 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
               ),
             )),
           stag(const SectionLabel("Needs Attention")),
-          if (needsAttention.isEmpty)
+          if (!detailsReady)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Skeleton(height: 14, width: 160),
+                  SizedBox(height: 8),
+                  Skeleton(height: 52),
+                  SizedBox(height: 8),
+                  Skeleton(height: 52),
+                ],
+              ),
+            )
+          else if (needsAttention.isEmpty)
             const HintBox(text: "Nothing needs your attention right now ✓", bordered: false)
           else
             _AttentionColumns(
