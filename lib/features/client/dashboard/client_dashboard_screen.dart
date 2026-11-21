@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/notifications/push_prompt.dart";
+import "../sms/sms_opt_in_prompt.dart";
 import "../../../core/session/login_prompts.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -353,6 +354,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               ],
             ),
           )),
+          const SmsOptInPromptSlot(padding: EdgeInsets.only(top: 4)),
         ],
       ),
     );
@@ -368,9 +370,12 @@ Widget _portalDashboard({required bool wide, required List<Widget> children}) {
   final headers = <Widget>[];
   final side = <Widget>[];
   final main = <Widget>[];
+  final footers = <Widget>[];
   for (final child in children) {
     if (child is _Span) {
       main.add(child);
+    } else if (child is SmsOptInPromptSlot) {
+      footers.add(child);
     } else if (child is AppCard ||
         child is _OnboardingSection ||
         child is SessionsRemainingBadge ||
@@ -393,6 +398,7 @@ Widget _portalDashboard({required bool wide, required List<Widget> children}) {
           Expanded(flex: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: main)),
         ],
       ),
+      ...footers,
     ],
   );
 }

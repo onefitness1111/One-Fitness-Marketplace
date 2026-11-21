@@ -5,6 +5,7 @@ import "package:supabase_flutter/supabase_flutter.dart";
 import "../../core/auth/web_launch.dart";
 import "../../core/images/prefetch_images.dart";
 import "../../core/live_log/live_log_sync.dart";
+import "../../core/legal/sms_opt_in_prompt.dart";
 import "../../core/notifications/push_service.dart";
 import "../../core/session/login_prompts.dart";
 import "../../core/startup/launch_timing.dart";
@@ -1219,6 +1220,7 @@ void _armPush(_Hold hold, {required bool prompt}) {
   }
   PushService.onOpenRoute = (data) {
     if (data["type"] == "beep") hold.mode.go("dashboard");
+    if (smsOptInPushOpensPrompt(data)) SmsOptInPromptBus.open();
   };
 }
 

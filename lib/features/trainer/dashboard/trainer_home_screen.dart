@@ -39,6 +39,7 @@ import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/booking/date_strip.dart";
 import "../../shared/session_logger_view.dart";
+import "sms_opt_in_ask_card.dart";
 import "update_announcement_card.dart";
 import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
@@ -678,6 +679,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           const SizedBox(height: 18),
           const LiveWorkoutsCard(),
           if (isOwner) const UpdateAnnouncementCard(),
+          if (isOwner) const SmsOptInAskCard(),
           if (isOwner)
             stag(Padding(
               padding: const EdgeInsets.only(bottom: 16),

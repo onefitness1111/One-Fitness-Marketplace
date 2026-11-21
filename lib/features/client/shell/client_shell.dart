@@ -5,6 +5,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/chat/unread_chat.dart";
+import "../../../core/legal/sms_opt_in_prompt.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/notifications/push_service.dart";
 import "../../../core/session/login_prompts.dart";
@@ -35,6 +36,7 @@ import "../booking/booking_screen.dart";
 import "../booking/day_detail_screen.dart";
 import "../challenges/challenges_screen.dart";
 import "../chat/chat_screen.dart";
+import "../sms/sms_opt_in_prompt.dart";
 import "../dashboard/client_dashboard_screen.dart";
 import "../drawer_screens/habit_tracker_screen.dart";
 import "../drawer_screens/history_screen.dart";
@@ -120,6 +122,8 @@ class ClientShell extends ConsumerStatefulWidget {
 
 class _ClientShellState extends ConsumerState<ClientShell> {
   OverlayEntry? _dashboardTourEntry;
+  StreamSubscription<void>? _smsPromptOpens;
+  bool _smsSheetOpen = false;
   // Closes the drawer directly (bypassing Navigator.pop) so it doesn't get
   // swallowed by the PopScope below, which intercepts pop attempts whenever
   // canPop is false to run its own back-history logic instead.
@@ -160,9 +164,45 @@ class _ClientShellState extends ConsumerState<ClientShell> {
     super.initState();
     // Each time the client area opens (a sign-in), start on Dashboard with
     // an empty history — the previous session's trail must not resurface.
-    Future.microtask(() {
-      if (mounted) ref.read(clientScreenProvider.notifier).reset();
+    _smsPromptOpens = SmsOptInPromptBus.opens.listen((_) {
+      _openSmsPromptFromPush();
     });
+    Future.microtask(() {
+      if (!mounted) return;
+      ref.read(clientScreenProvider.notifier).reset();
+      if (SmsOptInPromptBus.takePending()) _openSmsPromptFromPush();
+    });
+  }
+
+  /// A tapped push opens the opt-in sheet. "Not now" on the card does not
+  /// block this, because the person just asked to see it. Opted-out
+  /// clients and clients who already agreed still skip it.
+  Future<void> _openSmsPromptFromPush() async {
+    if (!mounted || _smsSheetOpen) return;
+    _smsSheetOpen = true;
+    try {
+      var gate = ref.read(smsOptInPromptProvider);
+      if (!gate.ready) {
+        await ref.read(smsOptInPromptProvider.notifier).refresh();
+        if (!mounted) return;
+        gate = ref.read(smsOptInPromptProvider);
+      }
+      final info = ref.read(clientInfoProvider);
+      final show = showSmsOptInPrompt(
+        smsOptIn: info.smsOptIn,
+        smsOptedOut: gate.optedOut,
+        hiddenUntil: gate.hiddenUntil,
+        now: DateTime.now(),
+        openedFromPush: true,
+      );
+      if (!show) return;
+      if (ref.read(clientScreenProvider) != "dashboard") {
+        ref.read(clientScreenProvider.notifier).go("dashboard");
+      }
+      await showSmsOptInPromptSheet(context, ref);
+    } finally {
+      _smsSheetOpen = false;
+    }
   }
 
   void _onPointerDown(PointerDownEvent e) {
@@ -361,6 +401,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
 
   @override
   void dispose() {
+    _smsPromptOpens?.cancel();
     _dashboardTourEntry?.remove();
     super.dispose();
   }

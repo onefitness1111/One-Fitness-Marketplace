@@ -36,6 +36,11 @@ void main() {
     test("gives both STOP and HELP keywords", () {
       expect(full, contains("STOP"));
       expect(full, contains("HELP"));
+      expect(full, contains("Reply STOP to opt out"));
+    });
+
+    test("says consent is not required to buy", () {
+      expect(full, contains("Consent is not required to buy"));
     });
 
     test("points at the terms and privacy policy", () {
