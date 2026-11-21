@@ -23,6 +23,7 @@ class CachedFirstScreen {
     required this.settings,
     required this.payReady,
     required this.isClient,
+    this.extras = const {},
   });
 
   final Map<String, dynamic>? profile;
@@ -35,6 +36,10 @@ class CachedFirstScreen {
   final PlatformSettings? settings;
   final bool payReady;
   final bool isClient;
+
+  /// Badges, balance, renewal offers, quiet nudges, live days, and today's
+  /// charges. Saved with the snapshot so a warm open is the whole screen.
+  final Map<String, dynamic> extras;
 }
 
 /// On-device copy of the last successful first-screen load for one user.
@@ -43,9 +48,9 @@ class CachedFirstScreen {
 /// already read under RLS (names, bookings, records, plans). No session
 /// token, no refresh token, no card number.
 ///
-/// Signing out leaves the snapshot in place so the next login for that
-/// person can paint immediately. [activate] drops it when a different
-/// person signs in on this device. [deleteFor] is for account deletion.
+/// Signing out deletes that snapshot.
+/// [activate] also drops it when a different person signs in on this device.
+/// [deleteFor] is used for sign-out and account deletion.
 class BootstrapCache {
   static const _userKey = "onefitness.bootstrap.user";
 

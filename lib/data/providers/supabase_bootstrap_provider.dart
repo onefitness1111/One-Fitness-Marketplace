@@ -2,12 +2,16 @@ import "dart:async";
 import "package:flutter/widgets.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
+import "../../core/images/prefetch_images.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/notifications/push_service.dart";
 import "../../core/session/login_prompts.dart";
 import "../../core/supabase/supabase_service.dart";
+import "../../core/utils/date_utils.dart";
 import "../cache/bootstrap_cache.dart";
 import "../models/client_info.dart";
+import "../models/quiet_nudge.dart";
+import "dashboard_extras.dart";
 import "dashboard_load.dart";
 import "../models/booking.dart";
 import "../models/challenge.dart";
@@ -367,15 +371,14 @@ void _subscribeRealtimeUpdates(Ref ref) {
 /// trainer_auth_screen.dart / the signup screens.
 ///
 /// A saved snapshot for this user paints the whole first screen at once,
-/// then a refresh replaces it. Sign-out keeps that snapshot, so the next
-/// login for the same person paints from it. A different account never
-/// reads it: the key is the user id, and signing in as someone else drops
-/// the previous person's copy.
+/// then a refresh replaces it. Sign-out deletes that snapshot. A different
+/// account never reads it: the key is the user id, and signing in as
+/// someone else drops the previous person's copy.
 ///
-/// Clients and coaches do not wait on the rest of the gym. The shell opens
-/// as soon as the role is known, then today's bookings (plus about two
-/// weeks either side), the directory, and the dashboard fields fill in.
-/// The owner still waits for the full download.
+/// The splash stays up until the home screen's data is in hand, so the
+/// dashboard appears complete. A warm open skips the splash and shows the
+/// saved screen immediately. Shop, history, and the rest of the gym load
+/// after that, or when those screens open.
 ///
 /// Takes `dynamic` rather than `Ref` on purpose: Riverpod's `Ref` (used by
 /// providers) and `WidgetRef` (used by widgets, e.g. a ConsumerState's
@@ -404,78 +407,31 @@ Future<void> loadAndSeedCoreData(dynamic ref, {String? knownRole}) async {
   final cachedJson = userId == null ? null : await BootstrapCache.read(userId);
   final cached = cachedJson == null ? null : SupabaseService.decodeFirstScreen(cachedJson);
   if (cached != null) {
+    // Warm open: the whole last screen, then a silent refresh.
     LoginPrompts.finishDashboardLoad();
     _paint(hold, cached.profile, cached.roster, cached.trainers, cached.bookings, cached.records, cached.plans, cached.waivers, cached.settings, keepPay: false);
     if (cached.payReady) hold.markPay(true);
+    _applyExtras(hold, cached.extras);
     final ownId = _restoreSession(hold, cached.profile, cached.roster, cached.trainers, cached.bookings, cached.records);
     if (ownId == _signedOut) return;
     final cachedRole = cached.profile?["role"] as String?;
+    LaunchQueryLog.note("warm open from cache for $userId; refresh in the background");
     unawaited(_loadFresh(
       hold,
       generation,
       userId,
       clearSamples: false,
+      blockForImages: false,
       dashboardFirst: shellBeforeFullGymDownload(cachedRole),
     ));
     return;
   }
 
-  final role = knownRole ?? await SupabaseService.currentRole();
-  if (generation != _loadGeneration) return;
-  final fast = shellBeforeFullGymDownload(role);
-  final showing = role != null && _alreadyInSession(ref, role, userId);
-  if (!showing) {
-    // The built-in sample plan and waiver must not sit on screen as if the
-    // gym had saved them.
-    hold.plans.setAll(const []);
-    hold.waivers.setAll(const []);
-  }
-  if (fast && role != null && !showing) {
-    LoginPrompts.beginDashboardLoad();
-    _revealShell(hold, role, userId ?? "");
-    unawaited(_loadFresh(hold, generation, userId, clearSamples: true, dashboardFirst: true));
-    return;
-  }
-  if (fast) {
-    unawaited(_loadFresh(hold, generation, userId, clearSamples: false, dashboardFirst: true));
-    return;
-  }
-  await _loadFresh(hold, generation, userId, clearSamples: true, dashboardFirst: false);
-}
-
-bool _alreadyInSession(dynamic ref, String role, String? userId) {
-  if (userId == null || userId.isEmpty) return false;
-  try {
-    if (role == "client") {
-      return ref.read(clientSignedInProvider) == true && ref.read(clientInfoProvider).id == userId;
-    }
-    if (role == "coach") return ref.read(trainerAuthProvider) == userId;
-  } catch (_) {}
-  return false;
-}
-
-/// Opens the client or coach shell before any gym row has arrived, with
-/// the previous person's data cleared so it cannot flash on screen.
-void _revealShell(_Hold hold, String role, String userId) {
-  _clearSamples(hold);
-  hold.roster.setAll(const []);
-  hold.trainers.setAll(const []);
-  hold.bookings.setAll(const []);
-  hold.records.setAll(const {});
-  hold.clientBookings.setAll(const []);
-  if (role == "client") {
-    hold.role.set("client");
-    hold.ownClientId = userId;
-    hold.info.update((_) => ClientInfo(id: userId, name: ""));
-    hold.ownRecord.update((_) => ClientRecord(id: userId));
-    hold.signedIn.signIn();
-  } else {
-    hold.ownClientId = null;
-    hold.role.set("trainer");
-    hold.auth.signIn(userId);
-  }
-  _armPush(hold, prompt: false);
-  LoginPrompts.arm();
+  // Cold open: the splash stays up until this returns. The shell is not
+  // signed in yet, so the dashboard cannot paint a partial frame.
+  if (knownRole != null) LaunchQueryLog.note("signed in as $knownRole");
+  LaunchQueryLog.note("cold open; splash stays until the home screen is complete");
+  await _loadFresh(hold, generation, userId, clearSamples: true, blockForImages: true, dashboardFirst: true);
 }
 
 const _signedOut = "__signed_out__";
@@ -483,37 +439,112 @@ const _signedOut = "__signed_out__";
 Map<String, dynamic>? _pendingPayload;
 String? _pendingUser;
 
+bool _bootstrapRpcMissing = false;
+
+Future<T> _timed<T>(String name, Future<T> future, T fallback, {bool fatal = false}) {
+  final sw = Stopwatch()..start();
+  return future.then((value) {
+    LaunchQueryLog.note("$name ${sw.elapsedMilliseconds}ms");
+    return value;
+  }).catchError((Object e) {
+    LaunchQueryLog.note("$name failed ${sw.elapsedMilliseconds}ms: $e");
+    if (fatal) throw e;
+    return fallback;
+  });
+}
+
 Future<void> _loadFresh(
   _Hold hold,
   int generation,
   String? userId, {
   required bool clearSamples,
+  required bool blockForImages,
   required bool dashboardFirst,
 }) async {
   final window = dashboardBookingWindow(DateTime.now());
-  final directoryF = SupabaseService.directoryWithContacts();
-  // Once a schedule screen has loaded every booking, a later refresh must
-  // not shrink that list back down to the dashboard window.
-  final bookingRowsF = dashboardFirst && !_fullBookingsLoaded
-      ? SupabaseService.fetchBookingRows(from: window.from, to: window.to)
-      : SupabaseService.fetchBookingRows();
-  final settingsF = SupabaseService.fetchSettingsJson();
-  // A client only needs their own record, fetched below. A coach's first
-  // read skips workout logs. The owner still reads every log.
-  final recordRowsF = dashboardFirst ? null : SupabaseService.fetchDashboardRecordRows();
-  final planRowsF = SupabaseService.fetchPlanRows();
-  final waiverRowsF = SupabaseService.fetchWaiverRows();
-  for (final f in [bookingRowsF, settingsF, recordRowsF, planRowsF, waiverRowsF]) {
-    f?.ignore();
-  }
-  // Registered before the first await so the shell's screen loader does
-  // not start a second copy of the same read.
-  _sectionInflight[GymSection.plans] = planRowsF.then((_) {});
-  _sectionInflight[GymSection.waivers] = waiverRowsF.then((_) {});
+  final me = userId ?? SupabaseService.currentUser?.id;
+  // Renewal offers are a separate function. Start them with the bootstrap
+  // read so they do not add a wave of their own.
+  final renewalsF = _timed(
+    "package-renewals",
+    SupabaseService.syncPackageRenewals(),
+    <Map<String, dynamic>>[],
+  );
 
-  final List<Map<String, dynamic>> directory;
+  Map<String, dynamic>? boot;
+  if (!_bootstrapRpcMissing) {
+    boot = await SupabaseService.fetchDashboardBootstrap(from: window.from, to: window.to);
+    if (boot == null || boot["directory"] is! List) {
+      _bootstrapRpcMissing = true;
+      boot = null;
+      LaunchQueryLog.note(
+        "dashboard_bootstrap missing; next cold reads in this session skip it. "
+        "waves=${coldLaunchWaves(bootstrapRpc: false)} "
+        "(directory then contacts inside wave 1, then client and trainer rows)",
+      );
+    } else {
+      LaunchQueryLog.note("dashboard_bootstrap hit; waves=${coldLaunchWaves(bootstrapRpc: true)}");
+    }
+  } else {
+    LaunchQueryLog.note("dashboard_bootstrap skipped (unavailable this session)");
+  }
+
+  late final List<Map<String, dynamic>> directory;
+  late final List<Map<String, dynamic>> clientRows;
+  late final List<Map<String, dynamic>> trainerRows;
+  late final List<Map<String, dynamic>> bookingRows;
+  late final List<Map<String, dynamic>> recordRows;
+  late final List<Map<String, dynamic>> planRows;
+  late final List<Map<String, dynamic>> waiverRows;
+  late final List<Map<String, dynamic>> badgeRows;
+  late final List<Map<String, dynamic>> chargeRows;
+  late final List<Map<String, dynamic>> nudgeRows;
+  Map<String, dynamic>? ownRecord;
+  Map<String, dynamic>? settingsJson;
+  int? balanceCents;
+  var liveDays = <String, String>{};
+
   try {
-    directory = await directoryF;
+    if (boot != null) {
+      directory = SupabaseService.asRowList(boot["directory"]);
+      _mergeContacts(directory, SupabaseService.asRowList(boot["contacts"]));
+      clientRows = SupabaseService.asRowList(boot["clientRows"]);
+      trainerRows = SupabaseService.asRowList(boot["trainerRows"]);
+      bookingRows = SupabaseService.asRowList(boot["bookingRows"]);
+      recordRows = SupabaseService.asRowList(boot["recordRows"]);
+      planRows = SupabaseService.asRowList(boot["planRows"]);
+      waiverRows = SupabaseService.asRowList(boot["waiverRows"]);
+      badgeRows = SupabaseService.asRowList(boot["badges"]);
+      chargeRows = SupabaseService.asRowList(boot["charges"]);
+      nudgeRows = SupabaseService.asRowList(boot["quietNudges"]);
+      final own = boot["ownRecord"];
+      ownRecord = own is Map ? own.cast<String, dynamic>() : null;
+      final settingsRaw = boot["settings"];
+      settingsJson = settingsRaw is Map ? settingsRaw.cast<String, dynamic>() : null;
+      final balance = boot["balanceCents"];
+      balanceCents = balance is num ? balance.toInt() : null;
+      liveDays = _liveDaysFrom(boot["liveDays"]);
+    } else {
+      await _loadFreshFallback(
+        window: window,
+        me: me,
+        dashboardFirst: dashboardFirst,
+        onDirectory: (rows) => directory = rows,
+        onClientRows: (rows) => clientRows = rows,
+        onTrainerRows: (rows) => trainerRows = rows,
+        onBookingRows: (rows) => bookingRows = rows,
+        onRecordRows: (rows) => recordRows = rows,
+        onPlanRows: (rows) => planRows = rows,
+        onWaiverRows: (rows) => waiverRows = rows,
+        onBadgeRows: (rows) => badgeRows = rows,
+        onChargeRows: (rows) => chargeRows = rows,
+        onNudgeRows: (rows) => nudgeRows = rows,
+        onOwnRecord: (row) => ownRecord = row,
+        onSettings: (row) => settingsJson = row,
+        onBalance: (cents) => balanceCents = cents,
+        onLiveDays: (days) => liveDays = days,
+      );
+    }
   } catch (e, st) {
     // ignore: avoid_print
     print("[loadAndSeedCoreData] core fetch failed: $e\n$st");
@@ -521,6 +552,10 @@ Future<void> _loadFresh(
     return;
   }
   if (generation != _loadGeneration) return;
+
+  final renewals = await renewalsF;
+  if (generation != _loadGeneration) return;
+
   hold.owners.setAll([
     for (final p in directory)
       if (p["role"] == "owner" && p["id"] is String)
@@ -532,85 +567,46 @@ Future<void> _loadFresh(
   final profile = SupabaseService.sessionProfileIn(directory);
   final isClient = profile?["role"] == "client";
   final id = profile?["id"] as String?;
+  final rosterAll = SupabaseService.rosterFromParts(directory, clientRows);
+  final roster = isClient ? rosterAll.where((c) => c.id == id).toList() : rosterAll;
+  final trainers = SupabaseService.trainersFromParts(directory, trainerRows);
+  final bookings = SupabaseService.bookingsFromRows(bookingRows);
+  final plans = SupabaseService.plansFromRows(planRows);
+  final waivers = SupabaseService.waiversFromRows(waiverRows);
+  final settings = SupabaseService.settingsFromJson(settingsJson);
+  final records = isClient && id != null
+      ? {id: SupabaseService.recordFromData(id, ownRecord ?? const {})}
+      : SupabaseService.recordsFromDashboardRows(recordRows);
 
-  late final List<ClientInfo> roster;
-  late final List<Trainer> trainers;
-  late final List<Booking> bookings;
-  late final List<MembershipPlan> plans;
-  late final List<WaiverDoc> waivers;
-  late final Map<String, ClientRecord> records;
-  final PlatformSettings? settings;
-  late final List<Map<String, dynamic>> clientRows;
-  late final List<Map<String, dynamic>> trainerRows;
-  late final List<Map<String, dynamic>> bookingRows;
-  late final List<Map<String, dynamic>> recordRows;
-  late final List<Map<String, dynamic>> planRows;
-  late final List<Map<String, dynamic>> waiverRows;
-  Map<String, dynamic>? ownRecord;
-  Map<String, dynamic>? settingsJson;
-  try {
-    final clientIds = isClient && id != null
-        ? [id]
-        : [
-            for (final p in directory)
-              if (p["role"] == "client" && p["id"] is String) p["id"] as String,
-          ];
-    final coachIds = [
-      for (final p in directory)
-        if (p["role"] == "coach" && p["id"] is String) p["id"] as String,
-    ];
-    final clientRowsF = SupabaseService.fetchClientRows(clientIds);
-    final trainerRowsF = SupabaseService.fetchTrainerRows(coachIds);
-    final ownRecordF = isClient && id != null ? SupabaseService.fetchOwnRecordData(id) : null;
-    final coachRecordsF = !isClient && dashboardFirst
-        ? SupabaseService.fetchDashboardRecordRows(columns: coachDashboardRecordColumns)
-        : null;
-    clientRowsF.ignore();
-    trainerRowsF.ignore();
-    ownRecordF?.ignore();
-    coachRecordsF?.ignore();
-
-    clientRows = await clientRowsF;
-    trainerRows = await trainerRowsF;
-    bookingRows = await bookingRowsF;
-    planRows = await planRowsF;
-    waiverRows = await waiverRowsF;
-    settingsJson = await settingsF;
-    recordRows = coachRecordsF != null
-        ? await coachRecordsF
-        : recordRowsF == null
-            ? const []
-            : await recordRowsF;
-    ownRecord = ownRecordF == null ? null : await ownRecordF;
-    if (generation != _loadGeneration) return;
-
-    final rosterAll = SupabaseService.rosterFromParts(directory, clientRows);
-    roster = isClient ? rosterAll.where((c) => c.id == id).toList() : rosterAll;
-    var loadedTrainers = SupabaseService.trainersFromParts(directory, trainerRows);
-    trainers = loadedTrainers;
-    bookings = SupabaseService.bookingsFromRows(bookingRows);
-    plans = SupabaseService.plansFromRows(planRows);
-    waivers = SupabaseService.waiversFromRows(waiverRows);
-    settings = SupabaseService.settingsFromJson(settingsJson);
-    records = isClient && id != null
-        ? {id: SupabaseService.recordFromData(id, ownRecord ?? const {})}
-        : SupabaseService.recordsFromDashboardRows(recordRows);
-  } catch (e, st) {
-    // ignore: avoid_print
-    print("[loadAndSeedCoreData] core fetch failed: $e\n$st");
-    LoginPrompts.finishDashboardLoad();
-    return;
+  final photos = _aboveFoldPhotos(profile: profile, roster: roster, trainers: trainers, bookings: bookings);
+  if (blockForImages) {
+    final sw = Stopwatch()..start();
+    await prefetchNetworkImages(photos);
+    LaunchQueryLog.note("prefetch images ${sw.elapsedMilliseconds}ms (capped)");
+  } else {
+    unawaited(prefetchNetworkImages(photos));
   }
+  if (generation != _loadGeneration) return;
 
+  final extras = {
+    "badges": badgeRows,
+    "charges": chargeRows,
+    "quietNudges": nudgeRows,
+    "liveDays": liveDays,
+    "balanceCents": balanceCents,
+    "renewals": renewals,
+  };
   if (clearSamples) _clearSamples(hold);
   _paint(hold, profile, roster, trainers, bookings, records, plans, waivers, settings, keepPay: hold.payReady);
+  _applyExtras(hold, extras);
+  _sectionInflight[GymSection.plans] = Future<void>.value();
+  _sectionInflight[GymSection.waivers] = Future<void>.value();
   final ownId = _restoreSession(hold, profile, roster, trainers, bookings, records);
   if (ownId == _signedOut) return;
 
   LoginPrompts.finishDashboardLoad();
-  _saveSnapshot(
-    userId,
-    () => SupabaseService.encodeFirstScreen(
+  _saveSnapshot(userId, () {
+    final payload = SupabaseService.encodeFirstScreen(
       directory: directory,
       clientRows: clientRows,
       trainerRows: trainerRows,
@@ -622,15 +618,236 @@ Future<void> _loadFresh(
       settings: settingsJson,
       payRows: _pendingPayload?["payRows"] is List ? SupabaseService.payRowsFrom(_pendingPayload!["payRows"]) : null,
       isClient: isClient,
-    ),
-  );
+    );
+    payload["extras"] = extras;
+    return payload;
+  });
   if (generation != _loadGeneration) return;
-  if (dashboardFirst) {
-    if (isClient) unawaited(_ensureOne(hold, generation, GymSection.badges));
-    return;
+  // The home screen is up. Everything else fills behind it and is also
+  // fetched when that screen opens, so a tab is never stuck empty.
+  if (!dashboardFirst || profile?["role"] == "owner") {
+    unawaited(_loadPay(hold, generation));
+    _startDeferred(hold, generation, ownId);
   }
-  unawaited(_loadPay(hold, generation));
-  _startDeferred(hold, generation, ownId);
+}
+
+Future<void> _loadFreshFallback({
+  required ({String from, String to}) window,
+  required String? me,
+  required bool dashboardFirst,
+  required void Function(List<Map<String, dynamic>>) onDirectory,
+  required void Function(List<Map<String, dynamic>>) onClientRows,
+  required void Function(List<Map<String, dynamic>>) onTrainerRows,
+  required void Function(List<Map<String, dynamic>>) onBookingRows,
+  required void Function(List<Map<String, dynamic>>) onRecordRows,
+  required void Function(List<Map<String, dynamic>>) onPlanRows,
+  required void Function(List<Map<String, dynamic>>) onWaiverRows,
+  required void Function(List<Map<String, dynamic>>) onBadgeRows,
+  required void Function(List<Map<String, dynamic>>) onChargeRows,
+  required void Function(List<Map<String, dynamic>>) onNudgeRows,
+  required void Function(Map<String, dynamic>?) onOwnRecord,
+  required void Function(Map<String, dynamic>?) onSettings,
+  required void Function(int?) onBalance,
+  required void Function(Map<String, String>) onLiveDays,
+}) async {
+  LaunchQueryLog.note(
+    "wave 1 parallel: directory, bookings, settings, plans, waivers, records, "
+    "own record, badges, balance, nudges, live days, charges. "
+    "directoryWithContacts then reads contacts only after the directory returns.",
+  );
+  final fullBookings = !dashboardFirst || _fullBookingsLoaded;
+  final directoryF = _timed("directory+contacts", SupabaseService.directoryWithContacts(), <Map<String, dynamic>>[], fatal: true);
+  final bookingF = _timed(
+    "bookings",
+    fullBookings ? SupabaseService.fetchBookingRows() : SupabaseService.fetchBookingRows(from: window.from, to: window.to),
+    <Map<String, dynamic>>[],
+  );
+  final settingsF = _timed("settings", SupabaseService.fetchSettingsJson(), null);
+  final planF = _timed("plans", SupabaseService.fetchPlanRows(), <Map<String, dynamic>>[]);
+  final waiverF = _timed("waivers", SupabaseService.fetchWaiverRows(), <Map<String, dynamic>>[]);
+  final recordF = _timed(
+    "records",
+    SupabaseService.fetchDashboardRecordRows(
+      columns: dashboardFirst ? coachDashboardRecordColumns : fullDashboardRecordColumns,
+    ),
+    <Map<String, dynamic>>[],
+  );
+  final ownF = me == null
+      ? Future<Map<String, dynamic>?>.value(null)
+      : _timed("own-record", SupabaseService.fetchOwnRecordData(me), null);
+  final badgeF = me == null
+      ? Future<List<EarnedBadge>>.value(const [])
+      : _timed("badges", SupabaseService.loadMeritBadgesFor(me), <EarnedBadge>[]);
+  final balanceF = me == null
+      ? Future<int>.value(0)
+      : _timed("balance", SupabaseService.loadBalanceCents(me), 0);
+  final nudgeF = _timed("quiet-nudges", SupabaseService.loadQuietNudges(), <QuietNudge>[]);
+  final liveF = _timed("live-days", LiveActivity.openDays(), <String, String>{});
+  final chargeF = _timed("charges", SupabaseService.loadCharges(), <Charge>[]);
+
+  final wave = await Future.wait<Object?>([
+    directoryF,
+    bookingF,
+    settingsF,
+    planF,
+    waiverF,
+    recordF,
+    ownF,
+    badgeF,
+    balanceF,
+    nudgeF,
+    liveF,
+    chargeF,
+  ]);
+  final directory = (wave[0] as List<Map<String, dynamic>>);
+  onDirectory(directory);
+  onBookingRows(wave[1] as List<Map<String, dynamic>>);
+  onSettings(wave[2] as Map<String, dynamic>?);
+  onPlanRows(wave[3] as List<Map<String, dynamic>>);
+  onWaiverRows(wave[4] as List<Map<String, dynamic>>);
+  onRecordRows(wave[5] as List<Map<String, dynamic>>);
+  onOwnRecord(wave[6] as Map<String, dynamic>?);
+  final badges = wave[7] as List<EarnedBadge>;
+  onBadgeRows([
+    for (final b in badges)
+      {
+        "id": b.id,
+        "client_id": b.clientId,
+        "badge_key": b.badgeKey,
+        "earned_at": b.earnedAt,
+        "earned_method": b.earnedMethod,
+        "granted_by_user_id": b.grantedByUserId,
+        "note": b.note,
+        "revoked_at": b.revokedAt,
+        "revoked_by_user_id": b.revokedByUserId,
+        "celebrated_at": b.celebratedAt,
+      },
+  ]);
+  onBalance(wave[8] as int);
+  final nudges = wave[9] as List<QuietNudge>;
+  onNudgeRows([
+    for (final n in nudges)
+      {
+        "client_id": n.clientId,
+        "last_activity_on": n.lastActivityOn,
+        "text_sent_on": n.textSentOn,
+        "coach_id": n.coachId,
+      },
+  ]);
+  onLiveDays(wave[10] as Map<String, String>);
+  final charges = wave[11] as List<Charge>;
+  onChargeRows([
+    for (final c in charges)
+      {
+        "id": c.id,
+        "client_id": c.clientId,
+        "client_name": c.clientName,
+        "type": c.type,
+        "date": c.date,
+        "at": c.at,
+        "amount": c.amount,
+        "category": c.category,
+        "description": c.description,
+        "plan_id": c.planId,
+        "plan_name": c.planName,
+        "trainer_id": c.trainerId,
+        "trainer_name": c.trainerName,
+        "waived_at": c.waivedAt,
+      },
+  ]);
+
+  final profile = SupabaseService.sessionProfileIn(directory);
+  final isClient = profile?["role"] == "client";
+  final id = profile?["id"] as String?;
+  LaunchQueryLog.note("wave 2 sequential: client rows and trainer rows need directory ids");
+  final clientIds = isClient && id != null
+      ? [id]
+      : [
+          for (final p in directory)
+            if (p["role"] == "client" && p["id"] is String) p["id"] as String,
+        ];
+  final coachIds = [
+    for (final p in directory)
+      if (p["role"] == "coach" && p["id"] is String) p["id"] as String,
+  ];
+  final rows = await Future.wait<List<Map<String, dynamic>>>([
+    _timed("client-rows", SupabaseService.fetchClientRows(clientIds), <Map<String, dynamic>>[]),
+    _timed(
+      "trainer-rows",
+      SupabaseService.fetchTrainerRows(coachIds, columns: dashboardTrainerColumns),
+      <Map<String, dynamic>>[],
+    ),
+  ]);
+  onClientRows(rows[0]);
+  onTrainerRows(rows[1]);
+  LaunchQueryLog.note("fallback finished; waves=${coldLaunchWaves(bootstrapRpc: false)}");
+}
+
+void _mergeContacts(List<Map<String, dynamic>> directory, List<Map<String, dynamic>> contacts) {
+  final byId = {for (final c in contacts) if (c["id"] is String) c["id"] as String: c};
+  for (final p in directory) {
+    final extra = byId[p["id"]];
+    if (extra == null) continue;
+    if (extra["email"] != null) p["email"] = extra["email"];
+    if (extra["phone"] != null) p["phone"] = extra["phone"];
+  }
+}
+
+Map<String, String> _liveDaysFrom(Object? raw) {
+  final out = <String, String>{};
+  if (raw is Map) {
+    for (final entry in raw.entries) {
+      final day = entry.value?.toString() ?? "";
+      if (day.isNotEmpty) out[entry.key.toString()] = day;
+    }
+  } else if (raw is List) {
+    for (final row in raw) {
+      if (row is! Map) continue;
+      final id = row["client_id"]?.toString() ?? "";
+      final day = row["day_id"]?.toString() ?? "";
+      if (id.isNotEmpty && day.isNotEmpty) out[id] = day;
+    }
+  }
+  return out;
+}
+
+List<String?> _aboveFoldPhotos({
+  required Map<String, dynamic>? profile,
+  required List<ClientInfo> roster,
+  required List<Trainer> trainers,
+  required List<Booking> bookings,
+}) {
+  final today = isoDate(DateTime.now());
+  final urls = <String?>[profile?["photo_url"] as String?];
+  final people = {for (final c in roster) c.id: c.photo};
+  final coaches = {for (final t in trainers) t.id: t.photo};
+  for (final b in bookings.where((b) => b.date == today)) {
+    urls.add(people[b.clientId]);
+    urls.add(coaches[b.trainerId]);
+  }
+  return urls;
+}
+
+void _applyExtras(_Hold hold, Map<String, dynamic> extras) {
+  if (extras.containsKey("badges")) {
+    hold.badges.setAll(SupabaseService.badgesFromRows(SupabaseService.asRowList(extras["badges"])));
+    _sectionInflight[GymSection.badges] = Future<void>.value();
+  }
+  if (extras.containsKey("charges")) {
+    hold.charges.setAll(SupabaseService.chargesFromRows(SupabaseService.asRowList(extras["charges"])));
+    _sectionInflight[GymSection.charges] = Future<void>.value();
+  }
+  final nudges = [
+    for (final row in SupabaseService.asRowList(extras["quietNudges"]))
+      if (QuietNudge.fromJson(row) != null) QuietNudge.fromJson(row)!,
+  ];
+  final balance = extras["balanceCents"];
+  hold.extras.replace(DashboardExtras(
+    balanceCents: balance is num && balance < 0 ? balance.toInt() : null,
+    renewals: SupabaseService.asRowList(extras["renewals"]),
+    liveDays: _liveDaysFrom(extras["liveDays"]),
+    nudges: nudges,
+  ));
 }
 
 /// Encodes and writes the snapshot after the dashboard has a chance to
@@ -1053,7 +1270,8 @@ class _Hold {
         forms = ref.read(intakeFormTemplatesProvider.notifier),
         coachBadges = ref.read(coachMeritBadgesProvider.notifier),
         prEvents = ref.read(coachPrEventsProvider.notifier),
-        owners = ref.read(ownerDirectoryProvider.notifier);
+        owners = ref.read(ownerDirectoryProvider.notifier),
+        extras = ref.read(dashboardExtrasProvider.notifier);
 
   final TrainerRosterNotifier roster;
   final TrainersNotifier trainers;
@@ -1090,6 +1308,7 @@ class _Hold {
   final CoachMeritBadgesNotifier coachBadges;
   final CoachPrEventsNotifier prEvents;
   final OwnerDirectory owners;
+  final DashboardExtrasNotifier extras;
 
   bool payReady = false;
   List<Trainer> paintedTrainers = const [];

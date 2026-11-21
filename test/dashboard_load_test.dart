@@ -16,11 +16,16 @@ void main() {
     expect(dashboardBookingLookaheadDays, 14);
   });
 
-  test("clients and coaches paint before the full gym download; the owner does not", () {
+  test("the home screen paints before the rest of the gym", () {
     expect(shellBeforeFullGymDownload("client"), isTrue);
     expect(shellBeforeFullGymDownload("coach"), isTrue);
-    expect(shellBeforeFullGymDownload("owner"), isFalse);
+    expect(shellBeforeFullGymDownload("owner"), isTrue);
     expect(shellBeforeFullGymDownload(null), isFalse);
+  });
+
+  test("a cold launch is one wave with the bootstrap rpc and two without it", () {
+    expect(coldLaunchWaves(bootstrapRpc: true), 1);
+    expect(coldLaunchWaves(bootstrapRpc: false), 2);
   });
 
   test("the coach's first record read leaves workout logs out", () {
@@ -44,16 +49,18 @@ void main() {
     expect(sectionsForStaffScreen("chat"), {GymSection.messages});
   });
 
-  test("sign-out keeps this user's snapshot and the next account cannot read it", () async {
+  test("the snapshot is keyed per user and sign-out clears it", () async {
     await BootstrapCache.write("user-a", {"hello": "a"});
     expect((await BootstrapCache.read("user-a"))?["hello"], "a");
 
+    await BootstrapCache.deleteFor("user-a");
+    expect(await BootstrapCache.read("user-a"), isNull);
+
+    await BootstrapCache.write("user-a", {"hello": "a"});
     await BootstrapCache.activate("user-b");
     expect(await BootstrapCache.read("user-a"), isNull);
-    expect(await BootstrapCache.read("user-b"), isNull);
-
     await BootstrapCache.write("user-b", {"hello": "b"});
-    await BootstrapCache.activate("user-b");
     expect((await BootstrapCache.read("user-b"))?["hello"], "b");
+    expect(await BootstrapCache.read("user-a"), isNull);
   });
 }

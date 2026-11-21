@@ -150,14 +150,9 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
     final showOnboarding = !_skipOnboarding &&
         (hasPurchase ? (onboardingAlerts.isNotEmpty || !assessmentBooked) : lockedAlerts.isNotEmpty);
 
-    // Staggers each top-level section's entrance by 45ms, played once when
-    // the Dashboard first mounts.
-    var stagger = 0;
-    Widget stag(Widget child) {
-      final delay = Duration(milliseconds: 45 * stagger);
-      stagger++;
-      return FadeSlideIn(delay: delay, child: child);
-    }
+    // The dashboard is already filled when it appears. Sections do not
+    // fade in one after another.
+    Widget stag(Widget child) => child;
 
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,

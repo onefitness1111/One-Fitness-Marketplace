@@ -13,6 +13,7 @@ import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/chat/chat_entry.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/widgets/chat_gate.dart";
+import "../../../core/widgets/send_via_chips.dart";
 import "../../../core/widgets/message_reactions.dart";
 import "../../../core/utils/coach_names.dart";
 import "../../../core/utils/date_utils.dart";
@@ -157,7 +158,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           businessName: businessName,
           initialRecipientId: _recipientId,
           initialChannels: _channels,
-          needsPhone: clientNeedsPhone(ref),
           confirmLabel: "Save",
           onCancel: () => Navigator.of(ctx).pop(),
           onConfirm: (recipientId, channels) {
@@ -173,7 +173,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     required Trainer selectedCoach,
     required ClientInfo info,
   }) async {
+    final emailToo = _channels.contains(ChatChannel.email);
     var channels = channelsSavedOnTheMessage(_channels);
+    if (selectedCoach.id == "business") channels = {...channels}..remove(ChatChannel.sms);
     if (channels.contains(ChatChannel.sms)) {
       final agreed = await ensureSmsConsent(context);
       if (!agreed) channels = {...channels}..remove(ChatChannel.sms);
@@ -199,6 +201,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() => _pendingIds.add(tempId));
     ref.read(clientRecordProvider.notifier).update((r) => r.copyWith(comms: [pending, ...r.comms]));
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    var savedOk = false;
     try {
       final saved = await SupabaseService.sendMessage(
         clientId: info.id,
@@ -213,6 +216,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               comms: r.comms.map((c) => c.id == tempId ? saved : c).toList(),
             ),
           );
+      savedOk = true;
     } catch (e) {
       // Rejected (or offline): take the bubble back so the client never
       // sees an unsent message sitting there as though it went through.
@@ -233,6 +237,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } finally {
       if (mounted) setState(() => _pendingIds.remove(tempId));
     }
+    if (!savedOk) return;
     // In app: the message is in the thread either way, so what this adds
     // is the push. Without it an in-app-only message would sit unseen
     // until the coach happened to open the tab, which is what made the
@@ -242,14 +247,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // not a profile id — there's no single device to push to, and the
     // message is in the thread for whoever reads it. (sendMessage already
     // drops the same sentinel rather than writing it as a trainer_id.)
-    // The text to the other person is sent by the server, from the business
-    // number, when SMS is saved on the message. Email is not saved here.
+    // SMS is saved on the message. The database trigger texts the coach
+    // from the business number. Email is not saved on the thread; it is
+    // sent on its own, from ONE Fitness, to the coach's address.
     if (selectedCoach.id != "business") {
       SupabaseService.clientNotify("chat-to-staff", {
         "profileId": selectedCoach.id,
         "body": text,
       });
     }
+    if (emailToo) {
+      final profileId = selectedCoach.id == "business" ? _ownerProfileId() : selectedCoach.id;
+      if (profileId != null) {
+        final business = ref.read(platformSettingsProvider).businessName;
+        SupabaseService.sendEmail(
+          profileId: profileId,
+          subject: "New message from ${info.name.trim().isEmpty ? "a client" : info.name.trim()} — $business",
+          text: text,
+        ).catchError((Object e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("The email didn't send. The message in the app is still there.")),
+            );
+          }
+        });
+      }
+    }
+  }
+
+  String? _ownerProfileId() {
+    final owners = ref.read(ownerDirectoryProvider);
+    if (owners.isEmpty) return null;
+    return owners.first.id;
   }
 
   /// Coaches this client has actually exchanged messages with, newest
@@ -332,7 +361,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             businessName: settings.businessName,
             initialRecipientId: _recipientId,
             initialChannels: _channels,
-            needsPhone: clientNeedsPhone(ref),
             confirmLabel: "Start chat",
             onConfirm: _confirmSetup,
           ),
@@ -542,15 +570,77 @@ void showChatInfoSheet(BuildContext context) {
   );
 }
 
+/// SMS is not a channel for the business contact. In app stays on if it
+/// was the only other choice, so the set is never empty.
+Set<ChatChannel> withoutBusinessSms(Set<ChatChannel> channels) {
+  if (!channels.contains(ChatChannel.sms)) return channels;
+  final next = {...channels}..remove(ChatChannel.sms);
+  return next.isEmpty ? {ChatChannel.inapp} : next;
+}
+
+/// In app, SMS, and Email for a client. The same row is the new-message
+/// screen and the in-thread Change sheet.
+class ClientSendViaSection extends StatelessWidget {
+  const ClientSendViaSection({
+    super.key,
+    required this.channels,
+    required this.onChanged,
+    required this.businessSelected,
+    required this.needsPhone,
+    this.onAddPhone,
+  });
+
+  final Set<ChatChannel> channels;
+  final ValueChanged<Set<ChatChannel>> onChanged;
+  final bool businessSelected;
+  final bool needsPhone;
+  final VoidCallback? onAddPhone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SendViaChips(
+          channels: channels,
+          hidden: businessSelected ? const {ChatChannel.sms} : const {},
+          onChanged: onChanged,
+        ),
+        if (businessSelected) ...[
+          const SizedBox(height: 8),
+          Text(
+            "Texts aren't available for $kMarketplaceName.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+        ],
+        if (needsPhone) ...[
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: onAddPhone,
+            child: Text(
+              "Add a phone number in Profile Settings to get texts",
+              style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4, decoration: TextDecoration.underline),
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        Text(
+          "In app alerts your coach. Texts and emails are sent by ONE Fitness, not from your personal number or email.",
+          style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+        ),
+      ],
+    );
+  }
+}
+
 /// State 1 — "Who are you messaging?", used both as the initial full-screen
 /// setup and (pre-filled, with Cancel/Save) as the "Change" bottom sheet.
-class _RecipientSetup extends StatefulWidget {
+class _RecipientSetup extends ConsumerStatefulWidget {
   const _RecipientSetup({
     required this.realCandidates,
     required this.businessName,
     required this.initialRecipientId,
     required this.initialChannels,
-    required this.needsPhone,
     required this.confirmLabel,
     required this.onConfirm,
     this.onCancel,
@@ -561,22 +651,31 @@ class _RecipientSetup extends StatefulWidget {
   final String? initialRecipientId;
   final Set<ChatChannel> initialChannels;
 
-  /// Whether this client still has no number on file — so the SMS hint can
-  /// say "we'll ask" rather than promising to ask someone who has already
-  /// given one.
-  final bool needsPhone;
   final String confirmLabel;
   final void Function(String recipientId, Set<ChatChannel> channels) onConfirm;
   final VoidCallback? onCancel;
 
   @override
-  State<_RecipientSetup> createState() => _RecipientSetupState();
+  ConsumerState<_RecipientSetup> createState() => _RecipientSetupState();
 }
 
-class _RecipientSetupState extends State<_RecipientSetup> {
+class _RecipientSetupState extends ConsumerState<_RecipientSetup> {
   late String? _recipientId = widget.initialRecipientId;
   late Set<ChatChannel> _channels =
       widget.initialChannels.isEmpty ? defaultChatChannels : widget.initialChannels;
+
+  Set<ChatChannel> get _shownChannels =>
+      _recipientId == "business" ? withoutBusinessSms(_channels) : _channels;
+
+  void _openAddPhone() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => AddPhoneScreen(
+        reason: "Add a phone number so ONE Fitness can text you.",
+        onBack: () => Navigator.of(context).pop(),
+        onSaved: () => Navigator.of(context).pop(),
+      ),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -600,24 +699,19 @@ class _RecipientSetupState extends State<_RecipientSetup> {
           ],
           _businessCard(),
           const SizedBox(height: 20),
-          Text("Send via", style: TextStyle(fontSize: 11, color: AppColors.mute, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
-          const SizedBox(height: 8),
-          _SegOption(
-            label: "In app",
-            selected: true,
-            onTap: () {},
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Your message stays in the app and alerts your coach. Email and texts are sent by ONE Fitness, not from a client account.",
-            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ClientSendViaSection(
+            channels: _shownChannels,
+            businessSelected: _recipientId == "business",
+            needsPhone: (ref.watch(clientInfoProvider).phone ?? "").trim().isEmpty,
+            onChanged: (next) => setState(() => _channels = _recipientId == "business" ? withoutBusinessSms(next) : next),
+            onAddPhone: _openAddPhone,
           ),
           const SizedBox(height: 20),
           Row(
             children: [
               Expanded(
                 child: BtnGold(
-                  onPressed: canConfirm ? () => widget.onConfirm(_recipientId!, _channels) : null,
+                  onPressed: canConfirm ? () => widget.onConfirm(_recipientId!, _shownChannels) : null,
                   child: Text(widget.confirmLabel),
                 ),
               ),
@@ -695,12 +789,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
       selected: selected,
       onTap: () => setState(() {
         _recipientId = "business";
-        // SMS isn't available for the business contact.
-        if (_channels.contains(ChatChannel.sms) && _channels.length > 1) {
-          _channels = {..._channels}..remove(ChatChannel.sms);
-        } else if (_channels.contains(ChatChannel.sms)) {
-          _channels = {ChatChannel.inapp};
-        }
+        _channels = withoutBusinessSms(_channels);
       }),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -853,60 +942,6 @@ class _CoachSearchSheetState extends State<_CoachSearchSheet> {
                     ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SegOption extends StatelessWidget {
-  const _SegOption({required this.label, required this.selected, required this.onTap, this.multi = false});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// Several of these can be on at once. Without a tick, three lit segments
-  /// read as a radio group that has gone wrong rather than as a set of
-  /// choices — and the whole point of the row is that they combine.
-  final bool multi;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = selected ? AppColors.onGold : AppColors.mute;
-    return Expanded(
-      child: Semantics(
-        checked: multi ? selected : null,
-        selected: multi ? null : selected,
-        child: TapHighlight(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? AppColors.gold : AppColors.card,
-              border: Border.all(color: selected ? AppColors.gold : AppColors.line),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (multi) ...[
-                  Icon(selected ? LucideIcons.check : LucideIcons.plus, size: 12, color: fg),
-                  const SizedBox(width: 4),
-                ],
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: fg),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

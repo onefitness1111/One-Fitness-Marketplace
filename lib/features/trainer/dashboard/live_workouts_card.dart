@@ -10,6 +10,7 @@ import "../../../core/utils/workout_logging.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../shared/session_logger_view.dart";
 
@@ -23,15 +24,12 @@ class LiveWorkoutsCard extends ConsumerStatefulWidget {
 }
 
 class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
-  /// client id -> the program day they are logging.
-  Map<String, String> _active = {};
   RealtimeChannel? _channel;
 
   @override
   void initState() {
     super.initState();
     LiveActivity.revision.addListener(_onLiveRevision);
-    _refresh();
     try {
       _channel = LiveActivity.watch(onChange: _refresh);
     } catch (_) {}
@@ -52,7 +50,9 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
   Future<void> _refresh() async {
     try {
       final map = await LiveActivity.openDays();
-      if (mounted) setState(() => _active = map);
+      if (!mounted) return;
+      final extras = ref.read(dashboardExtrasProvider);
+      ref.read(dashboardExtrasProvider.notifier).replace(extras.copyWith(liveDays: map));
     } catch (_) {}
   }
 
@@ -61,7 +61,8 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
     final roster = ref.watch(trainerRosterProvider);
-    final mine = roster.where((c) => _active.containsKey(c.id) && (isOwner || c.primaryTrainerId == trainerAuth)).toList();
+    final active = ref.watch(dashboardExtrasProvider).liveDays;
+    final mine = roster.where((c) => active.containsKey(c.id) && (isOwner || c.primaryTrainerId == trainerAuth)).toList();
     if (mine.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -75,7 +76,7 @@ class _LiveWorkoutsCardState extends ConsumerState<LiveWorkoutsCard> {
               child: AppCard(
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => LiveWorkoutPage(clientId: c.id, clientName: c.name, dayId: _active[c.id]!),
+                    builder: (_) => LiveWorkoutPage(clientId: c.id, clientName: c.name, dayId: active[c.id]!),
                   ),
                 ),
                 child: Row(

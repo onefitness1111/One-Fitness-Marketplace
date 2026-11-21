@@ -16,9 +16,40 @@ const dashboardBookingLookaheadDays = 14;
   );
 }
 
-/// Client and coach dashboards paint as soon as the role is known.
-/// The owner still waits for the full gym download.
-bool shellBeforeFullGymDownload(String? role) => role == "client" || role == "coach";
+/// The first screen paints from the dashboard read. Shop, exercises, the
+/// full booking history, and the rest of the gym wait until that screen
+/// is opened. The owner used to block on all of it; the home screen now
+/// uses the same first read, and those other screens load when opened.
+bool shellBeforeFullGymDownload(String? role) =>
+    role == "client" || role == "coach" || role == "owner";
+
+/// Trainer columns the home screen and the booking grid actually read.
+/// Before/after photos and the long bio stay off this read.
+const dashboardTrainerColumns =
+    "profile_id, disciplines, session_types, slot_interval, availability, locations, avail_lock_until, signup_at, reviewed_by_owner, updated_at, coach_code, unavailability, title, coach_name";
+
+/// How many network waves a cold launch needs before the dashboard can show.
+///
+/// One when `dashboard_bootstrap` is installed: that single call returns
+/// the first screen. Two otherwise. Wave 1 runs the directory, bookings,
+/// settings, plans, waivers, records, and the small home-screen extras
+/// together. The directory call itself is two reads back to back (profiles,
+/// then contacts). Wave 2 is the client and trainer rows, which need ids
+/// from the directory, so it cannot start until wave 1's directory returns.
+int coldLaunchWaves({required bool bootstrapRpc}) => bootstrapRpc ? 1 : 2;
+
+/// Lines printed during launch so a slow read is visible in the log.
+class LaunchQueryLog {
+  static final List<String> lines = [];
+
+  static void reset() => lines.clear();
+
+  static void note(String line) {
+    lines.add(line);
+    // ignore: avoid_print
+    print("[launch] $line");
+  }
+}
 
 /// Every client record the owner dashboard reads, including workout logs.
 const fullDashboardRecordColumns =

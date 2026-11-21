@@ -9,13 +9,22 @@ import "widgets.dart";
 /// Any combination can be on. The last chip stays on, so a send always
 /// has somewhere to go.
 class SendViaChips extends StatelessWidget {
-  const SendViaChips({super.key, required this.channels, required this.onChanged});
+  const SendViaChips({
+    super.key,
+    required this.channels,
+    required this.onChanged,
+    this.hidden = const {},
+  });
 
   final Set<ChatChannel> channels;
   final ValueChanged<Set<ChatChannel>> onChanged;
 
+  /// Channels that are not offered. The business contact has no SMS.
+  final Set<ChatChannel> hidden;
+
   @override
   Widget build(BuildContext context) {
+    final shown = [for (final ch in chatChannelOrder) if (!hidden.contains(ch)) ch];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -26,13 +35,13 @@ class SendViaChips extends StatelessWidget {
         const SizedBox(height: 8),
         Row(
           children: [
-            for (final ch in chatChannelOrder) ...[
-              if (ch != chatChannelOrder.first) const SizedBox(width: 8),
+            for (var i = 0; i < shown.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
               Expanded(
                 child: _Chip(
-                  label: chatChannelLabels[ch]!,
-                  selected: channels.contains(ch),
-                  onTap: () => onChanged(toggleChannel(channels, ch)),
+                  label: chatChannelLabels[shown[i]]!,
+                  selected: channels.contains(shown[i]),
+                  onTap: () => onChanged(toggleChannel(channels, shown[i])),
                 ),
               ),
             ],

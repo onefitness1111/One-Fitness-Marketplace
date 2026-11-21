@@ -14,7 +14,6 @@ import "../../../core/utils/attendee_utils.dart";
 import "../../../core/utils/attention_utils.dart";
 import "../../../core/utils/intake_resubmit.dart";
 import "../../../core/utils/quiet_nudge.dart";
-import "../../../data/models/quiet_nudge.dart";
 import "../../../core/utils/booking_utils.dart";
 import "../../../core/utils/late_fee_notice.dart";
 import "../../../data/providers/platform_settings_provider.dart";
@@ -32,6 +31,7 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/beep_providers.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/booking/date_strip.dart";
 import "../../shared/session_logger_view.dart";
@@ -72,7 +72,6 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
   LiveSession? _run;
   List<String> _runClientIds = const [];
   bool _startingRun = false;
-  List<QuietNudge> _quietNudges = const [];
 
   /// Starting a session the coach is already running returns the existing
   /// row rather than a second one, so backing out of this screen and
@@ -180,22 +179,6 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       if (saved.openClientId != null) _openedClientIds.add(saved.openClientId!);
     }
     _sweepStaleAttendance();
-    unawaited(_loadQuietNudges());
-  }
-
-  Future<void> _loadQuietNudges() async {
-    try {
-      final rows = await SupabaseService.loadQuietNudges();
-      if (!mounted) return;
-      setState(() => _quietNudges = rows);
-      // Quiet-client rows need each person's logs. Those are not in the
-      // dashboard's first read, so fetch just the clients the list names.
-      if (ref.read(trainerAuthProvider) != "owner") {
-        for (final nudge in rows) {
-          unawaited(ensureFullClientRecord(ref, nudge.clientId));
-        }
-      }
-    } catch (_) {}
   }
 
   /// Opportunistic, one-shot per screen visit — same "no cron, safe to call
@@ -275,7 +258,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       ...computeCoachCodeAlerts(myRoster),
       ...programRefreshAttention(myRoster, clientRecords, forOwner: isOwner),
       ...quietClientAttention(
-        nudges: _quietNudges,
+        nudges: ref.watch(dashboardExtrasProvider).nudges,
         records: clientRecords,
         rosterIds: roster.map((c) => c.id).toSet(),
         isOwner: isOwner,
@@ -626,14 +609,9 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     void goMode(String mode) => ref.read(trainerModeProvider.notifier).go(mode);
     void openClient(String clientId) => ref.read(trainerModeProvider.notifier).openClient(clientId);
 
-    // Staggers the greeting/stats header's entrance by 45ms per block,
-    // played once when the Dashboard first mounts.
-    var stagger = 0;
-    Widget stag(Widget child) {
-      final delay = Duration(milliseconds: 45 * stagger);
-      stagger++;
-      return FadeSlideIn(delay: delay, child: child);
-    }
+    // The dashboard is already filled when it appears. Sections do not
+    // fade in one after another.
+    Widget stag(Widget child) => child;
 
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,

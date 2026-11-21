@@ -231,15 +231,15 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     void go(String key) {
       ref.read(trainerModeProvider.notifier).go(key);
       _scaffoldKey.currentState?.closeDrawer();
-      if (!isOwner) unawaited(ensureStaffSections(ref, key));
+      unawaited(ensureStaffSections(ref, key));
     }
 
     if (!isOwner && LoginPrompts.armed && mode == "dashboard") {
       LoginPrompts.attach(_runFirstTap);
     }
-    if (!isOwner) unawaited(ensureStaffSections(ref, mode));
+    unawaited(ensureStaffSections(ref, mode));
     final openClient = ref.watch(selectedClientIdProvider);
-    if (!isOwner && mode == "clients" && openClient != null && openClient.isNotEmpty) {
+    if (mode == "clients" && openClient != null && openClient.isNotEmpty) {
       unawaited(ensureFullClientRecord(ref, openClient));
     }
 
