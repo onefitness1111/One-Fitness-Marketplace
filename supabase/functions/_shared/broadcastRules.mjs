@@ -42,9 +42,9 @@ export function broadcastWays(input) {
 }
 
 export function scopeBroadcast({ senderIsOwner, senderId, all, requestedIds, clients }) {
-  const mine = (clients || []).filter((c) => {
+  const mine = (clients || []).filter(() => {
     if (senderIsOwner) return true;
-    return Boolean(senderId) && String(c.primaryTrainerId || "") === senderId;
+    return Boolean(String(senderId || "").trim());
   });
   if (all) return { allowed: mine, refused: [] };
   const byId = new Map(mine.map((c) => [c.id, c]));

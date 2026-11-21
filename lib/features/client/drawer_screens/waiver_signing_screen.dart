@@ -188,8 +188,7 @@ class _WaiverSigningScreenState extends ConsumerState<WaiverSigningScreen> {
 
     final info = ref.watch(clientInfoProvider);
     final record = ref.watch(clientRecordProvider);
-    final trainers = ref.watch(trainersProvider);
-    final coach = trainers.where((t) => t.id == info.primaryTrainerId).firstOrNull;
+    // There is no assigned coach. {{coach_name}} stays blank.
     // A plan-scoped document is a contract for that specific plan, so its
     // price and session count are what the agreement is about; a general
     // waiver has no plan and those tokens resolve to blank.
@@ -198,7 +197,7 @@ class _WaiverSigningScreenState extends ConsumerState<WaiverSigningScreen> {
     final values = buildMergeTokenValues(
       info: info,
       record: record,
-      coach: coach,
+      coach: null,
       businessName: ref.watch(platformSettingsProvider).businessName,
       plan: plan,
     );

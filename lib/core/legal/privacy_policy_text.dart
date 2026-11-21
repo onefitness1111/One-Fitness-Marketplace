@@ -86,7 +86,7 @@ our business:
   its own marketing.
 • Our coaches and the facility where you train, limited to what is needed to
   schedule and run your sessions (for example, your name for check-in).
-  Health stats from a connected device are shared with your assigned coach
+  Health stats from a connected device are shared with the coaches
   only if you turn on sharing in the app.
 • Legal and safety reasons: to comply with law, respond to lawful requests,
   or protect the safety and rights of clients, staff and the public.

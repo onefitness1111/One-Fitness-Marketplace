@@ -12,7 +12,9 @@ import "../../../core/utils/onboarding_utils.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../../core/web/portal_layout.dart";
+import "../../../core/motion/skeleton.dart";
 import "../../../core/widgets/widgets.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/models/booking.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/models/client_record.dart";
@@ -123,6 +125,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final detailsReady = ref.watch(homeDetailsReadyProvider);
     final rawName = info.name.trim();
     final firstName = rawName.isEmpty ? "" : rawName.split(" ").first;
     final habits = getClientHabits(client);
@@ -189,7 +192,19 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             ),
           )),
 
-          if (showOnboarding)
+          if (!detailsReady)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Skeleton(height: 72),
+                  SizedBox(height: 10),
+                  Skeleton(height: 180),
+                ],
+              ),
+            ),
+          if (detailsReady && showOnboarding)
             stag(_OnboardingSection(
               alerts: onboardingAlerts,
               showIntakeButtons:
@@ -213,7 +228,7 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
           stag(SessionsRemainingBadge(info: info, bookings: bookings)),
           stag(const PackageRenewalCard()),
 
-          if (showHabitTile)
+          if (detailsReady && showHabitTile)
             stag(AppCard(
               borderColor: AppColors.goldDim,
               onTap: widget.onGoHabits,
@@ -240,7 +255,8 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
               ),
             )),
 
-          stag(_Span(child: WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate))),
+          if (detailsReady)
+            stag(_Span(child: WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate))),
 
           const SizedBox(height: 4),
           stag(AppCard(
@@ -323,7 +339,11 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
                     children: [
                       const Text("Today's workout", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                       Text(
-                        _loggedToday ? "Logged — tap to review or edit" : "Tap to log your session",
+                        !detailsReady
+                            ? "Loading today's log"
+                            : _loggedToday
+                                ? "Logged — tap to review or edit"
+                                : "Tap to log your session",
                         style: TextStyle(fontSize: 12, color: AppColors.mute),
                       ),
                     ],

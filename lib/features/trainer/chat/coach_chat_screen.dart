@@ -89,7 +89,16 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   List<Map<String, dynamic>> _staffMessages = [];
   RealtimeChannel? _staffChannel;
 
-  String get _me => SupabaseService.currentUser?.id ?? "";
+  /// Empty before sign-in, and in a widget test that never starts Supabase.
+  /// The shell keeps this page mounted behind the one on screen, so a
+  /// missing client must not take the other pages down with it.
+  String get _me {
+    try {
+      return SupabaseService.currentUser?.id ?? "";
+    } catch (_) {
+      return "";
+    }
+  }
 
   @override
   void initState() {
@@ -518,14 +527,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
-    // Platform → Coaches, Access & Security controls this — matches
-    // RosterBar's own scoping so Chat and Clients never disagree about
-    // which roster a coach can see.
-    final coachClientScope = ref.watch(platformSettingsProvider).coachClientScope;
-    final roster = ref
-        .watch(trainerRosterProvider)
-        .where((c) => isOwner || coachClientScope != "own" || c.primaryTrainerId == trainerAuth)
-        .toList();
+    final roster = ref.watch(trainerRosterProvider);
     final records = ref.watch(trainerClientRecordsProvider);
     final unreadKeys = ref.watch(unreadChatKeysProvider);
     final settings = ref.watch(platformSettingsProvider);

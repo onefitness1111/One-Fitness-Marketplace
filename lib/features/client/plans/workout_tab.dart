@@ -63,7 +63,6 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
     flagSessionSwaps(
       entry: entry,
       clientName: info.name,
-      coachId: info.primaryTrainerId,
     );
     await SupabaseService.awardAutomaticPoints(
       client.id,

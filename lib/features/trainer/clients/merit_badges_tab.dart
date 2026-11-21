@@ -170,11 +170,10 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
         // coach logs, even repeat PRs for a client who already has an
         // active record_breaker badge — so this log always happens here,
         // independent of whether the grant above was itself a no-op.
-        if (badge.key == "record_breaker" && context.mounted) {
-          final trainerId = trainerAuth != "owner"
-              ? trainerAuth
-              : info.primaryTrainerId;
-          if (trainerId != null) {
+        // The coach who awarded it gets the PR. The owner is not standing
+        // in for an assigned coach, so an owner award does not credit one.
+        final trainerId = trainerAuth;
+        if (badge.key == "record_breaker" && context.mounted && trainerId != null && trainerId != "owner" && trainerId.isNotEmpty) {
             final exerciseNames =
                 record?.programDays
                     .expand((d) => d.exercises.map((e) => e.name))
@@ -192,7 +191,6 @@ class _MeritBadgesTabState extends ConsumerState<MeritBadgesTab> {
               final freshPrEvents = await SupabaseService.loadCoachPrEvents();
               ref.read(coachPrEventsProvider.notifier).setAll(freshPrEvents);
             }
-          }
         }
       } catch (e) {
         showFailure(e);

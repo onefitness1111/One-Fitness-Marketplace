@@ -28,6 +28,7 @@ import "plan_price_row.dart";
 import "renewal_terms_section.dart";
 import "../../shared/balance_card.dart";
 import "charge_client_section.dart";
+import "../../../core/privacy/client_contact_privacy.dart";
 import "coach_private_fields.dart";
 import "purchase_for_client_section.dart";
 import "../../../core/utils/phone_guard.dart";
@@ -224,6 +225,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         child: PaymentDetailsSection(
           clientId: info.id,
           clientName: info.name,
+          viewer: ref.watch(trainerAuthProvider) == "owner" ? BillingViewer.owner : BillingViewer.coach,
           onBack: () => setState(() => _paymentDetails = false),
         ),
       );
@@ -783,20 +785,18 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ],
           ),
-          if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
-            const SizedBox(height: 8),
-            BalanceCard(
-              key: ValueKey("balance-${info.id}"),
-              clientId: info.id,
-              editable: ref.watch(trainerAuthProvider) == "owner",
-              canPay: false,
-            ),
-            BtnGold(
-              full: true,
-              onPressed: () => setState(() => _cardCharge = true),
-              child: const Text("Charge their card"),
-            ),
-          ],
+          const SizedBox(height: 8),
+          BalanceCard(
+            key: ValueKey("balance-${info.id}"),
+            clientId: info.id,
+            editable: ref.watch(trainerAuthProvider) == "owner",
+            canPay: false,
+          ),
+          BtnGold(
+            full: true,
+            onPressed: () => setState(() => _cardCharge = true),
+            child: const Text("Charge their card"),
+          ),
           const SizedBox(height: 8),
           if (ref.watch(trainerAuthProvider) != "owner") ...[
             const SizedBox(height: 8),
@@ -822,13 +822,13 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ),
           ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _paymentDetails = true),
+            icon: const Icon(LucideIcons.creditCard, size: 14),
+            label: const Text("Payment details (add or remove card)"),
+          ),
           if (ref.watch(trainerAuthProvider) == "owner") ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: () => setState(() => _paymentDetails = true),
-              icon: const Icon(LucideIcons.creditCard, size: 14),
-              label: const Text("Payment details (add or remove card)"),
-            ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _freezeBusy
@@ -902,13 +902,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     );
     if (confirmed != true) return;
     try {
-      notifyClientAndCoach(
-        clientId: info.id,
-        coachId: info.primaryTrainerId,
-        clientTitle: "Account deleted",
-        clientBody: "Your ONE Fitness profile has been deleted.",
-        coachTitle: "Client deleted",
-        coachBody: "${info.name}'s profile was deleted.",
+      notifyPush(
+        profileId: info.id,
+        title: "Account deleted",
+        body: "Your ONE Fitness profile has been deleted.",
+        sms: true,
+      );
+      notifyAllCoaches(
+        title: "Client deleted",
+        body: "${info.name}'s profile was deleted.",
       );
       notifyOwnerInternal(title: "Profile deleted", body: "${info.name}'s profile was deleted.");
       await SupabaseService.deleteClientAccount(info.id);
@@ -1835,11 +1837,15 @@ class _EditSectionState extends State<_EditSection> {
             const SizedBox(height: 10),
           ],
           CityStateFields(city: _city, state: _state, helper: null),
+          if (widget.showContact) ...[
+            const SizedBox(height: 14),
+            OwnerBillingAddress(clientId: widget.info.id, clientName: widget.info.name),
+          ],
           if (!widget.showContact) ...[
             const SizedBox(height: 14),
             CoachPrivatePhone(clientId: widget.info.id),
             const SizedBox(height: 10),
-            CoachPrivateAddress(clientId: widget.info.id),
+            CoachPrivateAddress(clientId: widget.info.id, clientName: widget.info.name),
           ],
           if (_err != null)
             Padding(

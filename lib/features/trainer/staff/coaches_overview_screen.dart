@@ -159,9 +159,8 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
     }
     ref.read(trainersProvider.notifier).remove(t.id);
     // Best-effort freshness — the server-side cleanup already cleared every
-    // client's dangling primary/referred trainer id, this just pulls that
-    // down so the roster doesn't keep scoping a client out of an
-    // "own"-scoped coach's view.
+    // client's dangling primary/referred trainer id. Pull the roster so
+    // those stored ids match the server. They do not hide any client.
     try {
       final freshRoster = await SupabaseService.loadRoster();
       ref.read(trainerRosterProvider.notifier).setAll(freshRoster);
@@ -298,8 +297,10 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
           const SizedBox(height: 10),
           if (trainers.isEmpty) const HintBox(text: "No coaches yet."),
           ...trainers.map((t) {
-            final myRoster = roster.where((c) => c.primaryTrainerId == t.id).toList();
-            final flags = [...computeNeedsAttention(myRoster, records), ...computeUnloggedAttendance(myRoster, bookings)];
+            final coachedIds = bookings.where((b) => b.trainerId == t.id).map((b) => b.clientId).toSet();
+            final myRoster = roster.where((c) => coachedIds.contains(c.id)).toList();
+            final theirBookings = bookings.where((b) => b.trainerId == t.id).toList();
+            final flags = [...computeNeedsAttention(myRoster, records), ...computeUnloggedAttendance(myRoster, theirBookings)];
             final isNew = !t.reviewedByOwner;
             final open = _openId == t.id;
             return AppCard(

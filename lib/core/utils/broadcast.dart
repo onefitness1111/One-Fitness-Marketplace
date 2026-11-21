@@ -1,9 +1,9 @@
 /// Who a broadcast may reach, and which channels are allowed.
 ///
 /// In app, SMS, and Email can be combined. A text still goes out only when
-/// that client can receive one. Email is its own send. A coach reaches only
-/// their own clients. The owner reaches every client. The server applies the
-/// same rules again before anything is sent.
+/// that client can receive one. Email is its own send. A coach and the owner
+/// both reach every client. The server applies the same rules again before
+/// anything is sent.
 
 /// One mix of the three send chips. Empty is not a send.
 class BroadcastWays {
@@ -93,7 +93,7 @@ class BroadcastScope {
 }
 
 /// [all] ignores [requestedIds] and takes everyone this sender may reach.
-/// A coach's "everyone" is still only their own clients.
+/// A coach reaches every client. The owner does too.
 BroadcastScope scopeBroadcast({
   required bool senderIsOwner,
   required String senderId,
@@ -101,10 +101,9 @@ BroadcastScope scopeBroadcast({
   required List<String> requestedIds,
   required List<BroadcastClient> clients,
 }) {
-  final mine = clients.where((c) {
+  final mine = clients.where((_) {
     if (senderIsOwner) return true;
-    final coach = (c.primaryTrainerId ?? "").trim();
-    return senderId.isNotEmpty && coach == senderId;
+    return senderId.trim().isNotEmpty;
   }).toList();
   if (all) return BroadcastScope(allowed: mine, refused: const []);
   final byId = {for (final c in mine) c.id: c};
