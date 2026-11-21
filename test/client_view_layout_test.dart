@@ -79,20 +79,20 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text("Overview"), findsOneWidget);
-    expect(find.text("PROGRESS PHOTOS"), findsNothing);
-    expect(find.text("MEASUREMENTS"), findsNothing);
     expect(find.text("AWARD A BADGE"), findsNothing);
     expect(find.text("ALL MERIT BADGES — REFERENCE"), findsNothing);
 
-    await tester.tap(find.byKey(const Key("progress-segment-body")));
+    await tester.tap(find.text("Body"));
     await tester.pump();
-    expect(find.text("MEASUREMENTS"), findsOneWidget);
-    expect(find.text("PROGRESS PHOTOS"), findsNothing);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text("MEASUREMENTS"), findsWidgets);
+    expect(find.text("AWARD A BADGE"), findsNothing);
 
-    await tester.tap(find.byKey(const Key("progress-segment-photos")));
+    await tester.tap(find.text("Photos"));
     await tester.pump();
-    expect(find.text("PROGRESS PHOTOS"), findsOneWidget);
-    expect(find.text("MEASUREMENTS"), findsNothing);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text("PROGRESS PHOTOS"), findsWidgets);
+    expect(find.text("AWARD A BADGE"), findsNothing);
 
     await tester.tap(find.descendant(of: tabs, matching: find.text("More")));
     await tester.pump();

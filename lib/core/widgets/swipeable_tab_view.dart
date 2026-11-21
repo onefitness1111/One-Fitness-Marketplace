@@ -37,6 +37,13 @@ class SwipeableTabView extends StatefulWidget {
   final List<Widget> children;
   final ValueChanged<int>? onIndexChanged;
 
+  /// True while any of these tab rows is on screen. Shells use it so a
+  /// sideways drag changes tabs instead of leaving the screen. Plans is
+  /// also listed by name in the client shell; this covers a tab row that
+  /// sits inside another screen, such as a coach's client Progress page.
+  static bool get ownsHorizontalSwipe => _owners > 0;
+  static int _owners = 0;
+
   @override
   State<SwipeableTabView> createState() => _SwipeableTabViewState();
 }
@@ -53,6 +60,12 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
   /// Set while a tap / back animates to a tab, so the pages it passes over on
   /// the way (0 → 2 goes through 1) aren't recorded as visits.
   int? _animatingTo;
+
+  @override
+  void initState() {
+    super.initState();
+    SwipeableTabView._owners++;
+  }
 
   void _animate(int i) {
     _animatingTo = i;
@@ -87,6 +100,7 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
 
   @override
   void dispose() {
+    SwipeableTabView._owners--;
     _controller.dispose();
     super.dispose();
   }
@@ -105,11 +119,38 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
       children: [
         Container(
           decoration: BoxDecoration(color: AppColors.bg, border: Border(bottom: BorderSide(color: AppColors.line))),
-          child: Row(
-            children: [
-              for (var i = 0; i < widget.labels.length; i++)
-                _TabButton(label: widget.labels[i], selected: _index == i, onTap: () => _goTo(i)),
-            ],
+          child: ListenableBuilder(
+            listenable: _controller,
+            builder: (context, _) {
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final count = widget.labels.length;
+                  final width = count == 0 ? 0.0 : constraints.maxWidth / count;
+                  final raw = _controller.hasClients ? (_controller.page ?? _index.toDouble()) : _index.toDouble();
+                  final page = count <= 1 ? 0.0 : raw.clamp(0.0, (count - 1).toDouble());
+                  return Stack(
+                    children: [
+                      Row(
+                        children: [
+                          for (var i = 0; i < count; i++)
+                            _TabButton(label: widget.labels[i], selected: _index == i, onTap: () => _goTo(i)),
+                        ],
+                      ),
+                      // Follows the page, including a finger drag. A tap uses
+                      // the same 260ms ease-out as animateToPage, so the line
+                      // and the page stay together.
+                      Positioned(
+                        left: page * width,
+                        bottom: 0,
+                        width: width,
+                        height: 2,
+                        child: ColoredBox(key: const Key("tab-underline"), color: AppColors.gold),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
           ),
         ),
         Expanded(
@@ -141,9 +182,6 @@ class _TabButton extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 13),
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: selected ? AppColors.gold : Colors.transparent, width: 2)),
-          ),
           child: Text(
             label,
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: selected ? AppColors.gold : AppColors.mute),

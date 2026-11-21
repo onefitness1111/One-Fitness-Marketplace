@@ -8,7 +8,7 @@ import "package:onefitness/core/legal/privacy_policy_text.dart";
 import "package:onefitness/core/health/health_sync.dart";
 import "package:onefitness/core/theme/app_colors.dart";
 import "package:onefitness/core/utils/coach_names.dart";
-import "package:onefitness/core/widgets/segmented_toggle.dart";
+import "package:onefitness/core/widgets/swipeable_tab_view.dart";
 import "package:onefitness/features/client/log_progress/connect_device_sheet.dart";
 import "package:onefitness/features/client/log_progress/health_section.dart";
 import "package:onefitness/features/client/log_progress/log_progress_screen.dart";
@@ -201,50 +201,49 @@ void main() {
     expect(policy, contains("No mobile information will be shared with third parties"));
   });
 
-  testWidgets("the shared toggle's highlight slides, then sits on the tapped segment", (tester) async {
-    var index = 0;
+  testWidgets("the tab underline slides with the page, then sits under the selected tab", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
-      MaterialApp(
+      const ProviderScope(
+        child: MaterialApp(
         home: Scaffold(
-          body: StatefulBuilder(
-            builder: (context, setState) => SegmentedToggle(
-              labels: const ["Overview", "Body", "Lifts", "Photos"],
-              index: index,
-              itemKeys: const [
-                Key("slide-overview"),
-                Key("slide-body"),
-                Key("slide-lifts"),
-                Key("slide-photos"),
-              ],
-              onChanged: (next) => setState(() => index = next),
-            ),
+          body: SwipeableTabView(
+            labels: ["Overview", "Body", "Lifts", "Photos"],
+            children: [
+              Center(child: Text("page-overview")),
+              Center(child: Text("page-body")),
+              Center(child: Text("page-lifts")),
+              Center(child: Text("page-photos")),
+            ],
           ),
         ),
       ),
+      ),
     );
-
-    BoxDecoration fillOf(String key) {
-      final fill = tester.widgetList<Container>(
-        find.descendant(of: find.byKey(Key(key)), matching: find.byType(Container)),
-      ).firstWhere((container) => container.decoration is BoxDecoration);
-      return fill.decoration as BoxDecoration;
-    }
-
-    expect(fillOf("slide-overview").color, AppColors.gold);
-
-    await tester.tap(find.byKey(const Key("slide-photos")));
     await tester.pump();
-    final sliding = tester.widgetList<Transform>(find.byType(Transform)).where((transform) {
-      return transform.transform.getTranslation().x.abs() > 1;
-    });
-    expect(sliding, isNotEmpty);
+
+    final overview = tester.widget<Text>(find.text("Overview"));
+    expect(overview.style?.fontSize, 13);
+    expect(overview.style?.fontWeight, FontWeight.w700);
+    expect(overview.style?.color, AppColors.gold);
+    expect(tester.widget<Text>(find.text("Body")).style?.color, AppColors.mute);
+    expect(tester.getSize(find.byKey(const Key("tab-underline"))).height, 2);
+
+    final start = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
+    await tester.tap(find.text("Photos"));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 130));
+    final mid = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
+    expect(mid, greaterThan(start + 20));
 
     await tester.pumpAndSettle();
-    expect(fillOf("slide-photos").color, AppColors.gold);
-    expect(
-      tester.widgetList<Transform>(find.byType(Transform)).where((transform) => transform.transform.getTranslation().x.abs() > 1),
-      isEmpty,
-    );
+    final end = tester.getTopLeft(find.byKey(const Key("tab-underline"))).dx;
+    final tabWidth = tester.getSize(find.byType(SwipeableTabView)).width / 4;
+    expect(end, closeTo(tabWidth * 3, 1));
+    expect(end, greaterThan(mid));
+    expect(tester.widget<Text>(find.text("Photos")).style?.color, AppColors.gold);
   });
 
   testWidgets("each Log Progress segment shows only its own content", (tester) async {
@@ -254,38 +253,38 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: Scaffold(body: LogProgressScreen()))));
     await tester.pump();
 
-    expect(find.text("Connect a device"), findsOneWidget);
-    expect(find.text("Share health stats with my coach"), findsOneWidget);
+    expect(_onScreen(tester, "Connect a device"), isTrue);
+    expect(_onScreen(tester, "Share health stats with my coach"), isTrue);
     expect(find.textContaining("Marcus Rivera"), findsNothing);
     expect(find.textContaining("Alex Morgan"), findsNothing);
     expect(find.textContaining("18185559876"), findsNothing);
-    expect(find.text("Bodyweight Over Time"), findsNothing);
-    expect(find.text("CHOOSE EXERCISES TO CHART (MAX 6)"), findsNothing);
-    expect(find.text("Add photo"), findsNothing);
+    expect(_onScreen(tester, "Bodyweight Over Time"), isFalse);
+    expect(_onScreen(tester, "CHOOSE EXERCISES TO CHART (MAX 6)"), isFalse);
+    expect(_onScreen(tester, "Add photo"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-body")));
-    await tester.pump();
-    expect(find.text("Bodyweight Over Time"), findsOneWidget);
-    expect(find.text("30d"), findsWidgets);
-    expect(find.text("Set a goal"), findsOneWidget);
-    expect(find.text("Share results card"), findsOneWidget);
-    expect(find.text("Connect a device"), findsNothing);
+    await tester.tap(find.text("Body"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "Bodyweight Over Time"), isTrue);
+    expect(_onScreen(tester, "30d"), isTrue);
+    expect(_onScreen(tester, "Set a goal"), isTrue);
+    expect(_onScreen(tester, "Share results card"), isTrue);
+    expect(_onScreen(tester, "Connect a device"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-lifts")));
-    await tester.pump();
-    expect(find.text("CHOOSE EXERCISES TO CHART (MAX 6)"), findsOneWidget);
-    expect(find.text("Barbell Bench Press"), findsOneWidget);
-    expect(find.text("Bodyweight Over Time"), findsNothing);
+    await tester.tap(find.text("Lifts"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "CHOOSE EXERCISES TO CHART (MAX 6)"), isTrue);
+    expect(_onScreen(tester, "Barbell Bench Press"), isTrue);
+    expect(_onScreen(tester, "Bodyweight Over Time"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-photos")));
-    await tester.pump();
-    expect(find.text("Add photo"), findsOneWidget);
-    expect(find.text("Barbell Bench Press"), findsNothing);
+    await tester.tap(find.text("Photos"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "Add photo"), isTrue);
+    expect(_onScreen(tester, "Barbell Bench Press"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-overview")));
-    await tester.pump();
-    expect(find.text("Connect a device"), findsOneWidget);
-    expect(find.text("Add photo"), findsNothing);
+    await tester.tap(find.text("Overview"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "Connect a device"), isTrue);
+    expect(_onScreen(tester, "Add photo"), isFalse);
   });
 
   testWidgets("each coach Progress segment shows only its own content", (tester) async {
@@ -297,30 +296,30 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining("No health stats shared yet"), findsOneWidget);
-    expect(find.text("MEASUREMENTS"), findsNothing);
-    expect(find.text("CHOOSE EXERCISES TO CHART (MAX 6)"), findsNothing);
-    expect(find.text("PROGRESS PHOTOS"), findsNothing);
+    expect(_onScreen(tester, "No health stats shared yet"), isTrue);
+    expect(_onScreen(tester, "MEASUREMENTS"), isFalse);
+    expect(_onScreen(tester, "CHOOSE EXERCISES TO CHART (MAX 6)"), isFalse);
+    expect(_onScreen(tester, "PROGRESS PHOTOS"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-body")));
-    await tester.pump();
-    expect(find.text("MEASUREMENTS"), findsOneWidget);
-    expect(find.textContaining("Weight:"), findsWidgets);
-    expect(find.text("COACH COMMENT"), findsWidgets);
-    expect(find.textContaining("No health stats shared yet"), findsNothing);
+    await tester.tap(find.text("Body"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "MEASUREMENTS"), isTrue);
+    expect(_onScreen(tester, "Weight:"), isTrue);
+    expect(_onScreen(tester, "COACH COMMENT"), isTrue);
+    expect(_onScreen(tester, "No health stats shared yet"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-lifts")));
-    await tester.pump();
-    expect(find.text("CHOOSE EXERCISES TO CHART (MAX 6)"), findsOneWidget);
-    expect(find.text("Barbell Bench Press"), findsOneWidget);
+    await tester.tap(find.text("Lifts"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "CHOOSE EXERCISES TO CHART (MAX 6)"), isTrue);
+    expect(_onScreen(tester, "Barbell Bench Press"), isTrue);
     expect(find.text("Share with Squad"), findsNothing);
-    expect(find.text("MEASUREMENTS"), findsNothing);
+    expect(_onScreen(tester, "MEASUREMENTS"), isFalse);
 
-    await tester.tap(find.byKey(const Key("progress-segment-photos")));
-    await tester.pump();
-    expect(find.text("PROGRESS PHOTOS"), findsOneWidget);
-    expect(find.text("Add a photo for this client"), findsOneWidget);
-    expect(find.text("Barbell Bench Press"), findsNothing);
+    await tester.tap(find.text("Photos"));
+    await tester.pumpAndSettle();
+    expect(_onScreen(tester, "PROGRESS PHOTOS"), isTrue);
+    expect(_onScreen(tester, "Add a photo for this client"), isTrue);
+    expect(_onScreen(tester, "Barbell Bench Press"), isFalse);
   });
 
   testWidgets("the coach overview shows shared stats only when the client consented", (tester) async {
@@ -416,6 +415,24 @@ void main() {
     expect(find.text("Sign in to Fitbit"), findsNothing);
     expect(find.textContaining("Fitbit"), findsWidgets);
   });
+}
+
+bool _onScreen(WidgetTester tester, String text) {
+  final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final screen = Offset.zero & size;
+  for (final element in find.text(text).evaluate()) {
+    final box = element.renderObject;
+    if (box is! RenderBox || !box.hasSize || !box.attached) continue;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    if (rect.overlaps(screen)) return true;
+  }
+  for (final element in find.textContaining(text).evaluate()) {
+    final box = element.renderObject;
+    if (box is! RenderBox || !box.hasSize || !box.attached) continue;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    if (rect.overlaps(screen)) return true;
+  }
+  return false;
 }
 
 HealthReading _sampleReading() {

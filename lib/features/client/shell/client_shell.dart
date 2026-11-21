@@ -178,14 +178,14 @@ class _ClientShellState extends ConsumerState<ClientShell> {
   // sub-tabs) — the shell's swipe-to-go-back gesture below would otherwise
   // fire on the exact same rightward drag a user makes to flip back a tab,
   // navigating the whole screen away instead of just changing tabs.
-  // Log Progress uses a tap toggle now, so a rightward swipe can go back.
-  static const _swipeOwnedByScreen = {"plans"};
+  static const _swipeOwnedByScreen = {"plans", "progress", "photos", "measurements"};
 
   void _onPointerUp(PointerUpEvent e) {
     final start = _dragStart;
     _dragStart = null;
     if (start == null) return;
     if (_swipeOwnedByScreen.contains(ref.read(clientScreenProvider))) return;
+    if (SwipeableTabView.ownsHorizontalSwipe) return;
     final delta = e.position - start;
     // Ignore drags starting inside the Drawer's own left-edge-swipe-to-
     // open hitbox (Scaffold's default drawerEdgeDragWidth) so the two

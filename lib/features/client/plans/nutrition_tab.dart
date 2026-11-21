@@ -275,10 +275,9 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
         children: [
           dayHeader,
           const SizedBox(height: 4),
-          SegmentedToggle(
-            labels: const ["Training Day", "Rest Day"],
-            index: _dayType == "training" ? 0 : 1,
-            onChanged: (index) => setState(() => _dayType = index == 0 ? "training" : "rest"),
+          _DayTypeToggle(
+            dayType: _dayType,
+            onChanged: (value) => setState(() => _dayType = value),
           ),
           if (hasTargets) ...[
             const SizedBox(height: 16),
@@ -299,15 +298,8 @@ class _NutritionTabState extends ConsumerState<NutritionTab> {
             ),
           ],
           const SizedBox(height: 16),
-          SegmentedToggle(
-            labels: const ["Log food", "Meals", "Grocery list"],
+          _SegmentedToggle(
             index: _panel,
-            fontSize: 11,
-            itemKeys: const [
-              Key("nutrition-segment-log"),
-              Key("nutrition-segment-meals"),
-              Key("nutrition-segment-grocery"),
-            ],
             onChanged: (value) => setState(() => _panel = value),
           ),
           const SizedBox(height: 14),
@@ -408,6 +400,117 @@ class _DayHeader extends StatelessWidget {
           icon: Icon(Icons.chevron_right, color: AppColors.txt),
         ),
       ],
+    );
+  }
+}
+
+class _DayTypeToggle extends StatelessWidget {
+  const _DayTypeToggle({required this.dayType, required this.onChanged});
+  final String dayType;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          _DayTypeButton(
+            label: "Training Day",
+            selected: dayType == "training",
+            onTap: () => onChanged("training"),
+          ),
+          _DayTypeButton(
+            label: "Rest Day",
+            selected: dayType == "rest",
+            onTap: () => onChanged("rest"),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SegmentedToggle extends StatelessWidget {
+  const _SegmentedToggle({required this.index, required this.onChanged});
+  final int index;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = ["Log food", "Meals", "Grocery list"];
+    const keys = [
+      "nutrition-segment-log",
+      "nutrition-segment-meals",
+      "nutrition-segment-grocery",
+    ];
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < labels.length; i++)
+            _DayTypeButton(
+              key: Key(keys[i]),
+              label: labels[i],
+              selected: index == i,
+              onTap: () => onChanged(i),
+              fontSize: 11,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayTypeButton extends StatelessWidget {
+  const _DayTypeButton({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.fontSize = 12,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: TapHighlight(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? AppColors.gold : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.fade,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              color: selected ? AppColors.onGold : AppColors.mute,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -41,7 +41,6 @@ export "pressable_scale.dart";
 export "tap_highlight.dart";
 export "reorderable_column.dart";
 export "section_label.dart";
-export "segmented_toggle.dart";
 export "signature_pad.dart";
 export "status_dot.dart";
 export "sub_badge_icon.dart";
