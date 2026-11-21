@@ -783,20 +783,18 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               ],
             ],
           ),
-          if (ref.watch(trainerAuthProvider) == "owner" || info.primaryTrainerId == ref.watch(trainerAuthProvider)) ...[
-            const SizedBox(height: 8),
-            BalanceCard(
-              key: ValueKey("balance-${info.id}"),
-              clientId: info.id,
-              editable: ref.watch(trainerAuthProvider) == "owner",
-              canPay: false,
-            ),
-            BtnGold(
-              full: true,
-              onPressed: () => setState(() => _cardCharge = true),
-              child: const Text("Charge their card"),
-            ),
-          ],
+          const SizedBox(height: 8),
+          BalanceCard(
+            key: ValueKey("balance-${info.id}"),
+            clientId: info.id,
+            editable: ref.watch(trainerAuthProvider) == "owner",
+            canPay: false,
+          ),
+          BtnGold(
+            full: true,
+            onPressed: () => setState(() => _cardCharge = true),
+            child: const Text("Charge their card"),
+          ),
           const SizedBox(height: 8),
           if (ref.watch(trainerAuthProvider) != "owner") ...[
             const SizedBox(height: 8),
@@ -902,13 +900,15 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
     );
     if (confirmed != true) return;
     try {
-      notifyClientAndCoach(
-        clientId: info.id,
-        coachId: info.primaryTrainerId,
-        clientTitle: "Account deleted",
-        clientBody: "Your ONE Fitness profile has been deleted.",
-        coachTitle: "Client deleted",
-        coachBody: "${info.name}'s profile was deleted.",
+      notifyPush(
+        profileId: info.id,
+        title: "Account deleted",
+        body: "Your ONE Fitness profile has been deleted.",
+        sms: true,
+      );
+      notifyAllCoaches(
+        title: "Client deleted",
+        body: "${info.name}'s profile was deleted.",
       );
       notifyOwnerInternal(title: "Profile deleted", body: "${info.name}'s profile was deleted.");
       await SupabaseService.deleteClientAccount(info.id);

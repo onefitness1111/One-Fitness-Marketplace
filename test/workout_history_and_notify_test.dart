@@ -92,7 +92,7 @@ void main() {
     expect(newer.exercises.first.sets.first.prevWeight, 100);
   });
 
-  test("a Hollywood coach does not hear about a Westwood client", () {
+  test("a session notifies the coach who ran it, and a sign-up notifies every coach", () {
     const hollywood = CoachAudience(id: "kajer", location: "Hollywood", publicName: "Coach Kajer");
     const westwood = CoachAudience(id: "paul", location: "Westwood", publicName: "Coach Paul");
     final heard = audienceFor(
@@ -100,7 +100,6 @@ void main() {
       coaches: const [hollywood, westwood],
       ownerIds: const ["owner"],
       eventTrainerId: "paul",
-      eventLocation: "Westwood",
     );
     expect(heard.coachIds, ["paul"]);
     expect(heard.clientIds, ["client"]);
@@ -110,10 +109,8 @@ void main() {
       clientId: "client",
       coaches: const [hollywood, westwood],
       ownerIds: const ["owner"],
-      clientLocation: "Westwood",
-      primaryTrainerId: "paul",
     );
-    expect(signup.coachIds, ["paul"]);
+    expect(signup.coachIds, ["kajer", "paul"]);
 
     final internal = audienceFor(
       clientId: "client",

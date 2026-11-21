@@ -232,7 +232,6 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     flagSessionSwaps(
       entry: entry,
       clientName: person?.name ?? "A client",
-      coachId: person?.primaryTrainerId,
     );
     ref
         .read(trainerClientRecordsProvider.notifier)
@@ -257,16 +256,16 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         ? "Owner"
         : (me.isNotEmpty ? me.first.name : "Coach");
 
-    // Dashboard/schedule scope to just this coach's own clients; owner sees everyone.
-    final myRoster = isOwner
-        ? roster
-        : roster.where((c) => c.primaryTrainerId == trainerAuth).toList();
+    // Every coach sees every client. Unlogged attendance stays on the sessions
+    // this coach ran. A Coach Code alert stays with the coach whose code was used.
+    final sessionBookings = isOwner ? bookings : bookings.where((b) => b.trainerId == trainerAuth).toList();
+    final codeAlerts = isOwner ? roster : roster.where((c) => c.referredByTrainerId == trainerAuth).toList();
 
     final needsAttention = [
-      ...computeNeedsAttention(myRoster, clientRecords),
-      ...computeUnloggedAttendance(myRoster, bookings),
-      ...computeCoachCodeAlerts(myRoster),
-      ...programRefreshAttention(myRoster, clientRecords, forOwner: isOwner),
+      ...computeNeedsAttention(roster, clientRecords),
+      ...computeUnloggedAttendance(roster, sessionBookings),
+      ...computeCoachCodeAlerts(codeAlerts),
+      ...programRefreshAttention(roster, clientRecords, forOwner: isOwner),
       ...quietClientAttention(
         nudges: ref.watch(dashboardExtrasProvider).nudges,
         records: clientRecords,
@@ -684,7 +683,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                 children: [
                   _StatBox(
                     label: "Clients",
-                    value: "${myRoster.length}",
+                    value: "${roster.length}",
                     onTap: () => goMode("clients"),
                   ),
                   const SizedBox(width: 10),

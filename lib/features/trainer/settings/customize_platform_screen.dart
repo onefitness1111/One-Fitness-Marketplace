@@ -309,13 +309,6 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                     value: s.minBookingLeadHours,
                     onChange: (v) => _set((d) => d.copyWith(minBookingLeadHours: v)),
                   ),
-                  _ChoiceRow(
-                    label: "Clients book with",
-                    hint: "\"Assigned coach only\" restricts the booking screen to a client's assigned coach. If a client has no assigned coach yet, they still see every coach so they're never stuck with nothing bookable.",
-                    value: s.bookingCoachScope,
-                    options: const [("assigned", "Assigned coach only"), ("any", "Any coach")],
-                    onChange: (v) => _set((d) => d.copyWith(bookingCoachScope: v)),
-                  ),
                   _NumberRow(
                     label: "Default one-on-one session cap",
                     hint: "Fixed by definition — a one-on-one session is always exactly one client, not configurable here.",
@@ -346,15 +339,8 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                     options: const [("off", "Off"), ("staff", "Staff only"), ("everyone", "Everyone")],
                     onChange: (v) => _set((d) => d.copyWith(twoFactorRequirement: v)),
                   ),
-                  _ChoiceRow(
-                    label: "Coach client list",
-                    hint: "The Clients tab always lists every client. This only narrows a coach's Chat inbox. The owner always sees everyone.",
-                    value: s.coachClientScope,
-                    options: const [("own", "Own clients only"), ("all", "All clients")],
-                    onChange: (v) => _set((d) => d.copyWith(coachClientScope: v)),
-                  ),
                   const HintBox(
-                    text: "Coaches always see their own My Pay (their sessions, commission, and payouts only). That cannot be turned off, and it never shows another coach's pay. A coach's schedule shows only their own sessions. They can still add a client to any session from Book session.",
+                    text: "Every coach can see, message, and book every client. Coaches always see their own My Pay (their sessions, commission, and payouts only). That cannot be turned off, and it never shows another coach's pay. A coach's schedule shows only the sessions they are running. They can still add any client to a session from Book session.",
                   ),
                   _ChoiceRow(
                     label: "Coaches reply in messages as",
@@ -521,11 +507,8 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   const SizedBox(height: 10),
                   const _SignupWaiverEditor(),
                   const SizedBox(height: 10),
-                  _ToggleRow(
-                    label: "Allow clients to message any coach",
-                    hint: "Off scopes a client's coach picker to coaches they've actually booked with or been assigned to.",
-                    value: s.clientsCanMessageAnyCoach,
-                    onChange: (v) => _set((d) => d.copyWith(clientsCanMessageAnyCoach: v)),
+                  const HintBox(
+                    text: "A client can message every coach. There is no assigned coach to limit that list.",
                   ),
                 ],
                 if (_tab == "payments") ...[
