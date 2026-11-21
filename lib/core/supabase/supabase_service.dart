@@ -746,15 +746,21 @@ class SupabaseService {
 
   static List<Map<String, dynamic>> asRowList(dynamic raw) => _rowList(raw);
 
-  /// One round trip for the home screen. Null when the function is not
-  /// installed yet — the caller falls back to the separate reads.
+  /// One round trip for the home screen.
+  ///
+  /// Null when the call fails for any reason, so the caller uses the
+  /// existing queries. A missing function is one of those reasons. A
+  /// function that exists and raises is another. [call] replaces the RPC
+  /// in tests and does not touch the signed-in client.
   static Future<Map<String, dynamic>?> fetchDashboardBootstrap({
     required String from,
     required String to,
+    Future<dynamic> Function()? call,
   }) async {
     final sw = Stopwatch()..start();
     try {
-      final raw = await client.rpc("dashboard_bootstrap", params: {"p_from": from, "p_to": to});
+      final raw = await (call ??
+          () => client.rpc("dashboard_bootstrap", params: {"p_from": from, "p_to": to}))();
       LaunchQueryLog.note("dashboard_bootstrap ${sw.elapsedMilliseconds}ms");
       if (raw is Map) return Map<String, dynamic>.from(raw);
       if (raw is String && raw.isNotEmpty) {
@@ -765,7 +771,8 @@ class SupabaseService {
       return null;
     } catch (e) {
       LaunchQueryLog.note("dashboard_bootstrap unavailable ${sw.elapsedMilliseconds}ms: $e");
-      return null;
+      if (dashboardBootstrapNeedsFallback(error: e)) return null;
+      rethrow;
     }
   }
 

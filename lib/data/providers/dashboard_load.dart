@@ -38,6 +38,17 @@ const dashboardTrainerColumns =
 /// from the directory, so it cannot start until wave 1's directory returns.
 int coldLaunchWaves({required bool bootstrapRpc}) => bootstrapRpc ? 1 : 2;
 
+/// True when the home screen should load through the existing queries.
+///
+/// Every RPC error takes that path: a missing function, a runtime failure
+/// such as an ambiguous column, and a transport error. A payload is usable
+/// when `directory` is a list.
+bool dashboardBootstrapNeedsFallback({Object? error, Object? payload}) {
+  if (error != null) return true;
+  if (payload is! Map) return true;
+  return payload["directory"] is! List;
+}
+
 /// Lines printed during launch so a slow read is visible in the log.
 class LaunchQueryLog {
   static final List<String> lines = [];

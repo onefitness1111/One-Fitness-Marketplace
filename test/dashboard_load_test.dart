@@ -1,6 +1,8 @@
 import "package:flutter_test/flutter_test.dart";
 import "package:shared_preferences/shared_preferences.dart";
+import "package:supabase_flutter/supabase_flutter.dart" show PostgrestException;
 
+import "package:onefitness/core/supabase/supabase_service.dart";
 import "package:onefitness/core/utils/date_utils.dart";
 import "package:onefitness/data/cache/bootstrap_cache.dart";
 import "package:onefitness/data/providers/dashboard_load.dart";
@@ -26,6 +28,38 @@ void main() {
   test("a cold launch is one wave with the bootstrap rpc and two without it", () {
     expect(coldLaunchWaves(bootstrapRpc: true), 1);
     expect(coldLaunchWaves(bootstrapRpc: false), 2);
+  });
+
+  test("any dashboard bootstrap error falls back to the existing queries", () async {
+    final missing = PostgrestException(
+      message: "Could not find the function public.dashboard_bootstrap(p_from, p_to) in the schema cache",
+      code: "PGRST202",
+    );
+    final ambiguous = PostgrestException(
+      message: 'column reference "role" is ambiguous',
+      code: "42702",
+    );
+    final transport = Exception("socket exception");
+
+    expect(dashboardBootstrapNeedsFallback(error: missing), isTrue);
+    expect(dashboardBootstrapNeedsFallback(error: ambiguous), isTrue);
+    expect(dashboardBootstrapNeedsFallback(error: transport), isTrue);
+    expect(dashboardBootstrapNeedsFallback(payload: null), isTrue);
+    expect(dashboardBootstrapNeedsFallback(payload: {"role": "owner"}), isTrue);
+    expect(dashboardBootstrapNeedsFallback(payload: {"directory": <dynamic>[]}), isFalse);
+
+    Future<Map<String, dynamic>?> read(Future<dynamic> Function() call) {
+      return SupabaseService.fetchDashboardBootstrap(from: "2026-11-07", to: "2026-12-05", call: call);
+    }
+
+    expect(await read(() async => throw missing), isNull);
+    expect(await read(() async => throw ambiguous), isNull);
+    expect(await read(() async => throw transport), isNull);
+    expect(await read(() async => throw "function not found"), isNull);
+
+    final hit = await read(() async => {"directory": <dynamic>[], "role": "client"});
+    expect(hit?["directory"], isA<List>());
+    expect(dashboardBootstrapNeedsFallback(payload: hit), isFalse);
   });
 
   test("the coach's first record read leaves workout logs out", () {
