@@ -16,6 +16,7 @@ import {
   hasSmsConsent,
   planTextsForSavedMessage,
   prefixBody,
+  smsRecipientId,
   staffPushCopy,
   INVITE_SMS_BODY,
   INVITE_YES_CONFIRMATION,
@@ -443,6 +444,7 @@ test("an inbound text reaches a coach or the owner without a consent timestamp",
 
 test("a client who never answered gets one invite, not the coach's message", () => {
   const book = gym();
+  book.inviteEnabled = true;
   book.person("sam").hasConsent = false;
   book.person("sam").primaryTrainerId = null;
   const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
@@ -463,6 +465,7 @@ test("a client who never answered gets one invite, not the coach's message", () 
 
 test("YES after the invite opts the client in and is not a chat message", () => {
   const book = gym();
+  book.inviteEnabled = true;
   book.person("sam").hasConsent = false;
   book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
   const before = book.messages.length;
@@ -523,6 +526,7 @@ test("held staff texts go out oldest first, in the coach's public name", () => {
 
 test("STOP and an in-app decline get no invite", () => {
   const book = gym();
+  book.inviteEnabled = true;
   book.person("sam").hasConsent = false;
   book.person("sam").declined = true;
   const declined = book.sendApp({ fromId: "owner", toId: "sam", text: "Hello", now: T0 });
@@ -592,7 +596,21 @@ test("staff to client still follows the channel picker and client consent", () =
     routedTo: "conversation",
     coaches: [],
     includeSms: true,
+    inviteEnabled: true,
   });
+  const invitesOff = planTextsForSavedMessage({
+    sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: false },
+    body: "Coach Chris: On my way",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(invitesOff.clientSms, "disabled");
+  assert.equal(invitesOff.sms.length, 0);
+  assert.equal(invitesOff.invite, null);
+  assert.equal(invitesOff.hold, true);
   assert.equal(unconsented.sms.length, 0);
   assert.equal(unconsented.clientSms, "invite");
   assert.equal(unconsented.invite.body, INVITE_SMS_BODY);
@@ -658,4 +676,72 @@ test("staff consent does not depend on a timestamp, and the push copy names the 
   const push = staffPushCopy("Sam Rivera", "Sam Rivera: In the lobby");
   assert.equal(push.title, "New message from Sam Rivera");
   assert.equal(push.body, "Sam Rivera: In the lobby");
+});
+
+test("an owner reply in a coach thread texts the client, not the coach", () => {
+  assert.equal(
+    smsRecipientId({ sender: { id: "owner", role: "owner" }, clientId: "sam", trainerId: "chris" }),
+    "sam",
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "pat", role: "coach" }, clientId: "sam", trainerId: "chris" }),
+    "sam",
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "chris", role: "coach" }, clientId: "sam", trainerId: "chris" }),
+    "sam",
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "sam", role: "client" }, clientId: "sam", trainerId: "chris" }),
+    "chris",
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "sam", role: "client" }, clientId: "sam", trainerId: null }),
+    null,
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "sam", role: "owner" }, clientId: "sam", trainerId: "chris" }),
+    "chris",
+  );
+  assert.equal(
+    smsRecipientId({ sender: { id: "stranger", role: "guest" }, clientId: "sam", trainerId: "chris" }),
+    "chris",
+  );
+  assert.equal(smsRecipientId({ sender: null, clientId: "sam", trainerId: "chris" }), null);
+
+  const held = planTextsForSavedMessage({
+    sender: { id: "owner", role: "owner", displayName: BUSINESS_NAME },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: false, declined: false },
+    body: "See you",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(held.clientSms, "disabled");
+  assert.equal(held.sms.length, 0);
+  assert.equal(held.invite, null);
+  assert.equal(held.sms.some((item) => item.toId === "chris"), false);
+
+  const sent = planTextsForSavedMessage({
+    sender: { id: "owner", role: "owner", displayName: BUSINESS_NAME },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: true },
+    body: "See you",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].toId, "sam");
+  assert.equal(sent.clientSms, "send");
+});
+
+test("with invites off, a staff message to someone who never answered is held and not texted", () => {
+  const book = gym();
+  book.person("sam").hasConsent = false;
+  const sent = book.sendApp({ fromId: "owner", toId: "sam", text: "Hello", now: T0 });
+  assert.equal(sent.sms.length, 0);
+  assert.equal(sent.message.smsPending, true);
+  assert.equal(book.person("sam").inviteSentAt, null);
 });

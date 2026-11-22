@@ -4,9 +4,11 @@
 -- write is only a jsonb field and installed clients can still read the row.
 --
 -- Ghost is hidden from client catalog reads:
---   * SELECT on membership_plans hides ghost rows from anyone who is not
---     the owner or a coach. App 1.1.3 reads this table (and, on its cold
---     start, dashboard_bootstrap). Both paths are covered.
+--   * SELECT on membership_plans hides ghost rows from a client who does
+--     not hold that plan. A client can select a ghost plan they hold
+--     (membership slot, pending switch, or an active enrollment) so a
+--     plan reload still finds it. Everyone else still cannot see it.
+--     Purchase of a ghost plan stays refused in the checkout functions.
 --   * dashboard_bootstrap is security definer, so it bypasses that policy.
 --     For a client it omits ghost plans they do not hold. A ghost plan they
 --     do hold comes back with archived set true in the payload only, which
@@ -129,6 +131,7 @@ create policy membership_plans_select_authenticated
   using (
     (select public.current_user_role()) in ('owner', 'coach')
     or public.plan_visibility(data) is distinct from 'ghost'
+    or public.client_holds_plan(auth.uid(), id)
   );
 
 create or replace function public.dashboard_bootstrap(p_from date, p_to date)

@@ -43,6 +43,11 @@ serve(async (req) => {
       .eq("profile_id", member.id)
       .maybeSingle();
     const optedOut = gate?.sms_opted_out === true || clientRow?.sms_declined_at != null;
+    // This function never sends the consent invite. No consent, a decline,
+    // or an opt-out is an error, not a text. Invites are sent only by
+    // chat-auto-reply-sms, and only when sms_invite_enabled is on, the
+    // client has never been invited, sms_declined_at is null, and they
+    // have not opted out.
     // Clients still need a consent record. A coach or the owner is textable
     // with a phone number unless they opted out.
     const consented = hasSmsConsent({

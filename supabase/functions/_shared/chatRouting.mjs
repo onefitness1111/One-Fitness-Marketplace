@@ -18,7 +18,9 @@ export {
   INVITE_SMS_VERSION,
   INVITE_YES_CONFIRMATION,
   inviteConsentRecord,
+  inviteEligible,
   isInviteYes,
+  smsInviteEnabledFlag,
   staffClientSmsAction,
 } from "./smsInvite.mjs";
 
@@ -225,6 +227,25 @@ export function isStaffRole(role) {
 }
 
 /**
+ * Who a saved chat row should text.
+ *
+ * A client message keeps the staff route: the coach on the row, or null
+ * when the row is Business Chat (the caller then uses the owner).
+ * The owner or any coach texts the client, including an owner reply inside
+ * a coach's thread, where trainer_id stays that coach and sender_id is the
+ * owner. Consent and the invite hold are applied to that client afterwards.
+ * Coach assignment is not read.
+ */
+export function smsRecipientId({ sender, clientId, trainerId } = {}) {
+  const senderId = sender?.id ?? null;
+  if (!senderId) return null;
+  if (isStaffRole(sender?.role) && senderId !== clientId) return clientId ?? null;
+  if (senderId === clientId) return trainerId ?? null;
+  if (senderId !== trainerId) return trainerId ?? null;
+  return clientId ?? null;
+}
+
+/**
  * Clients need sms_consent_at or clients.sms_opt_in.
  * A coach or the owner does not: a phone and not having opted out is enough.
  */
@@ -300,6 +321,9 @@ export class ThreadBook {
     this.likes = [];
     this.outbox = [];
     this.leads = [];
+    // Matches app_config.sms_invite_enabled. Off until a test or the
+    // server turns it on. No invite is queued while this is false.
+    this.inviteEnabled = false;
   }
 
   person(id) {
@@ -446,14 +470,14 @@ export class ThreadBook {
    */
   _relaySaved({ from, to, message, includeSms, now }) {
     if (includeSms && isStaffRole(from.role) && to.role === "client") {
-      const action = staffClientSmsAction(to);
+      const action = staffClientSmsAction(to, { inviteEnabled: this.inviteEnabled === true });
       if (action === "send") this.textPerson(to, message.body);
       else if (action === "invite") {
         this.outbox.push({ toId: to.id, body: INVITE_SMS_BODY, at: this.outbox.length, kind: "invite" });
         to.inviteSentAt = new Date(now).toISOString();
         to.inviteText = INVITE_SMS_BODY;
         message.smsPending = true;
-      } else if (action === "hold") {
+      } else if (action === "hold" || action === "disabled") {
         message.smsPending = true;
       }
       return;
@@ -677,7 +701,7 @@ export function heldStaffTexts(rows) {
 }
 
 /** What the app-send texter should send for a row that is already saved. */
-export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName }) {
+export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName, inviteEnabled = false }) {
   const sms = [];
   const passAlong = [];
   let clientSms = null;
@@ -686,8 +710,9 @@ export function planTextsForSavedMessage({ sender, recipient, body, originChanne
   const staffToClient = Boolean(includeSms && isStaffRole(sender?.role) && recipient?.role === "client");
   if (staffToClient) {
     // Never reads primary_trainer_id. The action only looks at consent,
-    // opt-out, an in-app decline, a phone, and whether the invite went out.
-    clientSms = staffClientSmsAction(recipient);
+    // opt-out, an in-app decline, a phone, whether the invite went out,
+    // and the server flag that defaults to off.
+    clientSms = staffClientSmsAction(recipient, { inviteEnabled });
     if (clientSms === "send") {
       sms.push({
         toId: recipient.id,
@@ -696,7 +721,7 @@ export function planTextsForSavedMessage({ sender, recipient, body, originChanne
     } else if (clientSms === "invite") {
       invite = { toId: recipient.id, body: INVITE_SMS_BODY };
       hold = true;
-    } else if (clientSms === "hold") {
+    } else if (clientSms === "hold" || clientSms === "disabled") {
       hold = true;
     }
   } else if ((includeSms || clientToStaff(sender, recipient)) && recipient && canText(recipient)) {

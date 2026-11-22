@@ -19,6 +19,19 @@ verify_jwt = true
 [functions.rollover-membership-sessions]
 verify_jwt = false
 
+# The database calls this with pg_net and does not send a JWT.
+# The function trusts only a message id and re-reads with the service key.
+[functions.chat-auto-reply-sms]
+verify_jwt = false
+
+# Twilio posts here with no JWT. The function checks Twilio's signature.
+[functions.sms-inbound]
+verify_jwt = false
+
+# Same inbound handler as sms-inbound. The business number may use either URL.
+[functions.twilio-inbound]
+verify_jwt = false
+
 # Owner asks non-consented clients, by push only, to open the SMS opt-in.
 [functions.prompt-sms-opt-in]
 verify_jwt = true

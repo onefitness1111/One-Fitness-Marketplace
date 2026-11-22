@@ -125,6 +125,9 @@ serve(async (req) => {
     }
 
     if (kind === "chat-to-staff") {
+      // Push only, to the coach or owner the client named. This does not
+      // text anyone, and it does not treat a thread's trainer_id as the
+      // SMS recipient. Chat texts go through chat-auto-reply-sms.
       const profileId = String(body.profileId ?? "").trim();
       const staff = await memberById(admin, profileId);
       if (!staff || (staff.role !== "coach" && staff.role !== "owner")) {
