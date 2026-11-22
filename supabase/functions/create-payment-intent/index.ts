@@ -118,7 +118,7 @@ serve(async (req) => {
     const feeCents = calculateFeeCents(priceCents, feeConfig);
 
     const { data: clientRow } = await admin.from("clients")
-      .select("stripe_customer_id, redeem_points_next_renewal, referred_by_trainer_id, billing_anchor_day, plans, session_count_override, session_count_override_month")
+      .select("stripe_customer_id, redeem_points_next_renewal, referred_by_trainer_id, billing_anchor_day, membership_plan_id, plans, session_count_override, session_count_override_month")
       .eq("profile_id", buyerId).maybeSingle();
 
     let referralSurchargeCents = 0;
@@ -181,12 +181,11 @@ serve(async (req) => {
         year: "numeric",
         month: "2-digit",
       }).format(new Date()).slice(0, 7);
-      const maxSessions = effectivePackageMax(
-        plan,
-        clientRow?.session_count_override == null ? null : Number(clientRow.session_count_override),
-        clientRow?.session_count_override_month ?? null,
-        todayMonth,
-      );
+      const maxSessions = effectivePackageMax(plan, held, todayMonth, {
+        value: clientRow?.session_count_override == null ? null : Number(clientRow.session_count_override),
+        month: clientRow?.session_count_override_month ?? null,
+        applies: clientRow?.membership_plan_id === planId,
+      });
       const remaining = Math.max(0, maxSessions - (usedCount || 0));
 
       const { data: alreadyPaid } = await admin.from("package_renewal_charges")

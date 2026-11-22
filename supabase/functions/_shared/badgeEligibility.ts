@@ -8,6 +8,7 @@ import { PROGRESS_TRACKER_SUB_BADGE_KEYS } from "./progressTrackerSubBadges.ts";
 import { rankParticipants } from "./challengeScoring.ts";
 import { notifyBadgeEarned } from "./badgeNotify.ts";
 import { clientMilestoneAwards } from "./coachMonth.mjs";
+import { sessionAllowance } from "./membershipRollover.mjs";
 import {
   addDays,
   bundleKeys,
@@ -123,22 +124,23 @@ function countsForWindow(b: any, allowed: string[]) {
 function capFor(client: any, plan: any, monthKey: string): number | null {
   if (!plan) return null;
   const data = plan.data || {};
-  let cap = data.maxSessions == null || data.maxSessions === "" ? null : Number(data.maxSessions);
-  if (!Number.isFinite(cap as number) || (cap as number) <= 0) cap = null;
-  const override = client?.session_count_override;
-  const overrideMonth = client?.session_count_override_month;
-  if (override != null) {
-    const stale = data.kind === "membership" && overrideMonth && overrideMonth !== monthKey;
-    if (!stale) cap = Number(override);
-  }
-  if (data.kind === "membership" && Array.isArray(client?.plans)) {
-    for (const e of client.plans) {
-      if (e?.planId === plan.id && e?.status === "active" && e?.rolloverMonth === monthKey) {
-        cap = (cap || 0) + (Number(e.rolloverSessions) || 0);
-      }
-    }
-  }
-  return cap && cap > 0 ? cap : null;
+  const enrollment = Array.isArray(client?.plans)
+    ? client.plans.find((e: any) => e?.planId === plan.id && e?.status === "active")
+    : null;
+  const onEntry = enrollment?.maxSessionsOverride != null && enrollment?.maxSessionsOverride !== "";
+  const legacyApplies = !onEntry && client?.membership_plan_id === plan.id && client?.session_count_override != null;
+  const rolled = data.kind === "membership" && enrollment?.rolloverMonth === monthKey && Number(enrollment?.rolloverSessions) > 0;
+  const maxMissing = data.maxSessions == null || data.maxSessions === "" || !(Number(data.maxSessions) > 0);
+  if (maxMissing && !onEntry && !legacyApplies && !rolled) return null;
+  const total = sessionAllowance(
+    { id: plan.id, ...data },
+    enrollment,
+    monthKey,
+    legacyApplies
+      ? { applies: true, value: client.session_count_override, month: client.session_count_override_month }
+      : null,
+  );
+  return total > 0 ? total : null;
 }
 
 async function foodDates(admin: any, clientId: string, c: Cache): Promise<string[]> {

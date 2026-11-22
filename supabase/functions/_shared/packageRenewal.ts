@@ -7,6 +7,8 @@
 // A package that still has every session, or one that was already
 // renewed, is not offered. The percent is never taken from the client.
 
+import { sessionAllowance } from "./membershipRollover.mjs";
+
 export const RENEW_DISCOUNT_AT = 8;
 export const RENEW_FULL_AT = 2;
 export const RENEW_PERCENT = 5;
@@ -95,16 +97,20 @@ export function renewalIdempotencyKey(
   return attempt <= 1 ? base : `${base}-${attempt}`;
 }
 
+/// The sessions still on one package. The override is the one stored on
+/// that package's own plan entry. A leftover client-wide override counts
+/// only when [legacy.applies] is set, which is the package currently in
+/// the client's membership slot.
 export function effectivePackageMax(
   plan: { maxSessions?: number; kind?: string },
-  override: number | null,
-  overrideMonth: string | null,
+  enrollment: {
+    maxSessionsOverride?: number | null;
+    maxSessionsOverrideMonth?: string | null;
+    rolloverSessions?: number | null;
+    rolloverMonth?: string | null;
+  } | null,
   todayMonth: string,
+  legacy?: { value?: number | null; month?: string | null; applies?: boolean } | null,
 ): number {
-  let base = Number(plan.maxSessions || 0);
-  if (override != null && Number.isFinite(override)) {
-    const stale = plan.kind === "membership" && !!overrideMonth && overrideMonth !== todayMonth;
-    if (!stale) base = override;
-  }
-  return base;
+  return sessionAllowance(plan, enrollment, todayMonth, legacy ?? null);
 }
