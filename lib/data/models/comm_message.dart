@@ -23,6 +23,7 @@ class CommMessage {
     this.createdAt,
     this.reactions = const [],
     this.groupName,
+    this.routedTo,
   });
 
   final String id;
@@ -48,6 +49,10 @@ class CommMessage {
   /// Set on a broadcast copy. One-on-one messages leave this empty.
   final String? groupName;
 
+  /// "conversation" or "business". Null on older rows; a missing trainer
+  /// is treated as the business thread.
+  final String? routedTo;
+
   /// Real chronological timestamp for day-grouping/sort order in the chat
   /// UI. [id] is always a microsecond-epoch stamp for a message this app
   /// created (see chat_screen.dart/coach_chat_screen.dart's `send()`), so
@@ -66,7 +71,7 @@ class CommMessage {
         : DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  CommMessage copyWith({bool? readByCoach, List<MessageReaction>? reactions}) => CommMessage(
+  CommMessage copyWith({bool? readByCoach, List<MessageReaction>? reactions, String? routedTo}) => CommMessage(
         id: id,
         who: who,
         text: text,
@@ -77,5 +82,6 @@ class CommMessage {
         createdAt: createdAt,
         reactions: reactions ?? this.reactions,
         groupName: groupName,
+        routedTo: routedTo ?? this.routedTo,
       );
 }

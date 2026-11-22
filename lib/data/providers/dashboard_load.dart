@@ -125,7 +125,7 @@ const bookingSelectColumns =
     "id, client_id, trainer_id, date, slot_min, session_type, discipline, attendance_status, client_started_at, location, is_physical_assessment, overridden_by, overridden_at, override_reason, plan_id, duration_min, counts_toward_pay, cancelled_at";
 
 const messageSelectColumns =
-    "id, client_id, who, body, created_at, trainer_id, read_by_coach, channel, group_name";
+    "id, client_id, who, body, created_at, trainer_id, read_by_coach, channel, group_name, routed_to";
 
 const pointsSelectColumns =
     "id, client_id, amount, type, source, created_at, expires_at, granted_by_user_id, reason, voided_by_ledger_id";

@@ -410,6 +410,7 @@ Future<void> loadAndSeedCoreData(
   Future<String?>? roleGate,
 }) async {
   _installSignOutHook();
+  clearLoadedComms();
   final generation = ++_loadGeneration;
   _payGeneration = -1;
   _resetSections(generation);
@@ -1288,6 +1289,7 @@ void _installSignOutHook() {
     _sectionInflight.clear();
     _fullRecords.clear();
     _fullBookingsLoaded = false;
+    clearLoadedComms();
   };
 }
 
