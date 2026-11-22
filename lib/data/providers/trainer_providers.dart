@@ -55,6 +55,29 @@ class TrainerRosterNotifier extends Notifier<List<ClientInfo>> {
 
 final trainerRosterProvider = NotifierProvider<TrainerRosterNotifier, List<ClientInfo>>(TrainerRosterNotifier.new);
 
+/// Messages loaded for this sign-in. A later record refresh must not drop
+/// them: the chat list is empty when the record rows arrive after the
+/// messages and replace the map.
+final Map<String, List<CommMessage>> _loadedComms = {};
+
+void clearLoadedComms() => _loadedComms.clear();
+
+Map<String, ClientRecord> _withLoadedComms(Map<String, ClientRecord> base) {
+  if (_loadedComms.isEmpty) return base;
+  final next = {...base};
+  for (final entry in _loadedComms.entries) {
+    final existing = next[entry.key];
+    if (existing == null) continue;
+    final byId = {
+      for (final m in existing.comms) m.id: m,
+      for (final m in entry.value) m.id: m,
+    };
+    final merged = byId.values.toList()..sort((a, b) => b.sentAt.compareTo(a.sentAt));
+    next[entry.key] = existing.copyWith(comms: merged);
+  }
+  return next;
+}
+
 /// clientId -> that client's day-to-day record (App.jsx `clientRecords`).
 class TrainerClientRecordsNotifier extends Notifier<Map<String, ClientRecord>> {
   @override
@@ -65,23 +88,21 @@ class TrainerClientRecordsNotifier extends Notifier<Map<String, ClientRecord>> {
 
   void remove(String clientId) => state = {...state}..remove(clientId);
 
-  void setAll(Map<String, ClientRecord> next) => state = next;
+  void setAll(Map<String, ClientRecord> next) => state = _withLoadedComms(next);
 
   /// Folds chat threads (from the `messages` table) into the matching
   /// records, newest first. Keyed by message id, so a message that's
   /// already present — from the record's own older `comms`, or put there by
-  /// the realtime channel — isn't shown twice. Clients not in the map are
-  /// skipped rather than created.
+  /// the realtime channel — isn't shown twice. The threads are remembered
+  /// so a record refresh that arrives afterwards still shows them. Clients
+  /// not in the map are kept until their record exists.
   void mergeComms(Map<String, List<CommMessage>> byClient) {
-    final next = {...state};
     for (final entry in byClient.entries) {
-      final existing = next[entry.key];
-      if (existing == null) continue;
-      final byId = {for (final m in existing.comms) m.id: m, for (final m in entry.value) m.id: m};
-      final merged = byId.values.toList()..sort((a, b) => b.sentAt.compareTo(a.sentAt));
-      next[entry.key] = existing.copyWith(comms: merged);
+      final prior = _loadedComms[entry.key] ?? const <CommMessage>[];
+      final byId = {for (final m in prior) m.id: m, for (final m in entry.value) m.id: m};
+      _loadedComms[entry.key] = byId.values.toList();
     }
-    state = next;
+    state = _withLoadedComms(state);
   }
 }
 

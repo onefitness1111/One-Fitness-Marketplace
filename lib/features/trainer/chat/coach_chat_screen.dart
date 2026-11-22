@@ -9,6 +9,8 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/chat/chat_entry.dart";
+import "../../../core/chat/owner_inbox.dart";
+import "../../../core/widgets/owner_chat_list.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/widgets/chat_gate.dart";
 import "../../../core/widgets/message_reactions.dart";
@@ -83,6 +85,11 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   _ChatView _view = _ChatView.list;
   final Set<String> _pendingIds = {};
 
+  /// Owner list: which coach's threads are showing, and the open thread.
+  String _ownerFilter = kOwnerFilterAll;
+  String _ownerQuery = "";
+  String? _ownerCoachKey;
+
   /// Coaches / owner / ONE Fitness Marketplace, and the staff messages
   /// involving this person, so teammates sit in the same list as clients.
   List<Map<String, dynamic>> _staff = [];
@@ -137,6 +144,19 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   }
 
   bool get _iAmOwner => _staff.any((p) => p["id"] == _me && p["role"] == "owner");
+
+  Set<String> _ownerIds() => {
+        if (_me.isNotEmpty) _me,
+        for (final person in _staff)
+          if (person["role"] == "owner" && person["id"] is String) person["id"] as String,
+      };
+
+  String _coachLabel(String coachKey) {
+    if (coachKey == kOwnerBusinessKey) return kOneFitnessLabel;
+    final matches = ref.read(trainersProvider).where((t) => t.id == coachKey);
+    if (matches.isEmpty) return coachPublicName();
+    return matches.first.displayTitle;
+  }
 
   /// Teammates other than me, plus the business contact.
   /// Chat history walks this full list, so a past direct thread with the
@@ -350,6 +370,23 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     SupabaseService.markMessagesRead(clientId).catchError((Object _) {});
   }
 
+  /// The owner opened one thread. Other threads with that client stay unread.
+  void _markOwnerThreadRead(String clientId, String coachKey) {
+    final key = ownerUnreadKey(clientId, coachKey);
+    SupabaseService.markChatRead(key);
+    ref.read(unreadChatKeysProvider.notifier).clear(key);
+    final record = ref.read(trainerClientRecordsProvider)[clientId];
+    if (record == null) return;
+    final ownerIds = _ownerIds();
+    bool unreadInThread(CommMessage m) =>
+        ownerThreadCoachKey(m, ownerIds) == coachKey && m.who == "client" && !m.readByCoach;
+    if (!record.comms.any(unreadInThread)) return;
+    final ids = [for (final m in record.comms) if (unreadInThread(m)) m.id];
+    final updated = record.comms.map((m) => unreadInThread(m) ? m.copyWith(readByCoach: true) : m).toList();
+    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
+    SupabaseService.markMessageIdsRead(ids).catchError((Object _) {});
+  }
+
   void _scrollToBottom({bool animate = true}) {
     if (!_scrollController.hasClients) return;
     final target = _scrollController.position.maxScrollExtent;
@@ -400,8 +437,13 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     if (typed.isEmpty) return;
     // Clients only ever see the coach name ("Coach Chris"), never the legal
     // name. An owner writing from the owner account goes out as the business.
+    final isOwnerSend = trainerAuth == "owner";
     final sender = ref.read(trainersProvider).where((t) => t.id == trainerAuth);
-    final from = sender.isNotEmpty ? sender.first.displayTitle : "ONE Fitness Marketplace";
+    final from = isOwnerSend
+        ? kMarketplaceName
+        : (sender.isNotEmpty ? sender.first.displayTitle : kMarketplaceName);
+    final replyCoach = _ownerCoachKey;
+    final intoCoachThread = isOwnerSend && replyCoach != null && replyCoach != kOwnerBusinessKey;
     final text = prefixMessage(from, typed);
     // Optimistic bubble under a temporary id; the server returns the real
     // row, and is where the content filter and block rules are applied.
@@ -411,7 +453,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       who: "trainer",
       text: text,
       at: stamp(),
-      trainerId: trainerAuth,
+      trainerId: intoCoachThread ? replyCoach : (isOwnerSend ? null : trainerAuth),
+      routedTo: isOwnerSend && !intoCoachThread ? kOwnerBusinessKey : null,
       readByCoach: true,
       channel: encodeChannels(deliver),
       createdAt: DateTime.now(),
@@ -427,6 +470,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         who: "trainer",
         text: text,
         channel: encodeChannels(deliver),
+        threadTrainerId: intoCoachThread ? replyCoach : null,
       );
       ref.read(trainerClientRecordsProvider.notifier).update(
             client.id,
@@ -505,16 +549,69 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     return out;
   }
 
+  List<OwnerInboxRow> _teamRows(Set<String> unreadKeys) {
+    final rows = <OwnerInboxRow>[];
+    for (final conversation in [..._staffConversations(unreadKeys), ..._pairConversations()]) {
+      rows.add(OwnerInboxRow(
+        id: conversation.id,
+        clientId: null,
+        coachKey: _teamCoachKey(conversation.id),
+        title: conversation.name,
+        coachLabel: kTeamChatLabel,
+        preview: conversation.preview,
+        at: conversation.at,
+        unread: conversation.unread,
+        outgoing: conversation.outgoing,
+        team: true,
+        participantIds: _teamParticipants(conversation.id),
+      ));
+    }
+    return rows;
+  }
+
+  String _teamCoachKey(String id) {
+    if (id == "staff:market") return kOwnerBusinessKey;
+    if (id.startsWith("staff:")) return id.substring("staff:".length);
+    return id;
+  }
+
+  Set<String> _teamParticipants(String id) {
+    if (id == "staff:market") return const {};
+    if (id.startsWith("staff:")) return {id.substring("staff:".length)};
+    if (id.startsWith("pair:")) {
+      final parts = id.substring("pair:".length).split(":");
+      return parts.where((part) => part.isNotEmpty).toSet();
+    }
+    return const {};
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(coachChatOpenRequestProvider, (previous, next) {
       if (next == null) return;
+      final owner = ref.read(trainerAuthProvider) == "owner";
+      var coachKey = kOwnerBusinessKey;
+      if (owner) {
+        final comms = ref.read(trainerClientRecordsProvider)[next]?.comms ?? const <CommMessage>[];
+        final ownerIds = _ownerIds();
+        DateTime? latest;
+        for (final message in comms) {
+          if (latest != null && !message.sentAt.isAfter(latest)) continue;
+          latest = message.sentAt;
+          coachKey = ownerThreadCoachKey(message, ownerIds);
+        }
+      }
       setState(() {
         _recipientId = next;
+        _ownerCoachKey = owner ? coachKey : null;
         _view = _ChatView.thread;
         _prefsLoaded = true;
       });
-      _markThreadRead(next);
+      if (owner) {
+        _markOwnerThreadRead(next, coachKey);
+      } else {
+        _markThreadRead(next);
+      }
       ref.read(coachChatOpenRequestProvider.notifier).clear();
     });
     return ChatEntryGate(child: _buildChat(context));
@@ -557,6 +654,68 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         isOpen: true,
         onBack: () => setState(() => _view = _ChatView.list),
         child: const BroadcastScreen(),
+      );
+    }
+
+    if (_view == _ChatView.list && isOwner) {
+      final trainers = ref.watch(trainersProvider);
+      final threads = ownerClientThreads(
+        roster: roster,
+        commsByClient: {for (final entry in records.entries) entry.key: entry.value.comms},
+        coaches: trainers,
+        ownerIds: _ownerIds(),
+        unreadKeys: unreadKeys,
+      );
+      final team = _teamRows(unreadKeys);
+      final visible = filterOwnerInbox(
+        [...threads, ...team]..sort((a, b) => b.at.compareTo(a.at)),
+        coachKey: _ownerFilter,
+        query: _ownerQuery,
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (settings.supportPhone.trim().isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Align(alignment: Alignment.centerLeft, child: CallGymButton()),
+            ),
+          Expanded(
+            child: OwnerChatList(
+              rows: visible,
+              filters: ownerCoachFilters(trainers),
+              selectedKey: _ownerFilter,
+              query: _ownerQuery,
+              onFilter: (key) => setState(() => _ownerFilter = key),
+              onQuery: (value) => setState(() => _ownerQuery = value),
+              emptyText: _ownerQuery.trim().isEmpty && _ownerFilter == kOwnerFilterAll
+                  ? "No conversations yet. Start one with a client below — everything you send is timestamped and logged."
+                  : "No conversations match.",
+              onOpen: (id) {
+                if (id.startsWith("pair:")) {
+                  _openPair(id.substring(5));
+                  return;
+                }
+                if (id.startsWith("staff:")) {
+                  SupabaseService.markChatRead(id);
+                  ref.read(unreadChatKeysProvider.notifier).clear(id);
+                  _openStaffChat(id.substring(6), _channels);
+                  return;
+                }
+                final parsed = parseOwnerThreadId(id);
+                if (parsed == null) return;
+                setState(() {
+                  _recipientId = parsed.clientId;
+                  _ownerCoachKey = parsed.coachKey;
+                  _view = _ChatView.thread;
+                });
+                _markOwnerThreadRead(parsed.clientId, parsed.coachKey);
+              },
+              onNewChat: () => setState(() => _view = _ChatView.picker),
+              onNewBroadcast: () => setState(() => _view = _ChatView.broadcast),
+            ),
+          ),
+        ],
       );
     }
 
@@ -604,8 +763,11 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
     final client = selectedMatches.first;
     final comms = records[client.id]?.comms ?? const <CommMessage>[];
-    final thread = comms.where((m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth).toList()
-      ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    final ownerKey = _ownerCoachKey ?? kOwnerBusinessKey;
+    final thread = isOwner
+        ? messagesForOwnerThread(comms, coachKey: ownerKey, ownerIds: _ownerIds())
+        : (comms.where((m) => m.trainerId == null || m.trainerId == trainerAuth).toList()
+          ..sort((a, b) => a.sentAt.compareTo(b.sentAt)));
 
     return LocalBackScope(
       isOpen: true,
@@ -615,6 +777,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         _ContextBar(
           client: client,
           channelLabel: chatChannelsLabel(_channels),
+          withLabel: isOwner ? "with ${_coachLabel(ownerKey)}" : null,
           onChange: () => _openChangeSheet(roster),
         ),
         Expanded(
@@ -638,6 +801,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         _Composer(
           controller: _msgController,
           recipientName: client.name,
+          replyAs: isOwner ? kOwnerReplyLabel : null,
           onSend: () => _send(client: client, settings: settings, channels: _channels, trainerAuth: trainerAuth),
         ),
       ],
@@ -955,10 +1119,16 @@ class _RecipientSetupState extends State<_RecipientSetup> {
 /// State 2's slim sticky header — who this thread is with, how, and a way
 /// to change either without leaving the conversation.
 class _ContextBar extends StatelessWidget {
-  const _ContextBar({required this.client, required this.channelLabel, required this.onChange});
+  const _ContextBar({
+    required this.client,
+    required this.channelLabel,
+    required this.onChange,
+    this.withLabel,
+  });
   final ClientInfo client;
   final String channelLabel;
   final VoidCallback onChange;
+  final String? withLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -982,7 +1152,12 @@ class _ContextBar extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.txt),
                 ),
-                Text("via $channelLabel", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                Text(
+                  withLabel == null ? "via $channelLabel" : "$withLabel · via $channelLabel",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                ),
               ],
             ),
           ),
@@ -1110,10 +1285,18 @@ class _ChannelBadge extends StatelessWidget {
 /// Bottom composer, pinned above the tab bar — a single rounded input that
 /// grows to 4 lines then scrolls, and a circular send button.
 class _Composer extends StatefulWidget {
-  const _Composer({required this.controller, required this.recipientName, required this.onSend});
+  const _Composer({
+    required this.controller,
+    required this.recipientName,
+    required this.onSend,
+    this.replyAs,
+  });
   final TextEditingController controller;
   final String recipientName;
   final VoidCallback onSend;
+
+  /// When set, the box says the reply is sent as this name.
+  final String? replyAs;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -1148,6 +1331,17 @@ class _ComposerState extends State<_Composer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (widget.replyAs != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Replying as ${widget.replyAs}",
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.gold),
+                  ),
+                ),
+              ),
             const ChatSavedNotice(),
             const PushOffHint(),
             Row(

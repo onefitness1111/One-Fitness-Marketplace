@@ -2881,6 +2881,7 @@ class SupabaseService {
     channel: r["channel"] as String?,
     createdAt: DateTime.tryParse((r["created_at"] as String?) ?? "")?.toLocal(),
     groupName: (r["group_name"] as String?)?.trim(),
+    routedTo: r["routed_to"] as String?,
   );
 
   /// Turns the database's enforcement errors into something a person can
@@ -2922,6 +2923,7 @@ class SupabaseService {
     required String who,
     required String text,
     String? channel,
+    String? threadTrainerId,
   }) async {
     final senderId = currentUser?.id;
     if (senderId == null) throw Exception("You're signed out — sign in and try again.");
@@ -2935,8 +2937,12 @@ class SupabaseService {
     // A staff member sending IS the trainer on the message, so their own id
     // is the right value; anything else non-UUID becomes null (a message to
     // the gym rather than to one coach).
+    // An owner reply into a coach's thread keeps that coach on the row so
+    // the message stays in the thread being read. The sender is still the
+    // owner, and the body is labeled ONE Fitness. Every other staff send
+    // uses the signed-in person.
     final resolvedTrainerId = who == "trainer"
-        ? senderId
+        ? (_looksLikeUuid(threadTrainerId) ? threadTrainerId : senderId)
         : (_looksLikeUuid(trainerId) ? trainerId : null);
     try {
       final row = await client.from("messages").insert({
@@ -3203,6 +3209,13 @@ class SupabaseService {
     if (me == null) return {};
     final rows = await client.from("blocks").select("blocked_id").eq("blocker_id", me);
     return (rows as List).map((r) => r["blocked_id"] as String).toSet();
+  }
+
+  /// Marks the messages in one thread read, without clearing the other
+  /// threads that client has with other coaches.
+  static Future<void> markMessageIdsRead(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await client.from("messages").update({"read_by_coach": true}).inFilter("id", ids);
   }
 
   /// Read receipts for the coach viewing a thread.
