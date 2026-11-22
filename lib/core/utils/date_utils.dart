@@ -79,3 +79,20 @@ String stamp([DateTime? at]) {
   final ampm = d.hour < 12 ? "AM" : "PM";
   return "${_months[d.month - 1]} ${d.day}, $h:${d.minute.toString().padLeft(2, '0')} $ampm";
 }
+
+/// yyyy-MM-dd in America/Los_Angeles, which is the gym's calendar day.
+String isoTodayPacific([DateTime? now]) {
+  final utc = (now ?? DateTime.now()).toUtc();
+  final start = DateTime.utc(utc.year, 3, _nthSunday(utc.year, 3, 2), 10);
+  final end = DateTime.utc(utc.year, 11, _nthSunday(utc.year, 11, 1), 9);
+  final daylight = !utc.isBefore(start) && utc.isBefore(end);
+  final wall = utc.subtract(Duration(hours: daylight ? 7 : 8));
+  return isoDate(wall);
+}
+
+int _nthSunday(int year, int month, int n) {
+  final first = DateTime.utc(year, month, 1);
+  final offset = (DateTime.sunday - first.weekday) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+

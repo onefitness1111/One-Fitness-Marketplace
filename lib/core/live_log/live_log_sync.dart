@@ -478,7 +478,9 @@ class LiveActivity {
 
   /// Closes every open live day except [keepDayId] on [keepDate]. The same
   /// day left open on an earlier date is closed too, so a client never has
-  /// two open rows for one program day. Set logs stay writable.
+  /// two open rows for one program day. Set logs stay writable. Matching
+  /// start-of-day markers in live_set_logs are closed too; real set rows
+  /// are not touched.
   static Future<void> closeOtherDays(String clientId, {required String keepDayId, String? keepDate}) async {
     final now = DateTime.now().toUtc().toIso8601String();
     try {
@@ -492,21 +494,53 @@ class LiveActivity {
           : q.or("day_id.neq.\"$keepDayId\",log_date.neq.$keepDate");
       await q;
     } catch (_) {}
+    await closeOpenStartMarkers(clientId, now: now, keepDayId: keepDayId, keepDate: keepDate);
   }
 
-  /// End / timeout. Closes the live marker only, not the workout log.
+  /// End / timeout. Closes the live marker only, not the workout log, and
+  /// also closes leftover start-of-day marker rows so the client bar clears.
   static Future<void> closeAllDays(String clientId) async {
+    var ended = false;
     try {
       await SupabaseService.client.rpc("end_open_live_days", params: {"p_client": clientId});
-      return;
+      ended = true;
     } catch (_) {}
     final now = DateTime.now().toUtc().toIso8601String();
+    if (!ended) {
+      try {
+        await SupabaseService.client
+            .from("live_day_runs")
+            .update({"ended_at": now})
+            .eq("client_id", clientId)
+            .isFilter("ended_at", null);
+      } catch (_) {}
+    }
+    // The live function may not close markers until the new migration is
+    // applied, so the app always closes them here as well.
+    await closeOpenStartMarkers(clientId, now: now);
+  }
+
+  /// Closes open `__day_started_coach__` / `__day_started_client__` rows.
+  /// Real set logs and saved workouts are never updated.
+  static Future<void> closeOpenStartMarkers(
+    String clientId, {
+    required String now,
+    String? keepDayId,
+    String? keepDate,
+  }) async {
     try {
-      await SupabaseService.client
-          .from("live_day_runs")
+      var q = SupabaseService.client
+          .from("live_set_logs")
           .update({"ended_at": now})
           .eq("client_id", clientId)
-          .isFilter("ended_at", null);
+          .isFilter("ended_at", null)
+          .inFilter("exercise_name", liveDayStartMarkers);
+      if (keepDayId != null) {
+        q = keepDate == null
+            ? q.neq("day_id", keepDayId)
+            : q.or("day_id.neq.\"$keepDayId\",log_date.neq.$keepDate");
+      }
+      await q;
     } catch (_) {}
   }
 

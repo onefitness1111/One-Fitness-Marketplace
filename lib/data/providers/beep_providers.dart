@@ -3,7 +3,9 @@ import "dart:async";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
 
+import "../../core/live_log/current_live_day.dart";
 import "../../core/supabase/supabase_service.dart";
+import "../../core/utils/date_utils.dart";
 import "../models/live_session.dart";
 
 /// Every session currently running, as far as this signed-in user is allowed
@@ -86,44 +88,79 @@ Future<List<dynamic>> _coachLedRows(Future<dynamic> query) async {
   }
 }
 
-Future<List<CoachLedDay>> loadCoachLedDays() async {
+String _isoDateValue(dynamic raw) {
+  final value = raw?.toString() ?? "";
+  return value.length >= 10 ? value.substring(0, 10) : value;
+}
+
+/// Builds the coach-led list the client bar uses.
+///
+/// An open coach/owner live_day_runs row still counts. A leftover
+/// `__day_started_coach__` marker does not, unless it is for today
+/// (Pacific) and its matching live-day run is still open. A marker
+/// from an earlier date, or one whose run was already closed, cannot
+/// keep the bar on the screen.
+List<CoachLedDay> coachLedDaysFromRows({
+  required List<Map<String, dynamic>> openRuns,
+  required List<Map<String, dynamic>> openCoachMarkers,
+  required String todayPacific,
+}) {
   final found = <String, CoachLedDay>{};
-  final both = await Future.wait([
-    _coachLedRows(
-      SupabaseService.client
-          .from("live_day_runs")
-          .select("client_id, day_id, started_role, trainer_id, ended_at")
-          .isFilter("ended_at", null),
-    ),
-    _coachLedRows(
-      SupabaseService.client
-          .from("live_set_logs")
-          .select("client_id, day_id, exercise_name, ended_at")
-          .eq("exercise_name", "__day_started_coach__")
-          .isFilter("ended_at", null),
-    ),
-  ]);
-  for (final raw in both[0]) {
-    final row = (raw as Map).cast<String, dynamic>();
-    final role = row["started_role"]?.toString();
-    if (role != "coach" && role != "owner") continue;
+  final openKeys = <String>{};
+  for (final row in openRuns) {
     final clientId = row["client_id"]?.toString() ?? "";
     final dayId = row["day_id"]?.toString() ?? "";
+    final logDate = _isoDateValue(row["log_date"]);
     if (clientId.isEmpty || dayId.isEmpty) continue;
+    if (logDate.isNotEmpty) openKeys.add("$clientId|$logDate|$dayId");
+    final role = row["started_role"]?.toString();
+    if (role != "coach" && role != "owner") continue;
     found[clientId] = CoachLedDay(
       clientId: clientId,
       dayId: dayId,
       trainerId: row["trainer_id"]?.toString(),
     );
   }
-  for (final raw in both[1]) {
-    final row = (raw as Map).cast<String, dynamic>();
+  for (final row in openCoachMarkers) {
     final clientId = row["client_id"]?.toString() ?? "";
     final dayId = row["day_id"]?.toString() ?? "";
+    final logDate = _isoDateValue(row["log_date"]);
     if (clientId.isEmpty || dayId.isEmpty || found.containsKey(clientId)) continue;
+    if (logDate.isEmpty || logDate.compareTo(todayPacific) < 0) continue;
+    // A marker only counts when its own run is still open. A closed
+    // (or missing) run must not keep the "coach is live" bar up.
+    if (!openKeys.contains("$clientId|$logDate|$dayId")) continue;
     found[clientId] = CoachLedDay(clientId: clientId, dayId: dayId);
   }
   return found.values.toList();
+}
+
+Future<List<CoachLedDay>> loadCoachLedDays() async {
+  final today = isoTodayPacific();
+  final both = await Future.wait([
+    _coachLedRows(
+      SupabaseService.client
+          .from("live_day_runs")
+          .select("client_id, day_id, started_role, trainer_id, ended_at, log_date")
+          .isFilter("ended_at", null),
+    ),
+    _coachLedRows(
+      SupabaseService.client
+          .from("live_set_logs")
+          .select("client_id, day_id, exercise_name, ended_at, log_date")
+          .eq("exercise_name", liveDayStartedCoachMarker)
+          .isFilter("ended_at", null),
+    ),
+  ]);
+  return coachLedDaysFromRows(
+    openRuns: [
+      for (final raw in both[0]) (raw as Map).cast<String, dynamic>(),
+    ],
+    openCoachMarkers: [
+      for (final raw in both[1]) (raw as Map).cast<String, dynamic>(),
+    ],
+    todayPacific: today,
+  );
 }
 
 /// Beeps for whichever session is currently on screen.
@@ -213,6 +250,10 @@ class BeepRealtime {
         )
         .subscribe();
 
+    Future<void> reloadDays() async {
+      _ref.read(coachLedDaysProvider.notifier).setAll(await loadCoachLedDays());
+    }
+
     _daysChannel = SupabaseService.client
         .channel("live_days_${DateTime.now().microsecondsSinceEpoch}")
         .onPostgresChanges(
@@ -220,7 +261,15 @@ class BeepRealtime {
           schema: "public",
           table: "live_set_logs",
           callback: (_) async {
-            _ref.read(coachLedDaysProvider.notifier).setAll(await loadCoachLedDays());
+            await reloadDays();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: "public",
+          table: "live_day_runs",
+          callback: (_) async {
+            await reloadDays();
           },
         )
         .subscribe();

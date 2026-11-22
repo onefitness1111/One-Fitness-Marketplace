@@ -1,3 +1,8 @@
+/// Start-of-day marker rows in live_set_logs. These are not real sets.
+const liveDayStartedCoachMarker = "__day_started_coach__";
+const liveDayStartedClientMarker = "__day_started_client__";
+const liveDayStartMarkers = [liveDayStartedCoachMarker, liveDayStartedClientMarker];
+
 /// One row of "this program day is the live session".
 ///
 /// An unfinished set log is not a row. Logging a day and marking it live

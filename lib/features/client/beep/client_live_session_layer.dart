@@ -9,6 +9,17 @@ import "../../../data/providers/beep_providers.dart";
 import "../../../data/providers/client_providers.dart";
 import "beep_bar.dart";
 
+/// Pinned-bar copy when Beep Your Coach has nothing to render, so the bar
+/// is never an empty box.
+const coachStartedWorkoutLabel = "Your coach started your workout";
+
+/// True when [BeepBar] will show the button (a trainer id is available).
+bool coachLiveBarShowsBeep(CoachLedDay day, LiveSession? beepable) {
+  if (beepable != null && beepable.trainerId.isNotEmpty) return true;
+  final trainerId = day.trainerId;
+  return trainerId != null && trainerId.isNotEmpty;
+}
+
 /// What a client sees on every screen while their coach has a session running:
 ///
 ///  * a one-time "Your session has started" window the moment the coach
@@ -150,6 +161,10 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
     // A booked session with no coach-started program day does not show it.
     if (coachLed == null || widget.screen == "plans") return const SizedBox.shrink();
 
+    final beepable = ref.watch(liveSessionsProvider.notifier).beepable;
+    ref.watch(liveSessionsProvider);
+    final showBeep = coachLiveBarShowsBeep(coachLed, beepable);
+
     return Positioned(
       left: 12,
       right: 12,
@@ -162,9 +177,20 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const Expanded(child: BeepBar(exerciseNames: [], focusIndex: 0)),
+              Expanded(
+                child: showBeep
+                    ? const BeepBar(exerciseNames: [], focusIndex: 0)
+                    : Text(
+                        coachStartedWorkoutLabel,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.txt,
+                        ),
+                      ),
+              ),
               IconButton(
                 tooltip: "Message your coach",
                 onPressed: widget.onOpenChat,
