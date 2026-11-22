@@ -121,7 +121,7 @@ serve(async (req) => {
           if (!person.phone) {
             result.sms.skipped += 1;
             result.sms.skippedNoPhone += 1;
-          } else if (!person.smsOptIn || person.smsOptedOut) {
+          } else if (person.smsDeclined || !person.smsOptIn || person.smsOptedOut) {
             result.sms.skipped += 1;
             result.sms.skippedOptOut += 1;
           } else if (quiet) {
@@ -193,16 +193,20 @@ async function loadPeople(admin: any, ids: string[]) {
     .in("id", ids);
   const { data: clients } = await admin
     .from("clients")
-    .select("profile_id, sms_opt_in")
+    .select("profile_id, sms_opt_in, sms_declined_at")
     .in("profile_id", ids);
-  const opted = new Map((clients ?? []).map((row: { profile_id: string; sms_opt_in?: boolean }) => [row.profile_id, row.sms_opt_in === true]));
-  return (profiles ?? []).map((row: { id: string; email?: string; phone?: string; sms_opted_out?: boolean; sms_consent_at?: string }) => ({
-    id: row.id,
-    email: String(row.email ?? "").trim(),
-    phone: String(row.phone ?? "").trim(),
-    smsOptedOut: row.sms_opted_out === true,
-    smsOptIn: row.sms_consent_at != null || opted.get(row.id) === true,
-  }));
+  const opted = new Map((clients ?? []).map((row: { profile_id: string; sms_opt_in?: boolean; sms_declined_at?: string | null }) => [row.profile_id, row]));
+  return (profiles ?? []).map((row: { id: string; email?: string; phone?: string; sms_opted_out?: boolean; sms_consent_at?: string }) => {
+    const client = opted.get(row.id);
+    return {
+      id: row.id,
+      email: String(row.email ?? "").trim(),
+      phone: String(row.phone ?? "").trim(),
+      smsOptedOut: row.sms_opted_out === true,
+      smsDeclined: client?.sms_declined_at != null,
+      smsOptIn: row.sms_consent_at != null || client?.sms_opt_in === true,
+    };
+  });
 }
 
 // deno-lint-ignore no-explicit-any

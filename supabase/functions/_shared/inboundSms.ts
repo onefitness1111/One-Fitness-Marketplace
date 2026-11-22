@@ -12,6 +12,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ThreadBook, hasSmsConsent } from "./chatRouting.mjs";
 import { BUSINESS_NAME, markOptIn, markOptOut, toE164 } from "./chatPeople.ts";
 import { publicCoachName } from "./coachName.ts";
+import { deliverHeldStaffSms, recordInviteYes } from "./inviteSms.ts";
 import { sendSms } from "./sendSms.ts";
 import { describeWebhookUrl, twilioSignatureMatches, webhookCandidates } from "./twilioWebhookUrl.ts";
 
@@ -119,9 +120,17 @@ export async function handleInbound(req: Request): Promise<Response> {
       .is("deleted_at", null);
     if (profileErr) throw profileErr;
 
-    const { data: clientRows } = await admin.from("clients").select("profile_id, sms_opt_in");
-    const optedIn = new Set(
-      (clientRows ?? []).filter((row: { sms_opt_in?: boolean }) => row.sms_opt_in === true).map((row: { profile_id: string }) => row.profile_id),
+    const { data: clientRows } = await admin
+      .from("clients")
+      .select("profile_id, sms_opt_in, sms_declined_at, sms_invite_sent_at, sms_invite_text");
+    const clientById = new Map(
+      (clientRows ?? []).map((row: {
+        profile_id: string;
+        sms_opt_in?: boolean;
+        sms_declined_at?: string | null;
+        sms_invite_sent_at?: string | null;
+        sms_invite_text?: string | null;
+      }) => [row.profile_id, row]),
     );
 
     const people = new Map<string, {
@@ -132,6 +141,9 @@ export async function handleInbound(req: Request): Promise<Response> {
       phone: string;
       optedOut: boolean;
       hasConsent: boolean;
+      declined: boolean;
+      inviteSentAt: string | null;
+      inviteText: string | null;
     }>();
 
     for (const profile of profiles ?? []) {
@@ -145,6 +157,7 @@ export async function handleInbound(req: Request): Promise<Response> {
         displayName = await publicCoachName(admin, id);
         coachName = displayName;
       }
+      const client = clientById.get(id);
       people.set(id, {
         id,
         role,
@@ -152,10 +165,13 @@ export async function handleInbound(req: Request): Promise<Response> {
         coachName,
         phone: String(profile.phone || "").trim(),
         optedOut: profile.sms_opted_out === true,
+        declined: client?.sms_declined_at != null,
+        inviteSentAt: client?.sms_invite_sent_at ?? null,
+        inviteText: client?.sms_invite_text ?? null,
         hasConsent: hasSmsConsent({
           role,
           smsConsentAt: profile.sms_consent_at,
-          smsOptIn: optedIn.has(id),
+          smsOptIn: client?.sms_opt_in === true,
         }),
       });
     }
@@ -214,6 +230,19 @@ export async function handleInbound(req: Request): Promise<Response> {
 
     if (result.kind === "stop" && fromId) await markOptOut(admin, fromId as string);
     if (result.kind === "start" && fromId) await markOptIn(admin, fromId as string);
+    if (result.kind === "invite-yes" && fromId) {
+      const person = people.get(fromId as string);
+      const claimed = await recordInviteYes(admin, fromId as string, person?.inviteText ?? null);
+      if (claimed && person) {
+        const phone = person.phone || from;
+        if (result.confirmation) await sendSms(toE164(phone) || "", result.confirmation);
+        await deliverHeldStaffSms(admin, fromId as string, phone, async (senderId) => {
+          const known = people.get(senderId);
+          if (!known) return null;
+          return { id: known.id, role: known.role, displayName: known.displayName };
+        });
+      }
+    }
 
     for (const message of book.messages.slice(beforeMessages)) {
       const row = rowFor(message, people);
@@ -260,7 +289,7 @@ export async function handleInbound(req: Request): Promise<Response> {
         kind: result.kind === "lead" ? "lead" : "business",
       });
     }
-    if (result.kind === "stop" || result.kind === "help" || result.kind === "start") {
+    if (result.kind === "stop" || result.kind === "help" || result.kind === "start" || result.kind === "invite-yes") {
       await admin.from("lead_sms").insert({
         phone: from,
         sender_id: (fromId as string | null) || null,

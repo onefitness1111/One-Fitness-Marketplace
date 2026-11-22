@@ -11,17 +11,27 @@
 // input we trust is a message id. Everything else is re-read with the
 // service key. A repeat call for the same message does not text twice.
 //
-// Likes never call this. A client who has opted out, or who has not agreed
-// to texts, is not texted. A coach or the owner is texted when they have a
-// phone and have not opted out. A client's message to staff is texted
-// whatever channel the client picked. The app thread is unaffected.
+// Likes never call this. A client who already agreed is texted the message.
+// A client who has never answered gets one invite instead, and the message
+// is held. STOP, an opt-out, or turning texts off in the app gets nothing.
+// "Not now" is not a decline. A coach or the owner is texted when they have
+// a phone and have not opted out. A client's message to staff is texted
+// whatever channel the client picked. Coach assignment is not checked.
+// The app thread is unaffected.
 // The staff push is claimed per message so client-notify does not push twice.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { clientToStaff, planTextsForSavedMessage } from "../_shared/chatRouting.mjs";
 import { lineType, loadCoaches, loadParty, toE164 } from "../_shared/chatPeople.ts";
+import {
+  claimInviteSend,
+  deliverHeldStaffSms,
+  markMessageSmsPending,
+  rollbackInviteSend,
+} from "../_shared/inviteSms.ts";
 import { sendSms } from "../_shared/sendSms.ts";
+import { INVITE_SMS_BODY } from "../_shared/smsInvite.mjs";
 import { pushStaffForClientMessage } from "../_shared/staffAlert.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -136,12 +146,46 @@ serve(async (req) => {
     }
 
     if (!includeSms) return await record("skipped: sms not chosen");
+
+    if (plan.clientSms === "invite" || plan.clientSms === "hold") {
+      const to = recipient ? toE164(recipient.phone) : null;
+      if (!to) return await record("skipped: no mobile number");
+      const sid = Deno.env.get("TWILIO_ACCOUNT_SID");
+      const token = Deno.env.get("TWILIO_AUTH_TOKEN");
+      const from = Deno.env.get("TWILIO_FROM_NUMBER");
+      if (sid && token) {
+        const type = await lineType(sid, token, to);
+        if (type === "landline" || type === "fixedVoip") return await record("skipped: no mobile number");
+      }
+      await markMessageSmsPending(admin, messageId);
+      if (plan.clientSms === "hold") return await record("held: waiting for yes");
+      if (!sid || !token || !from) return await record("skipped: twilio not configured");
+      const claimedAt = recipient ? await claimInviteSend(admin, recipient.id) : null;
+      if (!claimedAt) return await record("held: invite already sent");
+      const invited = await sendSms(to, INVITE_SMS_BODY);
+      if (!invited) {
+        await rollbackInviteSend(admin, recipient!.id, claimedAt);
+        return await record("skipped: invite not sent");
+      }
+      return await record("invite sent");
+    }
+
     if (plan.sms.length === 0) return await record("skipped: recipient cannot be texted");
 
     const sid = Deno.env.get("TWILIO_ACCOUNT_SID");
     const token = Deno.env.get("TWILIO_AUTH_TOKEN");
     const from = Deno.env.get("TWILIO_FROM_NUMBER");
     if (!sid || !token || !from) return await record("skipped: twilio not configured");
+
+    // Messages held before they agreed go out first, in thread order.
+    if (recipient?.role === "client" && recipient.hasConsent === true && recipient.optedOut !== true && recipient.declined !== true) {
+      await deliverHeldStaffSms(admin, recipient.id, recipient.phone, async (senderId: string) => {
+        if (senderId === sender.id) return { id: sender.id, role: sender.role, displayName: sender.displayName };
+        const party = await loadParty(admin, senderId);
+        if (!party) return null;
+        return { id: party.id, role: party.role, displayName: party.displayName };
+      });
+    }
 
     let sent = 0;
     for (const item of plan.sms) {
@@ -153,8 +197,8 @@ serve(async (req) => {
         console.log(`chat-auto-reply-sms: skipped landline for ${item.toId}`);
         continue;
       }
-      await sendSms(to, item.body);
-      sent += 1;
+      const ok = await sendSms(to, item.body);
+      if (ok) sent += 1;
     }
     return await record(sent > 0 ? `sent ${sent}` : "skipped: no mobile number");
   } catch (e) {

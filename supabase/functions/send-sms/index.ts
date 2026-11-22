@@ -39,10 +39,10 @@ serve(async (req) => {
       .maybeSingle();
     const { data: clientRow } = await admin
       .from("clients")
-      .select("sms_opt_in")
+      .select("sms_opt_in, sms_declined_at")
       .eq("profile_id", member.id)
       .maybeSingle();
-    const optedOut = gate?.sms_opted_out === true;
+    const optedOut = gate?.sms_opted_out === true || clientRow?.sms_declined_at != null;
     // Clients still need a consent record. A coach or the owner is textable
     // with a phone number unless they opted out.
     const consented = hasSmsConsent({
