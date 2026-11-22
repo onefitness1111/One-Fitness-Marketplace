@@ -135,6 +135,9 @@ serve(async (req) => {
         if (!ways.app && !includeSms) continue;
 
         const savedChannel = [ways.app ? "inapp" : null, includeSms ? "sms" : null].filter(Boolean).join(",");
+        // trainer_id is the sender. chat-auto-reply-sms then texts the client
+        // on this row. A broadcast does not invite someone who has not
+        // opted in; includeSms is set only when they already agreed.
         const { error } = await admin.from("messages").insert({
           client_id: person.id,
           trainer_id: userId,

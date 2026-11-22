@@ -12,17 +12,19 @@
 // service key. A repeat call for the same message does not text twice.
 //
 // Likes never call this. A client who already agreed is texted the message.
-// A client who has never answered gets one invite instead, and the message
-// is held. STOP, an opt-out, or turning texts off in the app gets nothing.
-// "Not now" is not a decline. A coach or the owner is texted when they have
-// a phone and have not opted out. A client's message to staff is texted
-// whatever channel the client picked. Coach assignment is not checked.
-// The app thread is unaffected.
+// A client who has never answered is not texted an invite unless every
+// gate passes: never invited, sms_declined_at is null, not opted out, and
+// app_config.sms_invite_enabled is true. That flag defaults to false, so
+// the message stays in the app until Coach Chris turns invites on. STOP,
+// an opt-out, or turning texts off gets nothing. "Not now" is not a decline.
+// Staff (the owner or any coach) text the client on the thread, even when
+// trainer_id is a different coach. A client's message still texts staff.
+// Coach assignment is not checked. The app thread is unaffected.
 // The staff push is claimed per message so client-notify does not push twice.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { clientToStaff, planTextsForSavedMessage } from "../_shared/chatRouting.mjs";
+import { clientToStaff, planTextsForSavedMessage, smsRecipientId } from "../_shared/chatRouting.mjs";
 import { lineType, loadCoaches, loadParty, toE164 } from "../_shared/chatPeople.ts";
 import {
   claimInviteSend,
@@ -31,7 +33,7 @@ import {
   rollbackInviteSend,
 } from "../_shared/inviteSms.ts";
 import { sendSms } from "../_shared/sendSms.ts";
-import { INVITE_SMS_BODY } from "../_shared/smsInvite.mjs";
+import { INVITE_SMS_BODY, smsInviteEnabledFlag } from "../_shared/smsInvite.mjs";
 import { pushStaffForClientMessage } from "../_shared/staffAlert.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,13 +47,20 @@ function channelHasSms(channel: string | null): boolean {
   return tokens.includes("sms") || tokens.includes("inappsms") || tokens.includes("both");
 }
 
+// Missing row, a failed read, or anything other than boolean true stays off.
 // deno-lint-ignore no-explicit-any
-function recipientId(msg: any, senderId: string): string | null {
-  const clientId = msg.client_id as string | null;
-  const trainerId = msg.trainer_id as string | null;
-  if (senderId !== clientId && senderId !== trainerId) return trainerId;
-  if (senderId === clientId) return trainerId;
-  return clientId;
+async function loadSmsInviteEnabled(admin: any): Promise<boolean> {
+  try {
+    const { data, error } = await admin
+      .from("app_config")
+      .select("sms_invite_enabled")
+      .eq("id", "mobile")
+      .maybeSingle();
+    if (error) return false;
+    return smsInviteEnabledFlag(data);
+  } catch {
+    return false;
+  }
 }
 
 serve(async (req) => {
@@ -102,7 +111,11 @@ serve(async (req) => {
     const sender = await loadParty(admin, msg.sender_id as string);
     if (!sender) return await record("skipped: sender missing");
 
-    const otherId = recipientId(msg, sender.id);
+    const otherId = smsRecipientId({
+      sender,
+      clientId: msg.client_id as string | null,
+      trainerId: msg.trainer_id as string | null,
+    });
     let recipient = otherId ? await loadParty(admin, otherId) : null;
     if (!recipient && msg.routed_to === "business") {
       const { data: owner } = await admin.from("profiles").select("id").eq("role", "owner").is("deleted_at", null).limit(1).maybeSingle();
@@ -112,6 +125,7 @@ serve(async (req) => {
     const coaches = sender.role === "owner" ? await loadCoaches(admin) : [];
     const relayToStaff = clientToStaff(sender, recipient);
     const includeSms = relayToStaff || channelHasSms(msg.channel as string | null);
+    const inviteEnabled = await loadSmsInviteEnabled(admin);
     const plan = planTextsForSavedMessage({
       sender,
       recipient,
@@ -121,6 +135,7 @@ serve(async (req) => {
       coaches,
       includeSms,
       groupName: msg.group_name,
+      inviteEnabled,
     });
 
     for (const copy of plan.passAlong) {
@@ -146,6 +161,13 @@ serve(async (req) => {
     }
 
     if (!includeSms) return await record("skipped: sms not chosen");
+
+    if (plan.clientSms === "disabled" || (plan.clientSms === "invite" && inviteEnabled !== true)) {
+      const to = recipient ? toE164(recipient.phone) : null;
+      if (!to) return await record("skipped: no mobile number");
+      await markMessageSmsPending(admin, messageId);
+      return await record("held: invites off");
+    }
 
     if (plan.clientSms === "invite" || plan.clientSms === "hold") {
       const to = recipient ? toE164(recipient.phone) : null;

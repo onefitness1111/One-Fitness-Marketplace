@@ -81,6 +81,11 @@ $$;
 
 revoke all on function public.preserve_session_override_on_plan_change() from public, anon, authenticated;
 
+-- Runs as postgres with no signed-in user. Live guards
+-- prevent_membership_self_grant and prevent_owner_only_client_field_edit
+-- copy plans and session_count_override back unless auth.role() is
+-- service_role. Both settings are local to this migration transaction.
+-- Safe to run again: a client whose override is already null is skipped.
 do $$
 declare
   r record;
@@ -90,7 +95,15 @@ declare
   stamped boolean;
   i integer;
   n integer;
+  after_override integer;
+  after_plans jsonb;
+  attempted integer := 0;
+  moved integer := 0;
+  still_on_client integer := 0;
 begin
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform set_config('request.jwt.claim.role', 'service_role', true);
+
   for r in
     select profile_id,
            coalesce(plans, '[]'::jsonb) as plans,
@@ -100,6 +113,7 @@ begin
     from public.clients
     where session_count_override is not null
   loop
+    attempted := attempted + 1;
     target := r.membership_plan_id;
     if target is null then
       select e->>'planId' into target
@@ -148,8 +162,33 @@ begin
            session_count_override = null,
            session_count_override_month = null
      where profile_id = r.profile_id;
+
+    select c.session_count_override, coalesce(c.plans, '[]'::jsonb)
+      into after_override, after_plans
+    from public.clients c
+    where c.profile_id = r.profile_id;
+
+    if after_override is null and exists (
+      select 1
+      from jsonb_array_elements(after_plans) e
+      where e->>'maxSessionsOverride' = r.session_count_override::text
+    ) then
+      moved := moved + 1;
+    end if;
   end loop;
+
+  select count(*) into still_on_client
+  from public.clients
+  where session_count_override is not null;
+
+  raise notice 'membership rollover: moved % session_count_override value(s) onto a plan entry (% attempted, % still on clients)',
+    moved, attempted, still_on_client;
 end $$;
+
+-- After apply, this is the count still sitting on the client. It should be 0.
+-- select count(*) as still_on_client
+-- from public.clients
+-- where session_count_override is not null;
 
 drop trigger if exists trg_preserve_session_override on public.clients;
 create trigger trg_preserve_session_override
