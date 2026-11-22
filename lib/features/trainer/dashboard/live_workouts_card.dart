@@ -137,6 +137,10 @@ class LiveWorkoutPage extends ConsumerWidget {
               initialDayId: dayId,
               emptyProgramText: "This client doesn't have an active workout program yet.",
               onSave: save,
+              // Ending from Watch live goes back to the dashboard.
+              onEnded: () {
+                if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+              },
             ),
     );
   }
