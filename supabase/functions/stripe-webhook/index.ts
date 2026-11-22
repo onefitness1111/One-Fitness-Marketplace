@@ -16,6 +16,13 @@ import { sendEmail } from "../_shared/sendEmail.ts";
 import { swapMembershipEnrollment, clientBySubscription, nextSlotHolder } from "../_shared/planEnrollments.ts";
 import { sendSms } from "../_shared/sendSms.ts";
 import { sendPush } from "../_shared/sendPush.ts";
+import {
+  backfillSubscriptionLink,
+  decideTakesSlot,
+  resolveSubscriptionId,
+  subscriptionIdFromInvoice,
+  subscriptionMetadataFromInvoice,
+} from "../_shared/stripeSubscriptionRef.mjs";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2024-06-20",
@@ -135,6 +142,43 @@ async function applyRollover(admin: any, clientRow: any, subscriptionId: string)
   }
 }
 
+// deno-lint-ignore no-explicit-any
+function customerIdOf(customer: any): string | null {
+  if (typeof customer === "string") return customer;
+  return customer?.id ?? null;
+}
+
+/// Backfills a subscription id onto the plan entry it pays for, and onto the
+/// primary slot when the slot holds that plan and has none. The client and
+/// plan come from the subscription's own metadata (profile_id, plan_id),
+/// which create-payment-intent writes. Never overwrites an entry that is
+/// already linked to another subscription. Best-effort: a failure is logged
+/// and never fails the event it rides on.
+async function linkSubscription(subscriptionId: string, meta: Record<string, string>, customerId: string | null): Promise<void> {
+  const profileId = meta?.profile_id;
+  const planId = meta?.plan_id;
+  if (!subscriptionId || !profileId || !planId) return;
+  try {
+    const { data: row, error } = await admin.from("clients")
+      .select("profile_id, plans, membership_plan_id, stripe_subscription_id, stripe_customer_id")
+      .eq("profile_id", profileId).maybeSingle();
+    if (error) throw error;
+    if (!row) return;
+    if (customerId && row.stripe_customer_id && row.stripe_customer_id !== customerId) {
+      console.error(`stripe-webhook: not linking ${subscriptionId}: customer does not match ${profileId}`);
+      return;
+    }
+    // deno-lint-ignore no-explicit-any
+    const update: Record<string, any> | null = backfillSubscriptionLink(row, planId, subscriptionId);
+    if (!update) return;
+    const { error: upErr } = await admin.from("clients").update(update).eq("profile_id", profileId);
+    if (upErr) throw upErr;
+    console.log(`stripe-webhook: linked subscription ${subscriptionId} to plan ${planId} for ${profileId}${update.stripe_subscription_id ? " (primary slot)" : ""}`);
+  } catch (e) {
+    console.error("stripe-webhook: subscription link failed:", e instanceof Error ? e.message : String(e));
+  }
+}
+
 serve(async (req) => {
   const signature = req.headers.get("stripe-signature");
   const body = await req.text();
@@ -191,16 +235,24 @@ serve(async (req) => {
         // Only the intent that create-payment-intent built carries plan_id.
         // Renewal invoices produce their own intents without it, so those
         // fall through to the invoice.paid handler instead of re-granting.
-        const invoiceId = typeof (pi as unknown as { invoice?: string }).invoice === "string"
-          ? (pi as unknown as { invoice: string }).invoice
-          : null;
-        if (invoiceId) {
-          try {
-            const inv = await stripe.invoices.retrieve(invoiceId);
-            subscriptionId = typeof inv.subscription === "string" ? inv.subscription : null;
-          } catch (invErr) {
-            console.error("stripe-webhook: couldn't read invoice for intent:", invErr instanceof Error ? invErr.message : String(invErr));
-          }
+        //
+        // Which subscription this intent paid for. The event payload uses
+        // the webhook endpoint's API version, and on 2025-03-31 or later a
+        // PaymentIntent no longer has `invoice`, so reading it straight off
+        // the event left every new membership without its subscription id.
+        // create-payment-intent now writes metadata.subscription_id; older
+        // intents fall back to re-reading the intent through this SDK, which
+        // is pinned to 2024-06-20 and still returns `invoice`.
+        // Only membership purchases need this. Balance payments, single
+        // sessions and products return before the id is used.
+        if (meta.plan_id && meta.profile_id) {
+          const resolved = await resolveSubscriptionId(pi, {
+            retrievePaymentIntent: (id: string) => stripe.paymentIntents.retrieve(id),
+            retrieveInvoice: (id: string) => stripe.invoices.retrieve(id),
+            log: (m: string) => console.error(`stripe-webhook: ${m}`),
+          });
+          subscriptionId = resolved.subscriptionId;
+          if (subscriptionId) console.log(`stripe-webhook: intent ${pi.id} is for subscription ${subscriptionId} (from ${resolved.source})`);
         }
         sessionMode = subscriptionId ? "subscription" : "payment";
       }
@@ -364,10 +416,35 @@ serve(async (req) => {
         // and its own subscription. It takes the slot only when the slot is
         // empty, or (for a membership) when the slot holds something with no
         // subscription behind it — a free, coach-assigned or package plan.
-        const slotHasPaidMembership = !!existing?.membership_plan_id && !!existing?.stripe_subscription_id;
-        const takesSlot = !isProgram && (
-          !existing?.membership_plan_id || (isMembership && !slotHasPaidMembership)
-        );
+        //
+        // "Paid" used to mean only "has stripe_subscription_id". When that id
+        // failed to link, a second membership bought the same day pushed the
+        // first, paid one out of the slot. So a slot plan also counts as paid
+        // when its entry carries a subscriptionId, or when this app recorded
+        // a Stripe purchase for it on or after that entry's start date.
+        // The extra lookup only runs when the answer could change the result.
+        const slotPlanId: string | null = existing?.membership_plan_id ?? null;
+        let slotPaidInApp = false;
+        if (!isProgram && isMembership && slotPlanId && slotPlanId !== planId && !existing?.stripe_subscription_id) {
+          // deno-lint-ignore no-explicit-any
+          const slotEntry = enrollments.find((e: any) => e?.planId === slotPlanId && e?.status === "active");
+          if (slotEntry?.subscriptionId) {
+            slotPaidInApp = true;
+          } else {
+            let paidQuery = admin.from("charges").select("id")
+              .eq("client_id", profileId).eq("plan_id", slotPlanId).eq("type", "purchase")
+              .not("stripe_payment_intent_id", "is", null);
+            if (slotEntry?.startDate) paidQuery = paidQuery.gte("date", slotEntry.startDate);
+            const { data: paidRows, error: paidErr } = await paidQuery.limit(1);
+            if (paidErr) throw paidErr;
+            slotPaidInApp = (paidRows ?? []).length > 0;
+          }
+        }
+        const takesSlot = decideTakesSlot({
+          planId, isProgram, isMembership, slotPlanId,
+          slotSubscriptionId: existing?.stripe_subscription_id ?? null,
+          slotPaidInApp,
+        });
 
         const { error: grantErr } = await admin.from("clients").update({
           ...(takesSlot ? { membership_plan_id: planId } : {}),
@@ -409,7 +486,8 @@ serve(async (req) => {
         const date = new Date().toISOString().slice(0, 10);
         const at = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-        const chargeRows = [{
+        // deno-lint-ignore no-explicit-any
+        const chargeRows: Record<string, any>[] = [{
           client_id: profileId,
           client_name: profile?.name || "",
           type: "purchase",
@@ -602,6 +680,13 @@ serve(async (req) => {
     } else if (event.type === "customer.subscription.updated") {
       const subscription = event.data.object as Stripe.Subscription;
 
+      // Case 0 — the first invoice was paid (incomplete -> trialing/active).
+      // Link the subscription to its plan entry if the grant missed it.
+      // Never for incomplete or failed subscriptions.
+      if (["trialing", "active", "past_due"].includes(subscription.status)) {
+        await linkSubscription(subscription.id, (subscription.metadata ?? {}) as Record<string, string>, customerIdOf(subscription.customer));
+      }
+
       // Case 1 — a scheduled end-of-cycle plan change (change-membership-plan,
       // timing:"end_of_cycle") just transitioned: the subscription's price
       // now matches the ephemeral Price we created for phase 2. Stripe
@@ -659,7 +744,13 @@ serve(async (req) => {
       // Dashboard (see supabase/STRIPE_SETUP.md) so Stripe itself doesn't
       // silently retry the charge in the background behind this app's back.
       const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : (invoice.subscription as Stripe.Subscription | null)?.id ?? null;
+      // Either API shape: invoice.subscription or invoice.parent.subscription_details.
+      const subscriptionId = subscriptionIdFromInvoice(invoice);
+      if (subscriptionId && invoice.billing_reason === "subscription_cycle") {
+        // A renewal of a subscription that was paid for once. Link it first
+        // if it was granted without its id, so the failure is attributed.
+        await linkSubscription(subscriptionId, subscriptionMetadataFromInvoice(invoice), customerIdOf(invoice.customer));
+      }
       if (subscriptionId) {
         const clientRow = await clientBySubscription(admin, subscriptionId, "profile_id, membership_plan_id, stripe_subscription_id, sms_opt_in, plans");
         if (clientRow?.profile_id) {
@@ -726,7 +817,8 @@ serve(async (req) => {
       // delivers event types a webhook endpoint is explicitly subscribed
       // to, so this branch is inert (never invoked) until that's done.
       const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : (invoice.subscription as Stripe.Subscription | null)?.id ?? null;
+      // Either API shape: invoice.subscription or invoice.parent.subscription_details.
+      const subscriptionId = subscriptionIdFromInvoice(invoice);
       if (subscriptionId) {
         const clientRow = await clientBySubscription(admin, subscriptionId, "profile_id");
         if (clientRow?.profile_id) {
@@ -750,8 +842,13 @@ serve(async (req) => {
       }
     } else if (event.type === "invoice.paid") {
       const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : (invoice.subscription as Stripe.Subscription | null)?.id ?? null;
+      // Either API shape: invoice.subscription or invoice.parent.subscription_details.
+      const subscriptionId = subscriptionIdFromInvoice(invoice);
       if (subscriptionId) {
+        // Paid, so the subscription is real. Link it to its plan entry if it
+        // was granted without its id (the lookups below depend on it).
+        await linkSubscription(subscriptionId, subscriptionMetadataFromInvoice(invoice), customerIdOf(invoice.customer));
+
         // Clears an outstanding balance once it's actually settled — either
         // the client paid the same failed invoice via its hosted link, or a
         // later renewal succeeded. Only acts if the flag was actually set;

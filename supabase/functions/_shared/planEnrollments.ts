@@ -3,7 +3,8 @@
 // Packages and programs in the same list are left alone.
 //
 // Copied from the live change-membership-plan bundle so that function can
-// be deployed from this repo. Not deployed by this change.
+// be deployed from this repo. clientBySubscription and nextSlotHolder are
+// copied from the live stripe-webhook bundle for the same reason.
 
 // deno-lint-ignore no-explicit-any
 type Enrollment = Record<string, any>;

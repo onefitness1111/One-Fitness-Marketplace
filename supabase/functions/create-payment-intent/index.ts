@@ -450,7 +450,7 @@ serve(async (req) => {
       clientSecret = intent?.client_secret ?? null;
       amountCents = invoice?.amount_due ?? 0;
       if (clientSecret) {
-        await stripe.paymentIntents.update(intent!.id, { metadata, ...(receiptText ? { description: receiptText } : {}) });
+        await stripe.paymentIntents.update(intent!.id, { metadata: { ...metadata, subscription_id: subscription.id }, ...(receiptText ? { description: receiptText } : {}) });
       }
 
       const nextChargeCents = schedule

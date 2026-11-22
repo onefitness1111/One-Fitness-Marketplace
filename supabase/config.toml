@@ -35,3 +35,7 @@ verify_jwt = false
 # Owner asks non-consented clients, by push only, to open the SMS opt-in.
 [functions.prompt-sms-opt-in]
 verify_jwt = true
+
+# Stripe posts here with no JWT. The function checks Stripe's signature.
+[functions.stripe-webhook]
+verify_jwt = false
