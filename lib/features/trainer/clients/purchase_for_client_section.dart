@@ -117,7 +117,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
     // it (see enroll-free-plan / stripe-webhook, which keep the two apart).
     // Staff can't assign a plan that is no longer on sale either — the
     // server refuses it, so offering it here would only produce an error.
-    final plans = ref.watch(membershipPlansProvider).where((p) => !p.archived && planOnSale(p, isoToday())).toList()
+    final plans = ref.watch(membershipPlansProvider).where((p) => planAssignableByStaff(p) && planOnSale(p, isoToday())).toList()
       ..sort((a, b) => a.kind.index.compareTo(b.kind.index));
     // Grouped the same way, and in the same order, as the client's own
     // Access Hub — a coach picking a plan for someone should be looking at
@@ -178,7 +178,15 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      child: Row(
+                        children: [
+                          Flexible(child: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13), overflow: TextOverflow.ellipsis)),
+                          if (p.status == PlanStatus.ghost) ...[
+                            const SizedBox(width: 6),
+                            const Tag(text: "Ghost"),
+                          ],
+                        ],
+                      ),
                     ),
                     Text(
                       p.priceCents > 0 ? "\$${(p.priceCents / 100).toStringAsFixed(2)}${p.kind == PlanKind.membership ? '/mo' : ''}" : "Free",

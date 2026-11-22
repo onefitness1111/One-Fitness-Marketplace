@@ -103,7 +103,11 @@ void _subscribeRealtimeUpdates(Ref ref) {
         schema: "public",
         table: "membership_plans",
         callback: (payload) async {
-          final plans = await SupabaseService.loadMembershipPlans();
+          var rows = await SupabaseService.fetchPlanRows();
+          if (ref.read(roleProvider) == "client") {
+            rows = mergeHeldGhostRows(rows, await SupabaseService.fetchHeldGhostPlanRows());
+          }
+          final plans = SupabaseService.plansFromRows(rows);
           if (plans.isNotEmpty) ref.read(membershipPlansProvider.notifier).setAll(plans);
         },
       )
@@ -619,6 +623,7 @@ Future<void> _openClient({
   Future<List<Map<String, dynamic>>>? clientF,
   Future<List<Map<String, dynamic>>>? homeRecordF,
 }) async {
+  final heldF = SupabaseService.fetchHeldGhostPlanRows();
   clientF ??= _timed(
     "client-row",
     SupabaseService.fetchClientRows([me], includeBilling: false),
@@ -631,7 +636,7 @@ Future<void> _openClient({
   );
   final clientRows = await clientF;
   final bookingRows = await bookingF;
-  final planRows = await planF;
+  final planRows = mergeHeldGhostRows(await planF, await heldF);
   if (generation != _loadGeneration) return;
   final homeRows = await _ifReady(homeRecordF);
   final profile = SupabaseService.provisionalProfile(role: "client");
@@ -1413,8 +1418,12 @@ Future<void> _loadSection(_Hold hold, int generation, GymSection section) async 
           });
         }
       case GymSection.plans:
-        final rows = SupabaseService.plansFromRows(await SupabaseService.fetchPlanRows());
-        if (generation == _loadGeneration) hold.plans.setAll(rows);
+        var rows = await SupabaseService.fetchPlanRows();
+        if (hold.ownClientId != null) {
+          rows = mergeHeldGhostRows(rows, await SupabaseService.fetchHeldGhostPlanRows());
+        }
+        final plans = SupabaseService.plansFromRows(rows);
+        if (generation == _loadGeneration) hold.plans.setAll(plans);
       case GymSection.waivers:
         final rows = SupabaseService.waiversFromRows(await SupabaseService.fetchWaiverRows());
         if (generation == _loadGeneration) hold.waivers.setAll(rows);

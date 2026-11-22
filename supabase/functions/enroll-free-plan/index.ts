@@ -8,6 +8,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
+import { assertPlanPurchasable } from "../_shared/planVisibility.mjs";
 import { nextPlanEnrollments } from "../_shared/membershipRollover.mjs";
 
 const CORS_HEADERS = {
@@ -54,7 +55,7 @@ serve(async (req) => {
     const { data: planRow } = await admin.from("membership_plans").select("data").eq("id", planId).maybeSingle();
     const plan = planRow?.data;
     if (!plan) throw new Error("Plan not found.");
-    if (plan.archived) throw new Error("That plan is no longer available.");
+    assertPlanPurchasable(plan, { staffEnrollingClient: callerIsStaff && targetId !== user.id });
     assertPlanOnSale(plan);
     if ((plan.priceCents || 0) > 0 && callerRole !== "owner") {
       throw new Error("Only the owner can give a paid plan away for free. Coaches charge the plan's set price.");

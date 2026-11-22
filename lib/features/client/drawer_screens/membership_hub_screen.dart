@@ -603,7 +603,7 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
     // one still sees it above under "Your Membership", which reads from
     // their own plan id rather than this list.
     final today = isoToday();
-    final buyable = plans.where((p) => !p.archived && !isProgramKind(p.kind) && planOnSale(p, today)).toList();
+    final buyable = plans.where((p) => planInClientCatalog(p) && !isProgramKind(p.kind) && planOnSale(p, today)).toList();
     final filteredBuyable = applyPlanFilter(buyable, _filter);
     // Regrouped from the *filtered* list, so the tiles only ever offer
     // categories that survive the current Memberships/Packages filter.
@@ -729,7 +729,7 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
       // (clearly marked) is the point of this screen: a client asking
       // "what else could I do here?" gets a real answer instead of a list
       // silently filtered down to what the checkout happens to support.
-      final visible = plans.where((p) => !p.archived && p.public && planOnSale(p, isoToday())).toList()
+      final visible = plans.where((p) => planInClientCatalog(p) && p.public && planOnSale(p, isoToday())).toList()
         ..sort((a, b) => a.kind.index.compareTo(b.kind.index));
       final catalogGroups = _groupByCategory(visible, ref.watch(packageCategoriesProvider));
       return LocalBackScope(
