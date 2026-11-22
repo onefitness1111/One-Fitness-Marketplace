@@ -22,6 +22,7 @@ import {
   renewalOffer,
   renewalOfferFromSettings,
 } from "../_shared/packageRenewal.ts";
+import { planStatus } from "../_shared/planVisibility.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -43,7 +44,7 @@ function activePackages(plansJson: unknown, planById: Map<string, any>) {
   for (const e of active) {
     const planId = String(e.planId);
     const plan = planById.get(planId);
-    if (!plan || plan.kind !== "package" || plan.archived) continue;
+    if (!plan || plan.kind !== "package" || planStatus(plan) === "archived") continue;
     if (seen.has(planId)) continue;
     const start = String(e.startDate || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) continue;

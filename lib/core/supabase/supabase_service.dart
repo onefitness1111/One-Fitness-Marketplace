@@ -1167,6 +1167,22 @@ class SupabaseService {
   static Future<List<MembershipPlan>> loadMembershipPlans() async =>
       plansFromRows(await fetchPlanRows());
 
+  /// Ghost plans the signed-in client already holds.
+  ///
+  /// The catalog query hides those rows from clients, including app 1.1.3.
+  /// This read is only the caller's own plans, so the current-plan card,
+  /// session count, and renewal still have the plan to show. Staff get an
+  /// empty list; they already see every plan. A database that does not have
+  /// the function yet returns nothing rather than failing the screen.
+  static Future<List<Map<String, dynamic>>> fetchHeldGhostPlanRows() async {
+    try {
+      final raw = await client.rpc("my_held_plan_rows");
+      return _rowList(raw);
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Writes the owner's chosen plan order, as a `sortOrder` on each plan.
   ///
   /// Gapped by ten so a single plan can later be slotted between two others
@@ -5809,6 +5825,7 @@ class SupabaseService {
     "termMonths": p.termMonths,
     "allowedTypes": p.allowedTypes,
     "priceCents": p.priceCents,
+    "status": p.status.name,
     "archived": p.archived,
     "feeItemProductId": p.feeItemProductId,
     "category": p.category,
@@ -7168,7 +7185,7 @@ class SupabaseService {
           .whereType<String>()
           .toList(),
       priceCents: _asInt(j["priceCents"]) ?? 0,
-      archived: j["archived"] as bool? ?? false,
+      status: resolvePlanStatus(j["status"], archived: j["archived"] == true),
       paymentType: j["paymentType"] as String?,
       feeItemProductId: j["feeItemProductId"] as String?,
       category: j["category"] as String?,

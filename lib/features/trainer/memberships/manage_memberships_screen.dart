@@ -60,12 +60,15 @@ class _ManageMembershipsScreenState
   String? _creatingInCategory;
   String? _pendingCategory;
   bool _categoryBusy = false;
+  int _statusTab = 0;
+
+  PlanStatus get _tabStatus => PlanStatus.values[_statusTab];
 
   /// "+ Plan" on a category: choose a plan that already exists to file under
   /// it, or create a brand-new one there.
   Future<void> _addPlanToCategory(String category) async {
     final all = ref.read(membershipPlansProvider);
-    final candidates = all.where((p) => !p.archived && (p.category ?? "").trim() != category).toList()
+    final candidates = all.where((p) => planAssignableByStaff(p) && (p.category ?? "").trim() != category).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final picked = await showModalBottomSheet<Object>(
       context: context,
@@ -291,7 +294,7 @@ class _ManageMembershipsScreenState
     if (confirmed != true || !mounted) return;
     try {
       if (inUse > 0) {
-        final archived = _withArchived(p, true);
+        final archived = p.copyWith(status: PlanStatus.archived);
         await SupabaseService.upsertMembershipPlan(archived);
         ref.read(membershipPlansProvider.notifier).upsert(archived);
       } else {
@@ -313,56 +316,28 @@ class _ManageMembershipsScreenState
     if (mounted) setState(() => _editing = null);
   }
 
-  Future<void> _restore(MembershipPlan p) async {
-    final restored = _withArchived(p, false);
+  Future<void> _setStatus(MembershipPlan p, PlanStatus status) async {
+    if (p.status == status) return;
+    final next = p.copyWith(status: status);
     try {
-      await SupabaseService.upsertMembershipPlan(restored);
-    } catch (e) {
+      await SupabaseService.upsertMembershipPlan(next);
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "Couldn't restore — check your connection and try again.",
-            ),
-          ),
+          const SnackBar(content: Text("Couldn't update that plan — check your connection and try again.")),
         );
       }
       return;
     }
-    ref.read(membershipPlansProvider.notifier).upsert(restored);
-    if (mounted) setState(() => _editing = null);
+    ref.read(membershipPlansProvider.notifier).upsert(next);
+    if (!mounted) return;
+    final label = switch (status) {
+      PlanStatus.active => "active",
+      PlanStatus.ghost => "ghost",
+      PlanStatus.archived => "archived",
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${p.name} is $label.")));
   }
-
-  MembershipPlan _withArchived(MembershipPlan p, bool archived) =>
-      MembershipPlan(
-        id: p.id,
-        name: p.name,
-        kind: p.kind,
-        description: p.description,
-        startDate: p.startDate,
-        renewalDay: p.renewalDay,
-        maxSessions: p.maxSessions,
-        termMonths: p.termMonths,
-        allowedTypes: p.allowedTypes,
-        priceCents: p.priceCents,
-        archived: archived,
-        paymentType: p.paymentType,
-        feeItemProductId: p.feeItemProductId,
-        category: p.category,
-        allowGuests: p.allowGuests,
-        guestFeeCents: p.guestFeeCents,
-        rolloverEnabled: p.rolloverEnabled,
-        rolloverMaxVisits: p.rolloverMaxVisits,
-        cancellationNoticeDays: p.cancellationNoticeDays,
-        earlyTerminationFeeCents: p.earlyTerminationFeeCents,
-        serviceBalanceEnabled: p.serviceBalanceEnabled,
-        sharingEnabled: p.sharingEnabled,
-        sharingMaxAccounts: p.sharingMaxAccounts,
-        public: p.public,
-        limitOnePerAccount: p.limitOnePerAccount,
-        expirationEnabled: p.expirationEnabled,
-        expirationDays: p.expirationDays,
-      );
 
   /// Returns whether it actually saved, so a caller with its own input to
   /// clear (the custom-name field) doesn't throw away what the user typed
@@ -476,9 +451,7 @@ class _ManageMembershipsScreenState
           onDelete: editingPlan == null
               ? null
               : () => _removeOrArchive(editingPlan),
-          onRestore: editingPlan == null || !editingPlan.archived
-              ? null
-              : () => _restore(editingPlan),
+          initialStatus: editingPlan == null ? _tabStatus : null,
         ),
       );
     }
@@ -491,7 +464,11 @@ class _ManageMembershipsScreenState
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              SectionLabel("Membership Plans (${plans.length})"),
+              SectionLabel("${switch (_tabStatus) {
+                PlanStatus.active => "Active",
+                PlanStatus.ghost => "Ghost",
+                PlanStatus.archived => "Archived",
+              }} plans (${plans.where((p) => p.status == _tabStatus).length})"),
               TextButton.icon(
                 onPressed: () => setState(() => _creating = true),
                 icon: Icon(
@@ -510,9 +487,19 @@ class _ManageMembershipsScreenState
               ),
             ],
           ),
-          const HintBox(
-            text:
-                "Plans with active members can be archived (hidden from new sign-ups) but never deleted — existing members keep working.",
+          SegmentedToggle(
+            key: const Key("plan-status-tabs"),
+            labels: const ["Active", "Ghost", "Archived"],
+            index: _statusTab,
+            onChanged: (i) => setState(() => _statusTab = i),
+          ),
+          const SizedBox(height: 12),
+          HintBox(
+            text: switch (_tabStatus) {
+              PlanStatus.active => "These plans are on the client storefront. People already on a plan keep it if you move it.",
+              PlanStatus.ghost => "Hidden from clients and not for sale to them. You can still assign a ghost plan and charge for it. Anyone already on it keeps billing, sessions, and rollover.",
+              PlanStatus.archived => "Closed to new sales, including staff assignment. People already on an archived plan keep it.",
+            },
           ),
           const SizedBox(height: 14),
           _CategoryManager(
@@ -534,7 +521,21 @@ class _ManageMembershipsScreenState
           // within a category: dragging a plan out of its own group would be
           // a recategorisation, which is what the plan editor is for.
           ...(() {
-            final grouped = _plansByCategory(plans, ref.watch(packageCategoriesProvider));
+            final grouped = _plansByCategory(
+              plans.where((p) => p.status == _tabStatus).toList(),
+              ref.watch(packageCategoriesProvider),
+            );
+            if (grouped.isEmpty) {
+              return [
+                HintBox(
+                  text: switch (_tabStatus) {
+                    PlanStatus.active => "No active plans yet.",
+                    PlanStatus.ghost => "No ghost plans. Move a plan here when clients should not see it, but you still need to assign it.",
+                    PlanStatus.archived => "No archived plans.",
+                  },
+                ),
+              ];
+            }
             return [
               for (final group in grouped) ...[
                 SectionLabel(group.key),
@@ -579,7 +580,7 @@ class _ManageMembershipsScreenState
       builder: (context) {
             final inUse = _membersOn(p.id);
             return Opacity(
-              opacity: p.archived ? 0.55 : 1,
+              opacity: p.status == PlanStatus.archived ? 0.55 : 1,
               child: AppCard(
                 onTap: () => setState(() => _editing = p),
                 child: Row(
@@ -600,7 +601,12 @@ class _ManageMembershipsScreenState
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              if (p.archived)
+                              if (p.status == PlanStatus.ghost)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 6),
+                                  child: Tag(text: "Ghost"),
+                                ),
+                              if (p.status == PlanStatus.archived)
                                 const Padding(
                                   padding: EdgeInsets.only(left: 6),
                                   child: Tag(text: "Archived"),
@@ -639,6 +645,26 @@ class _ManageMembershipsScreenState
                       ],
                     ),
                     const SizedBox(width: 4),
+                    PopupMenuButton<PlanStatus>(
+                      key: Key("plan-status-menu-${p.id}"),
+                      tooltip: "Move plan",
+                      padding: EdgeInsets.zero,
+                      icon: Icon(LucideIcons.moreVertical, size: 16, color: AppColors.mute),
+                      color: AppColors.card,
+                      onSelected: (status) => _setStatus(p, status),
+                      itemBuilder: (context) => [
+                        for (final status in PlanStatus.values)
+                          if (status != p.status)
+                            PopupMenuItem(
+                              value: status,
+                              child: Text(switch (status) {
+                                PlanStatus.active => "Make active",
+                                PlanStatus.ghost => "Make ghost",
+                                PlanStatus.archived => "Archive",
+                              }),
+                            ),
+                      ],
+                    ),
                     Icon(
                       LucideIcons.chevronRight,
                       size: 15,
@@ -663,18 +689,20 @@ class _PlanEditForm extends ConsumerStatefulWidget {
     required this.onCancel,
     required this.onSave,
     required this.onDelete,
-    required this.onRestore,
+    this.initialStatus,
   });
   final MembershipPlan? initial;
 
   /// Set when the form was opened from inside a category section, so a new
   /// plan starts already filed under it.
   final String? initialCategory;
+
+  /// The tab the owner had open when they tapped Plan. A new plan starts there.
+  final PlanStatus? initialStatus;
   final List<Product> products;
   final VoidCallback onCancel;
   final ValueChanged<MembershipPlan> onSave;
   final VoidCallback? onDelete;
-  final VoidCallback? onRestore;
 
   @override
   ConsumerState<_PlanEditForm> createState() => _PlanEditFormState();
@@ -701,7 +729,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
   late final Set<String> _allowedTypes = {
     ...(widget.initial?.allowedTypes ?? []),
   };
-  late bool _archived = widget.initial?.archived ?? false;
+  late PlanStatus _status = widget.initial?.status ?? widget.initialStatus ?? PlanStatus.active;
   String? _category;
   bool _addingCategory = false;
   final _newCategory = TextEditingController();
@@ -1508,23 +1536,23 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
               ),
             ],
           ],
-          const SizedBox(height: 10),
-          TapHighlight(
-            onTap: () => setState(() => _archived = !_archived),
-            child: Row(
-              children: [
-                Icon(
-                  _archived ? LucideIcons.checkSquare : LucideIcons.square,
-                  size: 18,
-                  color: _archived ? AppColors.gold : AppColors.mute,
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  "Archived (hidden from new signups)",
-                  style: TextStyle(fontSize: 13),
-                ),
-              ],
-            ),
+          const SizedBox(height: 14),
+          const SectionLabel("Visibility"),
+          const SizedBox(height: 8),
+          SegmentedToggle(
+            key: const Key("plan-editor-status"),
+            labels: const ["Active", "Ghost", "Archived"],
+            index: PlanStatus.values.indexOf(_status),
+            onChanged: (i) => setState(() => _status = PlanStatus.values[i]),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            switch (_status) {
+              PlanStatus.active => "Clients can see and buy this plan.",
+              PlanStatus.ghost => "Clients cannot see or buy it. You can still assign it and charge the plan's price.",
+              PlanStatus.archived => "Closed to new sales. People already on it keep it.",
+            },
+            style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.35),
           ),
 
           // Who actually holds this plan. The archive dialog already knew
@@ -1565,7 +1593,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
                       priceCents:
                           ((double.tryParse(_price.text.trim()) ?? 0) * 100)
                               .round(),
-                      archived: _archived,
+                      status: _status,
                       paymentType:
                           widget.initial?.paymentType ??
                           (isProgram
@@ -1608,14 +1636,7 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
                   ),
             child: const Text("Save plan"),
           ),
-          if (widget.onRestore != null) ...[
-            const SizedBox(height: 10),
-            BtnGhost(
-              onPressed: widget.onRestore,
-              full: true,
-              child: const Text("Restore plan (visible to new sign-ups again)"),
-            ),
-          ] else if (widget.onDelete != null) ...[
+          if (widget.onDelete != null) ...[
             const SizedBox(height: 10),
             TextButton(
               onPressed: widget.onDelete,

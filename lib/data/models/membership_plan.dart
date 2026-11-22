@@ -22,6 +22,66 @@ String planKindLabel(PlanKind k) => switch (k) {
 /// kinds and then get missed when another is added.
 bool isProgramKind(PlanKind k) => k == PlanKind.program || k == PlanKind.nutritionProgram;
 
+/// Where a plan sits for selling.
+///
+/// Active is on the client storefront. Ghost is hidden from clients and
+/// still assignable by the owner and coaches. Archived is closed to new
+/// sales. People already on a plan keep it in every state.
+enum PlanStatus { active, ghost, archived }
+
+/// [status] wins when it is one of the three names. Older rows only have
+/// the archived flag: true is archived, anything else is active.
+PlanStatus resolvePlanStatus(Object? raw, {bool archived = false}) {
+  final value = raw is String ? raw.trim().toLowerCase() : "";
+  return switch (value) {
+    "active" => PlanStatus.active,
+    "ghost" => PlanStatus.ghost,
+    "archived" => PlanStatus.archived,
+    _ => archived ? PlanStatus.archived : PlanStatus.active,
+  };
+}
+
+/// Client storefront and plan lists. A ghost plan is not here, even when
+/// the client already holds it — that plan is shown from their own record.
+bool planInClientCatalog(MembershipPlan plan) => plan.status == PlanStatus.active;
+
+/// Staff pickers. Ghost stays assignable. Archived does not.
+bool planAssignableByStaff(MembershipPlan plan) => plan.status != PlanStatus.archived;
+
+/// Adds ghost plans the caller already holds onto a catalog that omitted
+/// them. A plan already in [catalog] is left as it is.
+List<MembershipPlan> mergeHeldGhostPlans(List<MembershipPlan> catalog, List<MembershipPlan> held) {
+  if (held.isEmpty) return catalog;
+  final seen = {for (final plan in catalog) plan.id};
+  final extra = [
+    for (final plan in held)
+      if (plan.status == PlanStatus.ghost && seen.add(plan.id)) plan,
+  ];
+  if (extra.isEmpty) return catalog;
+  return [...catalog, ...extra];
+}
+
+/// Same merge for the raw `id` + `data` rows, before they are parsed.
+List<Map<String, dynamic>> mergeHeldGhostRows(
+  List<Map<String, dynamic>> catalog,
+  List<Map<String, dynamic>> held,
+) {
+  if (held.isEmpty) return catalog;
+  final seen = {for (final row in catalog) row["id"]?.toString()};
+  final extra = [
+    for (final row in held)
+      if (!seen.contains(row["id"]?.toString()) && _rowIsGhost(row)) row,
+  ];
+  if (extra.isEmpty) return catalog;
+  return [...catalog, ...extra];
+}
+
+bool _rowIsGhost(Map<String, dynamic> row) {
+  final data = row["data"];
+  if (data is! Map) return false;
+  return resolvePlanStatus(data["status"], archived: data["archived"] == true) == PlanStatus.ghost;
+}
+
 class MembershipPlan {
   const MembershipPlan({
     required this.id,
@@ -35,7 +95,8 @@ class MembershipPlan {
     this.termMonths,
     this.allowedTypes = const [],
     this.priceCents = 0,
-    this.archived = false,
+    PlanStatus? status,
+    bool archived = false,
     this.paymentType,
     this.feeItemProductId,
     this.category,
@@ -53,7 +114,8 @@ class MembershipPlan {
     this.limitOnePerAccount = false,
     this.expirationEnabled = false,
     this.expirationDays,
-  });
+  })  : status = status ?? (archived ? PlanStatus.archived : PlanStatus.active),
+        archived = (status ?? (archived ? PlanStatus.archived : PlanStatus.active)) == PlanStatus.archived;
 
   final String id;
   final String name;
@@ -65,6 +127,15 @@ class MembershipPlan {
   /// Cents — "/mo" for membership plans, a flat one-time price for
   /// package/program plans. Drives Reports' revenue/payroll math.
   final int priceCents;
+
+  /// Active, ghost, or archived. The archived flag below follows this.
+  final PlanStatus status;
+
+  /// True only when [status] is archived. Ghost plans are not archived:
+  /// billing, sessions, and rollover keep running, and staff can still
+  /// assign the plan. Older code that only knows this flag treats ghost
+  /// as a normal live plan, which is why clients are also blocked in the
+  /// database.
   final bool archived;
 
   /// "subscription" | "one-time" | null. Plans created before this field
@@ -162,11 +233,44 @@ class MembershipPlan {
         termMonths: termMonths,
         allowedTypes: allowedTypes,
         priceCents: priceCents,
-        archived: archived,
+        status: status,
         paymentType: paymentType,
         feeItemProductId: feeItemProductId,
         category: category,
         sortOrder: sortOrder ?? this.sortOrder,
+        allowGuests: allowGuests,
+        guestFeeCents: guestFeeCents,
+        rolloverEnabled: rolloverEnabled,
+        rolloverMaxVisits: rolloverMaxVisits,
+        cancellationNoticeDays: cancellationNoticeDays,
+        earlyTerminationFeeCents: earlyTerminationFeeCents,
+        serviceBalanceEnabled: serviceBalanceEnabled,
+        sharingEnabled: sharingEnabled,
+        sharingMaxAccounts: sharingMaxAccounts,
+        public: public,
+        limitOnePerAccount: limitOnePerAccount,
+        expirationEnabled: expirationEnabled,
+        expirationDays: expirationDays,
+      );
+
+  /// Same plan, with a new visibility. Every other field stays.
+  MembershipPlan copyWith({PlanStatus? status}) => MembershipPlan(
+        id: id,
+        name: name,
+        kind: kind,
+        description: description,
+        startDate: startDate,
+        endDate: endDate,
+        renewalDay: renewalDay,
+        maxSessions: maxSessions,
+        termMonths: termMonths,
+        allowedTypes: allowedTypes,
+        priceCents: priceCents,
+        status: status ?? this.status,
+        paymentType: paymentType,
+        feeItemProductId: feeItemProductId,
+        category: category,
+        sortOrder: sortOrder,
         allowGuests: allowGuests,
         guestFeeCents: guestFeeCents,
         rolloverEnabled: rolloverEnabled,

@@ -230,7 +230,7 @@ List<({MembershipPlan plan, String start})> packageEnrollments(
     ..sort((a, b) => a.startDate.compareTo(b.startDate));
   for (final e in enrolled) {
     final plan = byId[e.planId];
-    if (plan == null || plan.kind != PlanKind.package || plan.archived) continue;
+    if (plan == null || plan.kind != PlanKind.package || plan.status == PlanStatus.archived) continue;
     if (!seen.add(plan.id)) continue;
     out.add((plan: plan, start: e.startDate));
   }

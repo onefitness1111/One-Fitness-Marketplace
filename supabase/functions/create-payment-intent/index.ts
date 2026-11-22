@@ -12,6 +12,7 @@ import { replayLedger, planRedemption, pointsToDiscountCents } from "../_shared/
 import { ensureProduct } from "../_shared/stripeProduct.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
+import { assertPlanPurchasable } from "../_shared/planVisibility.mjs";
 import {
   effectivePackageMax,
   renewalDiscountCents,
@@ -158,6 +159,12 @@ serve(async (req) => {
     let renewalOfferName: "discount" | "full" | null = null;
     let renewalConfig: ReturnType<typeof renewalOfferFromSettings> | null = null;
     const renewalStart = typeof renewalEnrollmentStart === "string" ? renewalEnrollmentStart.slice(0, 10) : "";
+    // A renewal is the package the client already holds, so a ghost package
+    // still renews. A new purchase of a ghost plan is refused unless staff
+    // are enrolling the client. The renewal branch below checks they hold it.
+    if (!renewalStart) {
+      assertPlanPurchasable(plan, { staffEnrollingClient: callerIsStaff && buyerId !== user.id });
+    }
 
     const rawCode = typeof couponCode === "string" ? couponCode.trim() : "";
     if (renewalStart) {
@@ -169,6 +176,7 @@ serve(async (req) => {
         e?.status === "active" && e?.planId === planId && String(e?.startDate || "").slice(0, 10) === renewalStart
       );
       if (!held) throw new Error("That package is not on your account.");
+      assertPlanPurchasable(plan, { renewingHeldPlan: true });
 
       const { count: usedCount } = await admin.from("bookings")
         .select("id", { count: "exact", head: true })
