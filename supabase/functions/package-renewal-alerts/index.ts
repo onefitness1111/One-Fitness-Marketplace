@@ -39,7 +39,7 @@ function activePackages(plansJson: unknown, planById: Map<string, any>) {
   const active = list.filter((e) => e && e.status === "active" && e.planId);
   active.sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
   const seen = new Set<string>();
-  const out: { planId: string; start: string; plan: Record<string, unknown> }[] = [];
+  const out: { planId: string; start: string; plan: Record<string, unknown>; enrollment: Record<string, unknown> }[] = [];
   for (const e of active) {
     const planId = String(e.planId);
     const plan = planById.get(planId);
@@ -48,7 +48,7 @@ function activePackages(plansJson: unknown, planById: Map<string, any>) {
     const start = String(e.startDate || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) continue;
     seen.add(planId);
-    out.push({ planId, start, plan });
+    out.push({ planId, start, plan, enrollment: e });
   }
   return out;
 }
@@ -83,7 +83,7 @@ serve(async (req) => {
     if (settingsErr) throw new Error("Couldn't read the renewal offer.");
     const renewalConfig = renewalOfferFromSettings(settingsRow?.data);
 
-    let clientQuery = admin.from("clients").select("profile_id, plans, session_count_override, session_count_override_month");
+    let clientQuery = admin.from("clients").select("profile_id, membership_plan_id, plans, session_count_override, session_count_override_month");
     if (onlyClient) clientQuery = clientQuery.eq("profile_id", onlyClient);
     const { data: clientRows, error: clientErr } = await clientQuery;
     if (clientErr) throw clientErr;
@@ -141,9 +141,12 @@ serve(async (req) => {
     for (const client of clientRows || []) {
       const clientId = String(client.profile_id || "");
       if (!clientId) continue;
-      const override = client.session_count_override == null ? null : Number(client.session_count_override);
       for (const held of activePackages(client.plans, planById)) {
-        const max = effectivePackageMax(held.plan, override, client.session_count_override_month ?? null, month);
+        const max = effectivePackageMax(held.plan, held.enrollment, month, {
+          value: client.session_count_override == null ? null : Number(client.session_count_override),
+          month: client.session_count_override_month ?? null,
+          applies: client.membership_plan_id === held.planId,
+        });
         const remaining = Math.max(0, max - (used.get(`${clientId}|${held.planId}`) || 0));
         const price = Number(held.plan.priceCents || 0);
         const notices = (noticeRows || []).filter((n: {

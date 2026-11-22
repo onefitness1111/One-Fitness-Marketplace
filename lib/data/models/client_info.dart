@@ -90,11 +90,13 @@ class ClientInfo {
   final bool membershipPaused;
   final String? membershipPausedAt;
   final String? membershipFreezeEndsAt;
+  /// Legacy client-wide session total. New overrides are stored on the plan
+  /// entry ([ClientPlanEnrollment.maxSessionsOverride]) so they cannot follow
+  /// the client onto a different plan. Kept so a row that has not been
+  /// migrated still counts, and only for the plan in [membershipPlanId].
   final int? sessionCountOverride;
 
-  /// "YYYY-MM" the override above was set in — for a recurring membership,
-  /// scopes it to that one month (see effectiveMaxSessions); a package
-  /// leaves this null and the override stays permanent.
+  /// "YYYY-MM" the legacy override was set in. See [sessionCountOverride].
   final String? sessionCountOverrideMonth;
 
   final String? primaryTrainerId;

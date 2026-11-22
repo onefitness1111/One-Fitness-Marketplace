@@ -8,6 +8,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
+import { nextPlanEnrollments } from "../_shared/membershipRollover.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -63,24 +64,30 @@ serve(async (req) => {
     });
 
     const { data: existing } = await admin.from("clients")
-      .select("plans, membership_plan_id").eq("profile_id", targetId).maybeSingle();
+      .select("plans, membership_plan_id, session_count_override, session_count_override_month")
+      .eq("profile_id", targetId).maybeSingle();
     const enrollments = Array.isArray(existing?.plans) ? existing!.plans : [];
     const today = new Date().toISOString().slice(0, 10);
-    const nextEnrollments = [
-      // deno-lint-ignore no-explicit-any
-      ...enrollments.filter((e: any) => e?.planId !== planId),
-      {
-        planId, status: "active", startDate: today, termMonths: plan.termMonths ?? null,
-        ...(accessExpiresAt ? { endsAt: String(accessExpiresAt) } : {}),
-      },
-    ];
+    // A new entry carries no session override and no rollover. A leftover
+    // client-wide override stays on the plan that was already in the slot.
+    const next = nextPlanEnrollments({
+      plans: enrollments,
+      membershipPlanId: existing?.membership_plan_id ?? null,
+      sessionCountOverride: existing?.session_count_override ?? null,
+      sessionCountOverrideMonth: existing?.session_count_override_month ?? null,
+      planId,
+      today,
+      termMonths: plan.termMonths ?? null,
+      endsAt: accessExpiresAt ? String(accessExpiresAt) : null,
+    });
 
     const isProgram = plan.kind === "program" || plan.kind === "nutritionProgram";
     const takesSlot = !isProgram && (plan.kind === "membership" || !existing?.membership_plan_id);
 
     const { data: updated, error: updateErr } = await admin.from("clients").update({
-      plans: nextEnrollments,
+      plans: next.plans,
       ...(takesSlot ? { membership_plan_id: planId } : {}),
+      ...(next.clearLegacy ? { session_count_override: null, session_count_override_month: null } : {}),
     }).eq("profile_id", targetId).select("profile_id");
     if (updateErr) throw updateErr;
     if (!updated || updated.length === 0) {

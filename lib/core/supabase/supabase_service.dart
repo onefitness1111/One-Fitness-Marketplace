@@ -6352,6 +6352,9 @@ class SupabaseService {
           rolloverMonth: p["rolloverMonth"] as String?,
           endsAt: p["endsAt"] as String?,
           priceCents: _asInt(p["priceCents"]),
+          maxSessionsOverride: _asInt(p["maxSessionsOverride"]),
+          maxSessionsOverrideMonth: p["maxSessionsOverrideMonth"] as String?,
+          rolloverMaxOverride: _asInt(p["rolloverMaxOverride"]),
         ),
       ),
       membershipPaused: c["membership_paused"] as bool? ?? false,
@@ -6538,6 +6541,18 @@ class SupabaseService {
   /// of plans a client holds — used to change when access to one expires.
   static Future<void> updateClientPlans(String clientId, List<ClientPlanEnrollment> plans) async {
     await client.from("clients").update({"plans": plans.map((e) => e.toJson()).toList()}).eq("profile_id", clientId);
+  }
+
+  /// Owner only. Sets every client currently on this membership back to the
+  /// membership's session count and rollover limit, and clears their
+  /// personal overrides for that plan. Returns how many clients are on it.
+  static Future<int> applyMembershipDefaults(String planId) async {
+    final res = await _invokeFunction("apply-membership-defaults", {"planId": planId});
+    if (res["error"] != null) throw Exception(res["error"].toString());
+    final n = res["affected"];
+    if (n is int) return n;
+    if (n is num) return n.toInt();
+    return int.tryParse(n?.toString() ?? "") ?? 0;
   }
 
   /// Owner-only: read or override what a client's membership renews at, when

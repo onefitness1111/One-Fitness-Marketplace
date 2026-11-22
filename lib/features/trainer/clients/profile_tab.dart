@@ -9,6 +9,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/client_status_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/flag_utils.dart";
+import "../../../core/utils/membership_rollover.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/utils/program_utils.dart";
@@ -23,6 +24,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../../client/drawer_screens/payment_details_section.dart";
 import "billing_anchor_section.dart";
+import "plan_allowance_section.dart";
 import "plan_expiry_row.dart";
 import "plan_price_row.dart";
 import "renewal_terms_section.dart";
@@ -629,7 +631,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                       onChanged: (plans) => update((c) => c.copyWith(plans: plans)),
                     ),
                   ),
-                if (plan != null && plan.kind != PlanKind.program) ...[
+                if (plan != null && plan.kind == PlanKind.package) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 14),
                     child: Container(
@@ -642,25 +644,37 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                         plan: plan,
                         bookings: bookings,
                         onSave: (total, month, clear) async {
-                          await SupabaseService.updateClientRow(
-                            info.id,
-                            sessionCountOverride: total,
-                            sessionCountOverrideMonth: month,
-                            clearSessionCountOverride: clear,
+                          final next = withPlanAllowance(
+                            info.plans,
+                            planId: plan.id,
+                            today: isoToday(),
+                            touchSessions: true,
+                            clearSessions: clear,
+                            maxSessionsOverride: total,
+                            maxSessionsOverrideMonth: month,
                           );
-                          update(
-                            (c) => clear
-                                ? c.copyWith(clearSessionCountOverride: true)
-                                : c.copyWith(
-                                    sessionCountOverride: total,
-                                    sessionCountOverrideMonth: month,
-                                  ),
-                          );
+                          await SupabaseService.updateClientPlans(info.id, next);
+                          if (info.sessionCountOverride != null) {
+                            await SupabaseService.updateClientRow(
+                              info.id,
+                              clearSessionCountOverride: true,
+                            );
+                          }
+                          update((c) => c.copyWith(
+                                plans: next,
+                                clearSessionCountOverride: true,
+                              ));
                         },
                       ),
                     ),
                   ),
                 ],
+                PlanAllowances(
+                  info: info,
+                  plans: ref.watch(membershipPlansProvider),
+                  bookings: bookings,
+                  onChanged: (next) => update((_) => next),
+                ),
               ],
             ),
           ),
@@ -1413,13 +1427,9 @@ class _ContactRow extends StatelessWidget {
   }
 }
 
-/// Mirrors Profile.jsx's "Remaining sessions" editor — the coach types how
-/// many sessions the client should have REMAINING right now, not a total;
-/// internally that's still stored as a total (sessionCountOverride = used +
-/// desiredRemaining), which is all effectiveMaxSessions actually
-/// understands. A membership plan's override also stamps the current
-/// month (sessionCountOverrideMonth) so it's a one-off top-up for this
-/// period only; a package's override has no month and stays permanent.
+/// Remaining sessions for this package only. The coach types how many are
+/// left; that's stored on this package's plan entry, so it cannot follow
+/// the client onto a membership or another package.
 class _SessionOverrideRow extends StatefulWidget {
   const _SessionOverrideRow({
     required this.info,
@@ -1446,7 +1456,9 @@ class _SessionOverrideRowState extends State<_SessionOverrideRow> {
       sessionsUsedThisPeriod(widget.info, widget.plan, widget.bookings);
   int get _defaultRemaining =>
       ((widget.plan.maxSessions ?? 0) - _used).clamp(0, 1 << 30);
-  int? get _currentRemaining => widget.info.sessionCountOverride != null
+  bool get _hasOverride =>
+      sessionOverrideIsSet(widget.info, widget.plan, isoToday().substring(0, 7));
+  int? get _currentRemaining => _hasOverride
       ? (effectiveMaxSessions(widget.info, widget.plan) - _used).clamp(
           0,
           1 << 30,
@@ -1523,10 +1535,8 @@ class _SessionOverrideRowState extends State<_SessionOverrideRow> {
             (currentRemaining != null
                     ? "Currently set to $currentRemaining remaining — the plan default right now would be $_defaultRemaining."
                     : "Using the plan's default of $_defaultRemaining remaining. Leave blank to clear an override.") +
-                " This number drops when a client checks in or is a no-show, not when they book. Cancelling gives the session back right away." +
-                (widget.plan.kind == PlanKind.membership
-                    ? " A membership override only applies to the current month — it reverts to the plan default next month."
-                    : ""),
+                " This number is only for ${widget.plan.name}. It does not carry to another plan." +
+                " It drops when a client checks in or is a no-show, not when they book. Cancelling gives the session back right away.",
             style: TextStyle(fontSize: 11, color: AppColors.mute),
           ),
         ),

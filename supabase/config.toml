@@ -14,6 +14,11 @@ verify_jwt = true
 [functions.estimate-plate]
 verify_jwt = true
 
+# The gateway would reject the cron call, which has no user token. The
+# function itself checks the Vault cron secret, and an owner token.
+[functions.rollover-membership-sessions]
+verify_jwt = false
+
 # Owner asks non-consented clients, by push only, to open the SMS opt-in.
 [functions.prompt-sms-opt-in]
 verify_jwt = true

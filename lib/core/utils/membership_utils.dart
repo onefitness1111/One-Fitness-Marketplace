@@ -2,6 +2,7 @@ import "../../data/models/booking.dart";
 import "../../data/models/client_info.dart";
 import "../../data/models/membership_plan.dart";
 import "date_utils.dart";
+import "membership_rollover.dart";
 
 /// Session-accounting helpers ported from src/lib/helpers.js and
 /// src/data/membershipPlans.js — trimmed to what the client dashboard needs.
@@ -153,25 +154,28 @@ int sessionsLeftToBook(ClientInfo info, MembershipPlan plan, List<Booking> booki
   return (max - sessionsTowardBookingLimit(info, plan, bookings)).clamp(0, max);
 }
 
-/// Mirrors lib/helpers.js `effectiveMaxSessions` — a membership-kind plan's
-/// override goes stale once the calendar rolls into a new month from the
-/// one it was set in (sessionCountOverrideMonth), falling back to the
-/// plan's own default; a package's override has no month stamp and stays
-/// permanent.
+/// Sessions this client can use on [plan] this month.
+///
+/// The number on the plan entry wins. The old client-wide override counts
+/// only for the plan in the membership slot, and only until it has been
+/// moved onto that plan. A membership override from an earlier month falls
+/// back to the plan's own count. Sessions rolled into this month are added
+/// on top and are not themselves an override.
 int effectiveMaxSessions(ClientInfo info, MembershipPlan plan) {
-  final override = info.sessionCountOverride;
-  var base = plan.maxSessions ?? 0;
-  if (override != null) {
-    final month = info.sessionCountOverrideMonth;
-    final stale = plan.kind == PlanKind.membership && month != null && month != isoToday().substring(0, 7);
-    if (!stale) base = override;
-  }
-  return base + rolloverSessionsFor(info, plan);
+  final month = isoToday().substring(0, 7);
+  return sessionAllowance(
+    plan: plan,
+    enrollment: activeEnrollment(info, plan.id),
+    month: month,
+    legacyOverride: info.sessionCountOverride,
+    legacyMonth: info.sessionCountOverrideMonth,
+    legacyApplies: info.membershipPlanId == plan.id,
+  );
 }
 
-/// Sessions carried into THIS month from last month's leftovers under the
-/// plan's roll-over rule. Written at renewal (stripe-webhook) and good for
-/// that month only, so an unused carry-over never compounds.
+/// Sessions carried into THIS month from last month's leftovers. Written by
+/// the month-end job for that month only, so an unused carry-over never
+/// compounds past the rollover limit.
 int rolloverSessionsFor(ClientInfo info, MembershipPlan plan) {
   if (plan.kind != PlanKind.membership) return 0;
   final thisMonth = isoToday().substring(0, 7);

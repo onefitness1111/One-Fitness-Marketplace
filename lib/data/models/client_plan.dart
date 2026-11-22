@@ -11,6 +11,9 @@ class ClientPlanEnrollment {
     this.rolloverMonth,
     this.endsAt,
     this.priceCents,
+    this.maxSessionsOverride,
+    this.maxSessionsOverrideMonth,
+    this.rolloverMaxOverride,
   });
 
   final String planId;
@@ -42,6 +45,18 @@ class ClientPlanEnrollment {
   /// Owner-set price for this client only (cents); null = the plan's list price.
   final int? priceCents;
 
+  /// This client's session allowance for this plan only. Null uses the
+  /// membership's own count. A membership stamps [maxSessionsOverrideMonth]
+  /// so the number lasts that month; a package leaves the month empty and
+  /// the number stays until someone clears it.
+  final int? maxSessionsOverride;
+  final String? maxSessionsOverrideMonth;
+
+  /// How many unused sessions this client may roll into next month on this
+  /// plan. Null uses the membership's limit. 0 means none, for this client
+  /// only.
+  final int? rolloverMaxOverride;
+
   ClientPlanEnrollment copyWith({
     String? status,
     String? cancelsAt,
@@ -52,6 +67,11 @@ class ClientPlanEnrollment {
     bool clearEndsAt = false,
     int? priceCents,
     bool clearPrice = false,
+    int? maxSessionsOverride,
+    String? maxSessionsOverrideMonth,
+    bool clearMaxSessionsOverride = false,
+    int? rolloverMaxOverride,
+    bool clearRolloverMaxOverride = false,
   }) =>
       ClientPlanEnrollment(
         planId: planId,
@@ -64,6 +84,9 @@ class ClientPlanEnrollment {
         rolloverMonth: rolloverMonth ?? this.rolloverMonth,
         endsAt: clearEndsAt ? null : (endsAt ?? this.endsAt),
         priceCents: clearPrice ? null : (priceCents ?? this.priceCents),
+        maxSessionsOverride: clearMaxSessionsOverride ? null : (maxSessionsOverride ?? this.maxSessionsOverride),
+        maxSessionsOverrideMonth: clearMaxSessionsOverride ? null : (maxSessionsOverrideMonth ?? this.maxSessionsOverrideMonth),
+        rolloverMaxOverride: clearRolloverMaxOverride ? null : (rolloverMaxOverride ?? this.rolloverMaxOverride),
       );
 
   Map<String, dynamic> toJson() => {
@@ -77,5 +100,8 @@ class ClientPlanEnrollment {
         if (rolloverMonth != null) "rolloverMonth": rolloverMonth,
         if (endsAt != null) "endsAt": endsAt,
         if (priceCents != null) "priceCents": priceCents,
+        if (maxSessionsOverride != null) "maxSessionsOverride": maxSessionsOverride,
+        if (maxSessionsOverrideMonth != null) "maxSessionsOverrideMonth": maxSessionsOverrideMonth,
+        if (rolloverMaxOverride != null) "rolloverMaxOverride": rolloverMaxOverride,
       };
 }

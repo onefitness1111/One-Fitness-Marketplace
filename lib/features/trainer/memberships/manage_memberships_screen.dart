@@ -4,8 +4,10 @@ import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
+import "../../../core/utils/membership_rollover.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/utils/write_failure.dart";
+import "membership_rollover_section.dart";
 import "../shell/trainer_shell_state.dart";
 import "../../../core/utils/plan_members.dart";
 import "../../../core/utils/domain_labels.dart";
@@ -704,13 +706,17 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
   bool _addingCategory = false;
   final _newCategory = TextEditingController();
   bool _advancedOpen = false;
+  bool _applying = false;
 
   // Advanced settings
   late bool _allowGuests = widget.initial?.allowGuests ?? false;
   late final _guestFee = TextEditingController(
     text: ((widget.initial?.guestFeeCents ?? 0) / 100).toStringAsFixed(2),
   );
-  late bool _rolloverEnabled = widget.initial?.rolloverEnabled ?? false;
+  late int _rolloverChoice = ((widget.initial?.rolloverEnabled ?? false) &&
+          (widget.initial?.rolloverMaxVisits ?? 0) > 0)
+      ? 1
+      : 0;
   late final _rolloverMax = TextEditingController(
     text: "${widget.initial?.rolloverMaxVisits ?? 0}",
   );
@@ -913,6 +919,101 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
           ),
         );
       }
+    }
+  }
+
+  int get _formRollCap =>
+      _rolloverChoice == 1 ? (int.tryParse(_rolloverMax.text.trim()) ?? 0) : 0;
+
+  int _savedRollCap(MembershipPlan plan) =>
+      plan.rolloverEnabled && plan.rolloverMaxVisits > 0 ? plan.rolloverMaxVisits : 0;
+
+  Future<void> _applyToEveryone() async {
+    final saved = widget.initial;
+    if (saved == null || _kind != PlanKind.membership) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Save this membership first"),
+          content: const Text(
+            "Once it's saved and clients are on it, this sets all of them to its session count and rollover limit.",
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK")),
+          ],
+        ),
+      );
+      return;
+    }
+    final formSessions = int.tryParse(_maxSessions.text.trim()) ?? 0;
+    final dirty = formSessions != (saved.maxSessions ?? 0) || _formRollCap != _savedRollCap(saved);
+    if (dirty) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text("Save the membership first"),
+          content: const Text(
+            "Apply uses the saved session count and rollover limit. Save this membership, then apply it to everyone on it.",
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK")),
+          ],
+        ),
+      );
+      return;
+    }
+    final roster = ref.read(trainerRosterProvider);
+    final count = membersOnPlan(roster, saved.id).length;
+    final sessions = saved.maxSessions ?? 0;
+    final cap = _savedRollCap(saved);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text("Apply to $count ${count == 1 ? "client" : "clients"}?"),
+        content: Text(
+          count == 0
+              ? "Nobody is on ${saved.name} right now."
+              : "Set $count ${count == 1 ? "client" : "clients"} currently on ${saved.name} to $sessions sessions a month and a rollover limit of $cap. Their personal session count and rollover limit for this membership will be cleared. Other memberships are not changed.",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          if (count > 0)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text("Apply to $count"),
+            ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _applying = true);
+    try {
+      final affected = await SupabaseService.applyMembershipDefaults(saved.id);
+      final current = ref.read(trainerRosterProvider);
+      ref.read(trainerRosterProvider.notifier).setAll([
+        for (final c in current)
+          if (membersOnPlan([c], saved.id).isEmpty)
+            c
+          else
+            c.copyWith(
+              plans: clearPlanOverrides(c.plans, saved.id),
+              clearSessionCountOverride: c.membershipPlanId == saved.id,
+            ),
+      ]);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Applied to $affected ${affected == 1 ? "client" : "clients"}.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
+      );
+    } finally {
+      if (mounted) setState(() => _applying = false);
     }
   }
 
@@ -1292,22 +1393,6 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
               ],
               if (isSub) ...[
                 const SizedBox(height: 8),
-                _ToggleRow(
-                  label: "Max unused rollover visits",
-                  value: _rolloverEnabled,
-                  onChange: (v) => setState(() => _rolloverEnabled = v),
-                ),
-                if (_rolloverEnabled) ...[
-                  const SizedBox(height: 8),
-                  FieldLabeled(
-                    label: "Max visits that roll over",
-                    child: AppField(
-                      controller: _rolloverMax,
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 8),
                 FieldLabeled(
                   label: "Cancellation notice required (days)",
                   child: AppField(
@@ -1447,6 +1532,15 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
           // and had no way to find out who.
           if (widget.initial != null) _PlanMembers(planId: widget.initial!.id),
 
+          if (isSub) ...[
+            const SizedBox(height: 18),
+            MembershipRolloverFields(
+              choice: _rolloverChoice,
+              onChoice: (v) => setState(() => _rolloverChoice = v),
+              maxController: _rolloverMax,
+            ),
+          ],
+
           const SizedBox(height: 16),
           BtnGold(
             full: true,
@@ -1487,10 +1581,8 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
                           : ((double.tryParse(_guestFee.text.trim()) ?? 0) *
                                     100)
                                 .round(),
-                      rolloverEnabled: isSub && _rolloverEnabled,
-                      rolloverMaxVisits: isSub
-                          ? (int.tryParse(_rolloverMax.text.trim()) ?? 0)
-                          : 0,
+                      rolloverEnabled: isSub && _formRollCap > 0,
+                      rolloverMaxVisits: isSub ? _formRollCap : 0,
                       cancellationNoticeDays: isSub
                           ? (int.tryParse(_noticeDays.text.trim()) ?? 0)
                           : 0,
@@ -1531,6 +1623,13 @@ class _PlanEditFormState extends ConsumerState<_PlanEditForm> {
                 foregroundColor: AppColors.errorText,
               ),
               child: const Text("Delete or archive plan"),
+            ),
+          ],
+          if (isSub) ...[
+            const SizedBox(height: 16),
+            MembershipApplyButton(
+              applying: _applying,
+              onPressed: _applyToEveryone,
             ),
           ],
         ],
