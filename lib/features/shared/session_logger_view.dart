@@ -68,7 +68,12 @@ class SessionLoggerView extends StatefulWidget {
     this.logStore,
     this.initialFocusIndex = 0,
     this.onFocusIndex,
+    this.onEnded,
   });
+
+  /// Called after "End workout" closes the live marker (e.g. so the coach's
+  /// Watch live page can go back to the dashboard).
+  final VoidCallback? onEnded;
 
   final ClientRecord client;
 
@@ -151,6 +156,12 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   String? _coachLedDayId;
   RealtimeChannel? _activity;
 
+  /// The day this phone opened but has not marked live yet. Opening or
+  /// watching a day is not working out: the live marker is written on the
+  /// first set this phone actually logs.
+  String? _pendingLiveDayId;
+  bool _ending = false;
+
   @override
   void initState() {
     super.initState();
@@ -186,28 +197,22 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
   Future<void> _refreshLiveDays() async {
     try {
       // The badge is the one open live-day row. An unfinished set log on
-      // another day does not make that day live.
-      final runs = await SupabaseService.client
-          .from("live_day_runs")
-          .select("day_id, started_role, started_at, ended_at")
-          .eq("client_id", widget.client.id)
-          .isFilter("ended_at", null);
-      final parsed = <LiveDayRun>[];
+      // another day does not make that day live, and a day nobody has
+      // touched for a few hours is over.
+      final now = DateTime.now();
+      final parsed = (await LiveActivity.openRuns(clientId: widget.client.id))
+          .where((r) => !isLiveDayStale(r, now))
+          .toList();
       String? coachDay;
       DateTime? coachAt;
-      for (final raw in runs as List) {
-        final row = (raw as Map).cast<String, dynamic>();
-        final dayId = row["day_id"]?.toString() ?? "";
-        final started = DateTime.tryParse(row["started_at"]?.toString() ?? "");
-        if (dayId.isEmpty || started == null) continue;
-        parsed.add(LiveDayRun(clientId: widget.client.id, dayId: dayId, startedAt: started));
-        final role = row["started_role"]?.toString();
-        if ((role == "coach" || role == "owner") && (coachAt == null || started.isAfter(coachAt))) {
-          coachDay = dayId;
-          coachAt = started;
+      for (final r in parsed) {
+        final role = r.startedRole;
+        if ((role == "coach" || role == "owner") && (coachAt == null || r.startedAt.isAfter(coachAt))) {
+          coachDay = r.dayId;
+          coachAt = r.startedAt;
         }
       }
-      final live = currentLiveDayByClient(parsed)[widget.client.id];
+      final live = currentLiveDayByClient(parsed, now: now)[widget.client.id];
       if (!mounted) return;
       setState(() {
         _liveDays = live == null ? {} : {live};
@@ -388,6 +393,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       }
     }
     _detachLive();
+    _pendingLiveDayId = null;
     unawaited(widget._store.flush());
     if (mounted) setState(() => _sessionStarted = false);
   }
@@ -437,27 +443,95 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     });
     _seedDraftsFromStore();
     final prog = _currentProgram();
+    _pendingLiveDayId = null;
     if (prog != null) {
       _attachLive(prog, dayId);
       if (!announce) return;
-      final role = widget.authorRole ?? widget.loggedBy;
-      final me = SupabaseService.currentUser?.id;
-      unawaited(() async {
-        await LiveActivity.closeOtherDays(widget.client.id, keepDayId: dayId);
-        await SupabaseService.startLiveDay(
-          clientId: widget.client.id,
-          date: isoToday(),
-          dayId: dayId,
-          programId: prog.id,
-          role: role == "owner" ? "owner" : (role == "client" ? "client" : "coach"),
-          trainerId: role == "client" ? null : me,
-        );
-        LiveActivity.changed();
-      }());
-      if (role != "client") {
-        setState(() => _coachLedDayId = dayId);
-      }
+      _pendingLiveDayId = dayId;
     }
+  }
+
+  /// Marks the open day live (and coach-led when staff log it). Runs once,
+  /// on the first set logged after the day was opened.
+  void _markLiveOnFirstSet() {
+    final dayId = _pendingLiveDayId;
+    if (dayId == null || dayId != _dayId) return;
+    _pendingLiveDayId = null;
+    final prog = _currentProgram();
+    if (prog == null || !widget.liveSync || widget.client.id.isEmpty) return;
+    final role = widget.authorRole ?? widget.loggedBy;
+    final me = SupabaseService.currentUser?.id;
+    final today = isoToday();
+    unawaited(() async {
+      await LiveActivity.closeOtherDays(widget.client.id, keepDayId: dayId, keepDate: today);
+      await SupabaseService.startLiveDay(
+        clientId: widget.client.id,
+        date: today,
+        dayId: dayId,
+        programId: prog.id,
+        role: role == "owner" ? "owner" : (role == "client" ? "client" : "coach"),
+        trainerId: role == "client" ? null : me,
+      );
+      LiveActivity.changed();
+    }());
+    if (role != "client" && mounted) {
+      setState(() => _coachLedDayId = dayId);
+    }
+  }
+
+  /// "End workout": closes the live marker for this client. Set logs and
+  /// saved workouts are never deleted. With unsaved sets, offers to save
+  /// first.
+  Future<void> _endWorkout() async {
+    if (_ending) return;
+    final hasSets = _hasDraftSets() && !_saved;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text("End this workout?"),
+        content: const Text("Anything already logged stays saved."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          if (hasSets)
+            TextButton(onPressed: () => Navigator.pop(ctx, "end"), child: const Text("End without saving"))
+          else
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, "end"),
+              child: Text("End workout", style: TextStyle(color: AppColors.danger)),
+            ),
+          if (hasSets)
+            TextButton(onPressed: () => Navigator.pop(ctx, "save"), child: const Text("Save & end")),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == "save") {
+      final prog = _currentProgram();
+      final day = _currentDay();
+      if (prog != null && day != null) await _saveSession(prog, day);
+      // A failed save keeps the session open (and says so).
+      if (!mounted || !_saved) return;
+    }
+    setState(() => _ending = true);
+    _pendingLiveDayId = null;
+    await LiveActivity.closeAllDays(widget.client.id);
+    LiveActivity.changed();
+    if (!mounted) return;
+    if (choice == "end") {
+      _detachLive();
+      unawaited(widget._store.flush());
+    }
+    setState(() {
+      _ending = false;
+      _liveDays = {};
+      _coachLedDayId = null;
+      if (choice == "end") _sessionStarted = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Workout ended.")),
+    );
+    widget.onEnded?.call();
   }
 
   // Mutating _sessionData alone doesn't tell this State to rebuild — the
@@ -479,6 +553,8 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
     });
     // Shared with the other side right away (queued if offline).
     _live?.setField(exerciseName, setNum, field, value);
+    // Logging a set is what marks the client as working out now.
+    _markLiveOnFirstSet();
     if (widget.loggedBy == "client" && field == "weight") {
       final weight = value as double?;
       final best = bestLoggedWeightNamed(widget.client.workoutLogs, exerciseName);
@@ -885,6 +961,25 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                       ),
                     ],
                   ),
+                  // Always reachable, even before a set is logged, so a
+                  // workout can be closed without saving anything.
+                  if (widget.liveSync && client.id.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _ending ? null : () { _endWorkout(); },
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(LucideIcons.square, size: 13),
+                        label: const Text(
+                          "End workout",
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
                   if (days.length > 1)
                     Padding(
                       padding: const EdgeInsets.only(top: 4, bottom: 14),

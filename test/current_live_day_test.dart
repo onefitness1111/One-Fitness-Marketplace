@@ -38,4 +38,32 @@ void main() {
     expect(currentLiveDayByClient(next), isEmpty);
     expect(next.every((r) => !r.isOpen), isTrue);
   });
+
+  test("a live day with no set activity for 3 hours is not live", () {
+    final now = earlier.add(const Duration(hours: 4));
+    final idle = run("violet", "day-1", earlier);
+    final active = LiveDayRun(
+      clientId: "sam",
+      dayId: "day-1",
+      startedAt: earlier,
+      lastActivityAt: now.subtract(const Duration(minutes: 10)),
+    );
+    expect(isLiveDayStale(idle, now), isTrue);
+    expect(isLiveDayStale(active, now), isFalse);
+    expect(currentLiveDayByClient([idle, active], now: now), {"sam": "day-1"});
+    // Without a clock the old behaviour is kept.
+    expect(currentLiveDayByClient([idle]), {"violet": "day-1"});
+  });
+
+  test("a stale newer row does not hide an active older one", () {
+    final now = later.add(const Duration(hours: 5));
+    final staleNewer = run("violet", "day-2", later);
+    final activeOlder = LiveDayRun(
+      clientId: "violet",
+      dayId: "day-1",
+      startedAt: earlier,
+      lastActivityAt: now.subtract(const Duration(minutes: 1)),
+    );
+    expect(currentLiveDayByClient([staleNewer, activeOlder], now: now), {"violet": "day-1"});
+  });
 }

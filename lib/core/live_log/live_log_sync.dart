@@ -417,42 +417,80 @@ class LiveActivity {
     return map[clientId];
   }
 
-  /// client id -> the one day that is live right now.
-  static Future<Map<String, String>> openDays({String? clientId}) async {
+  /// Open live-day rows, each with its newest set change in the last
+  /// [liveDayIdleLimit], so callers can drop days nobody has touched.
+  static Future<List<LiveDayRun>> openRuns({String? clientId}) async {
     var q = SupabaseService.client
         .from("live_day_runs")
-        .select("client_id, day_id, started_at, ended_at")
+        .select("client_id, log_date, day_id, started_role, started_at, ended_at")
         .isFilter("ended_at", null);
     if (clientId != null) q = q.eq("client_id", clientId);
     final rows = await q;
+    if ((rows as List).isEmpty) return const [];
+
+    // Newest set change per client / date / day, only as far back as the
+    // idle limit: anything older can't keep a day live anyway.
+    final latest = <String, DateTime>{};
+    try {
+      final since = DateTime.now().toUtc().subtract(liveDayIdleLimit).toIso8601String();
+      var sq = SupabaseService.client
+          .from("live_set_logs")
+          .select("client_id, log_date, day_id, updated_at")
+          .gte("updated_at", since);
+      if (clientId != null) sq = sq.eq("client_id", clientId);
+      final sets = await sq.order("updated_at", ascending: false).limit(500);
+      for (final raw in sets as List) {
+        final r = (raw as Map).cast<String, dynamic>();
+        final at = DateTime.tryParse(r["updated_at"]?.toString() ?? "");
+        if (at == null) continue;
+        final k = "${r["client_id"]}|${r["log_date"]}|${r["day_id"]}";
+        final have = latest[k];
+        if (have == null || at.isAfter(have)) latest[k] = at;
+      }
+    } catch (_) {
+      // Without set activity the start time alone decides.
+    }
+
     final runs = <LiveDayRun>[];
-    for (final raw in rows as List) {
+    for (final raw in rows) {
       final row = (raw as Map).cast<String, dynamic>();
       final started = DateTime.tryParse(row["started_at"]?.toString() ?? "");
       final dayId = row["day_id"]?.toString() ?? "";
       final who = row["client_id"]?.toString() ?? "";
       if (started == null || dayId.isEmpty || who.isEmpty) continue;
-      final endedRaw = row["ended_at"]?.toString();
       runs.add(LiveDayRun(
         clientId: who,
         dayId: dayId,
         startedAt: started,
-        endedAt: (endedRaw == null || endedRaw.isEmpty) ? null : DateTime.tryParse(endedRaw),
+        lastActivityAt: latest["$who|${row["log_date"]}|$dayId"],
+        startedRole: row["started_role"]?.toString(),
       ));
     }
-    return currentLiveDayByClient(runs);
+    return runs;
   }
 
-  /// Closes every open live day except [keepDayId]. Set logs stay writable.
-  static Future<void> closeOtherDays(String clientId, {required String keepDayId}) async {
+  /// client id -> the one day that is live right now. A day with no set
+  /// activity for [liveDayIdleLimit] is not live, even if its row is open.
+  static Future<Map<String, String>> openDays({String? clientId}) async {
+    final runs = await openRuns(clientId: clientId);
+    return currentLiveDayByClient(runs, now: DateTime.now());
+  }
+
+  /// Closes every open live day except [keepDayId] on [keepDate]. The same
+  /// day left open on an earlier date is closed too, so a client never has
+  /// two open rows for one program day. Set logs stay writable.
+  static Future<void> closeOtherDays(String clientId, {required String keepDayId, String? keepDate}) async {
     final now = DateTime.now().toUtc().toIso8601String();
     try {
-      await SupabaseService.client
+      var q = SupabaseService.client
           .from("live_day_runs")
           .update({"ended_at": now})
           .eq("client_id", clientId)
-          .neq("day_id", keepDayId)
           .isFilter("ended_at", null);
+      q = keepDate == null
+          ? q.neq("day_id", keepDayId)
+          : q.or("day_id.neq.\"$keepDayId\",log_date.neq.$keepDate");
+      await q;
     } catch (_) {}
   }
 
