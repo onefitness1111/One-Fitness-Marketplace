@@ -103,6 +103,12 @@ String prettyDate(String isoDate) {
   return "${months[month - 1]} $day, ${parts[0]}";
 }
 
+/// Plan amount on the first bill: the prorated amount, or the full price
+/// when the owner turns on "Charge full price now". The next charge is the
+/// next anchor either way. Mirrors firstChargePlanCents in billingAnchor.mjs.
+int firstChargePlanCents(FirstCharge quote, {bool fullFirstCharge = false}) =>
+    fullFirstCharge ? quote.fullCents : quote.proratedCents;
+
 String firstChargeSentence({
   required FirstCharge quote,
   String? couponType,
@@ -110,13 +116,15 @@ String firstChargeSentence({
   int flatOffCents = 0,
   String duration = "once",
   int durationInMonths = 1,
+  bool fullFirstCharge = false,
 }) {
   final when = prettyDate(quote.nextChargeDate);
+  final base = firstChargePlanCents(quote, fullFirstCharge: fullFirstCharge);
   final hasCoupon = couponType != null;
   final off = hasCoupon
-      ? couponDiscountCents(quote.proratedCents, type: couponType, percentOff: percentOff, flatOffCents: flatOffCents)
+      ? couponDiscountCents(base, type: couponType, percentOff: percentOff, flatOffCents: flatOffCents)
       : 0;
-  final today = quote.proratedCents - off;
+  final today = base - off;
   final laterOff = hasCoupon
       ? ongoingDiscountCents(
           fullCents: quote.fullCents,
@@ -128,9 +136,13 @@ String firstChargeSentence({
         )
       : 0;
   final later = quote.fullCents - laterOff;
-  final todayWords = quote.fullMonth ? "Today ${money(today)}, a full month" : "Today ${money(today)}, prorated through $when";
+  final todayWords = quote.fullMonth
+      ? "Today ${money(today)}, a full month"
+      : fullFirstCharge
+          ? "Today ${money(today)}, full price"
+          : "Today ${money(today)}, prorated through $when";
   final couponWords = hasCoupon
-      ? " (${couponPhrase(type: couponType, percentOff: percentOff, flatOffCents: flatOffCents, duration: duration, durationInMonths: durationInMonths, baseCents: quote.proratedCents)})"
+      ? " (${couponPhrase(type: couponType, percentOff: percentOff, flatOffCents: flatOffCents, duration: duration, durationInMonths: durationInMonths, baseCents: base)})"
       : "";
   final nextLabel = laterOff > 0 ? "Next charge" : "Next full charge";
   return "$todayWords$couponWords. $nextLabel ${money(later)} on $when.";

@@ -63,4 +63,48 @@ void main() {
     expect(onProrated, lessThan(onFull));
     expect(onProrated, 746);
   });
+
+  group("owner Charge full price now", () {
+    final nov22 = DateTime.utc(2026, 11, 22, 17);
+
+    test("Nov 22 charges the full \$348 today and again on December 21", () {
+      final quote = membershipFirstCharge(now: nov22, priceCents: 34800, anchorDay: 21)!;
+      expect(quote.proratedCents, 33640);
+      expect(quote.nextChargeDate, "2026-12-21");
+      expect(firstChargePlanCents(quote, fullFirstCharge: true), 34800);
+      expect(firstChargePlanCents(quote), 33640);
+      expect(
+        firstChargeSentence(quote: quote, fullFirstCharge: true),
+        "Today \$348.00, full price. Next full charge \$348.00 on December 21, 2026.",
+      );
+    });
+
+    test("a coupon comes off the full amount", () {
+      final quote = membershipFirstCharge(now: nov22, priceCents: 34800, anchorDay: 21)!;
+      expect(
+        firstChargeSentence(quote: quote, couponType: "percent", percentOff: 10, fullFirstCharge: true),
+        "Today \$313.20, full price (10% off, first payment only). Next full charge \$348.00 on December 21, 2026.",
+      );
+    });
+
+    test("the card fee uses the full amount", () {
+      final quote = membershipFirstCharge(now: nov22, priceCents: 34800, anchorDay: 21)!;
+      final fee = processingFeeCents(
+        enabled: true,
+        structure: "percentage",
+        percent: 3,
+        flatCents: 0,
+        baseCents: firstChargePlanCents(quote, fullFirstCharge: true),
+      );
+      expect(fee, 1044);
+    });
+
+    test("on the anchor day it still reads as a full month", () {
+      final quote = membershipFirstCharge(now: may21, priceCents: 34800, anchorDay: 21)!;
+      expect(
+        firstChargeSentence(quote: quote, fullFirstCharge: true),
+        "Today \$348.00, a full month. Next full charge \$348.00 on June 21, 2026.",
+      );
+    });
+  });
 }

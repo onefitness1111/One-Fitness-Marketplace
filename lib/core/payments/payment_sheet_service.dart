@@ -342,6 +342,7 @@ class PaymentSheetService {
     String? accessExpiresAt,
     BillingAddress? billing,
     bool useStoredBilling = false,
+    bool fullFirstCharge = false,
   }) async {
     // The native sheet is iOS/Android only. Web would need Stripe Elements,
     // which this app doesn't ship — failing loudly beats silently doing
@@ -359,6 +360,7 @@ class PaymentSheetService {
         paymentMethod: paymentMethod,
         priceOverrideCents: priceOverrideCents,
         accessExpiresAt: accessExpiresAt,
+        fullFirstCharge: fullFirstCharge,
       );
     } catch (e) {
       return PaymentResult.failed(e.toString().replaceFirst("Exception: ", ""));

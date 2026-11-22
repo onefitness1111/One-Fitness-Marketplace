@@ -5035,6 +5035,10 @@ class SupabaseService {
     /// Set when the client is renewing a package they already hold. The
     /// server reads the saved renewal offer and uses one idempotency key per package.
     String? renewalEnrollmentStart,
+    /// Owner only: charge the full price on the first bill of a monthly
+    /// membership instead of the prorated amount. Only sent when true, and
+    /// the server refuses it from anyone but the owner.
+    bool fullFirstCharge = false,
   }) =>
       _invokeFunction("create-payment-intent", {
         "planId": planId,
@@ -5044,6 +5048,7 @@ class SupabaseService {
         if (priceOverrideCents != null) "priceOverrideCents": priceOverrideCents,
         if (accessExpiresAt != null) "accessExpiresAt": accessExpiresAt,
         if (renewalEnrollmentStart != null) "renewalEnrollmentStart": renewalEnrollmentStart,
+        if (fullFirstCharge) "fullFirstCharge": true,
       });
 
   /// Asks the server which package renewals to show, and sends the phone

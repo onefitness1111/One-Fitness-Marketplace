@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { firstChargeSentence, membershipFirstCharge, money } from "./billingAnchor.mjs";
+import { firstChargePlanCents, firstChargeSentence, membershipFirstCharge, money } from "./billingAnchor.mjs";
 
 const may30 = new Date("2026-05-30T18:00:00.000Z");
 const may21 = new Date("2026-05-21T15:00:00.000Z");
@@ -67,3 +67,37 @@ test("money formats cents", () => {
 function moneyToCents(quote) {
   return quote.proratedCents;
 }
+
+const nov22 = new Date("2026-11-22T17:00:00.000Z");
+
+test("owner full price now: Nov 22 charges $348 today and $348 on December 21", () => {
+  const quote = membershipFirstCharge(nov22, 34800, 21);
+  assert.equal(quote.proratedCents, 33640);
+  assert.equal(quote.nextChargeDate, "2026-12-21");
+  assert.equal(firstChargePlanCents(quote, { fullFirstCharge: true }), 34800);
+  assert.equal(firstChargePlanCents(quote), 33640);
+  assert.equal(
+    firstChargeSentence(quote, null, { fullFirstCharge: true }),
+    "Today $348.00, full price. Next full charge $348.00 on December 21, 2026.",
+  );
+  assert.equal(
+    firstChargeSentence(quote, null),
+    "Today $336.40, prorated through December 21, 2026. Next full charge $348.00 on December 21, 2026.",
+  );
+});
+
+test("owner full price now: a percent coupon comes off the full amount", () => {
+  const quote = membershipFirstCharge(nov22, 34800, 21);
+  assert.equal(
+    firstChargeSentence(quote, { type: "percent", percentOff: 10, duration: "once" }, { fullFirstCharge: true }),
+    "Today $313.20, full price (10% off, first payment only). Next full charge $348.00 on December 21, 2026.",
+  );
+});
+
+test("owner full price now on the anchor day itself reads as a full month", () => {
+  const quote = membershipFirstCharge(may21, 34800, 21);
+  assert.equal(
+    firstChargeSentence(quote, null, { fullFirstCharge: true }),
+    "Today $348.00, a full month. Next full charge $348.00 on June 21, 2026.",
+  );
+});

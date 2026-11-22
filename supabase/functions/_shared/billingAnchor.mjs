@@ -105,17 +105,29 @@ export function ongoingDiscountCents(fullCents, coupon) {
   return discountCents(fullCents, coupon);
 }
 
-export function firstChargeSentence(quote, coupon) {
+/// Plan amount on the first invoice. Normally the prorated amount. When the
+/// owner turns on "Charge full price now", it is the full price instead, and
+/// the next charge is still the next anchor.
+export function firstChargePlanCents(quote, options = {}) {
+  if (!quote) return 0;
+  return options.fullFirstCharge ? quote.fullCents : quote.proratedCents;
+}
+
+export function firstChargeSentence(quote, coupon, options = {}) {
   if (!quote) return "";
+  const full = !!options.fullFirstCharge;
+  const base = firstChargePlanCents(quote, { fullFirstCharge: full });
   const when = prettyDate(quote.nextChargeDate);
-  const off = discountCents(quote.proratedCents, coupon);
-  const today = quote.proratedCents - off;
+  const off = discountCents(base, coupon);
+  const today = base - off;
   const laterOff = ongoingDiscountCents(quote.fullCents, coupon);
   const later = quote.fullCents - laterOff;
   const todayWords = quote.fullMonth
     ? `Today ${money(today)}, a full month`
+    : full
+    ? `Today ${money(today)}, full price`
     : `Today ${money(today)}, prorated through ${when}`;
-  const couponWords = coupon ? ` (${couponPhrase(coupon, quote.proratedCents)})` : "";
+  const couponWords = coupon ? ` (${couponPhrase(coupon, base)})` : "";
   const nextLabel = laterOff > 0 ? "Next charge" : "Next full charge";
   return `${todayWords}${couponWords}. ${nextLabel} ${money(later)} on ${when}.`;
 }
