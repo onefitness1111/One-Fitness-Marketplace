@@ -4,6 +4,11 @@
 // The only behavior change from the live function: priceOverrideCents is
 // accepted from the owner only. A coach can still buy a catalogue plan for
 // a client and can still pass a coupon code. They cannot type an amount.
+//
+// fullFirstCharge (owner only): on a monthly membership with a billing day,
+// the first invoice charges the full price instead of the prorated amount.
+// The next charge is still the next billing day, so the subscription's
+// trial_end, recurring items and billing anchor are unchanged.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
@@ -20,7 +25,7 @@ import {
   renewalOffer,
   renewalOfferFromSettings,
 } from "../_shared/packageRenewal.ts";
-import { discountCents as couponDiscountCents, firstChargeSentence, membershipFirstCharge, ongoingDiscountCents } from "../_shared/billingAnchor.mjs";
+import { discountCents as couponDiscountCents, firstChargePlanCents, firstChargeSentence, membershipFirstCharge, ongoingDiscountCents } from "../_shared/billingAnchor.mjs";
 import { stripeCouponDuration } from "../_shared/couponDuration.mjs";
 
 const CORS_HEADERS = {
@@ -47,7 +52,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
 
   try {
-    const { planId, couponCode, targetClientId, paymentMethod, priceOverrideCents, accessExpiresAt, renewalEnrollmentStart } = await req.json();
+    const { planId, couponCode, targetClientId, paymentMethod, priceOverrideCents, accessExpiresAt, renewalEnrollmentStart, fullFirstCharge } = await req.json();
     if (!planId) throw new Error("planId is required");
 
     const authedClient = createClient(
@@ -64,7 +69,8 @@ serve(async (req) => {
     const wantsStaffPowers =
       (targetClientId && targetClientId !== user.id) ||
       priceOverrideCents != null ||
-      accessExpiresAt != null;
+      accessExpiresAt != null ||
+      fullFirstCharge === true;
 
     let callerIsStaff = false;
     let callerRole = "";
@@ -82,6 +88,11 @@ serve(async (req) => {
     if (priceOverrideCents != null && callerRole !== "owner") {
       throw new Error("Only the owner can change the price. Charge the plan's set price, or apply a coupon.");
     }
+    // Checked against the signed-in caller, never the client being billed.
+    if (fullFirstCharge === true && callerRole !== "owner") {
+      throw new Error("Only the owner can charge the full price up front.");
+    }
+    const wantsFullFirstCharge = fullFirstCharge === true && callerRole === "owner";
     if (accessExpiresAt != null && !callerIsStaff) {
       throw new Error("Only a coach or owner can set an expiry date.");
     }
@@ -321,7 +332,13 @@ serve(async (req) => {
       const monthly = (plan.billingIntervalMonths || 1) === 1;
       const schedule = anchorDay ? membershipFirstCharge(new Date(), priceCents, anchorDay) : null;
       const prorate = !!(schedule && monthly);
-      const firstPlan = schedule && monthly ? schedule.proratedCents : priceCents;
+      // Owner's "Charge full price now": same discount, fee and surcharge
+      // rules below, just on the full price. Only matters when today isn't
+      // already the billing day.
+      const fullFirst = !!(prorate && wantsFullFirstCharge && !schedule!.fullMonth);
+      const firstPlan = schedule && monthly
+        ? firstChargePlanCents(schedule, { fullFirstCharge: fullFirst })
+        : priceCents;
       if (prorate && appliedCoupon) {
         discountCents = couponDiscountCents(firstPlan, appliedCoupon);
       } else if (prorate && redeemedPoints) {
@@ -338,9 +355,10 @@ serve(async (req) => {
         metadata.billing_anchor_day = String(schedule.anchorDay);
         metadata.next_charge_on = schedule.nextChargeDate;
       }
+      if (fullFirst) metadata.full_first_charge = "true";
 
       const planProduct = await ensureProduct(stripe, `plan_${planId}`, plan.name || "Membership Plan");
-      const firstProduct = prorate
+      const firstProduct = prorate && !fullFirst
         ? await ensureProduct(stripe, `plan_${planId}_prorated`, `${plan.name || "Membership"} (prorated)`)
         : planProduct;
       const feeProduct = await ensureProduct(
@@ -411,7 +429,7 @@ serve(async (req) => {
 
       const sentenceCoupon = appliedCoupon
         ?? (prorate && discountCents > 0 ? { type: "flat", flatOffCents: discountCents, duration: "once" } : null);
-      const receiptText = prorate && schedule ? firstChargeSentence(schedule, sentenceCoupon) : null;
+      const receiptText = prorate && schedule ? firstChargeSentence(schedule, sentenceCoupon, { fullFirstCharge: fullFirst }) : null;
 
       const subscription = await stripe.subscriptions.create({
         customer: customerId,
@@ -450,7 +468,8 @@ serve(async (req) => {
         amountCents,
         requiresPayment: !!clientSecret,
         receiptText,
-        proratedCents: schedule && prorate ? schedule.proratedCents : null,
+        proratedCents: schedule && prorate && !fullFirst ? schedule.proratedCents : null,
+        fullFirstCharge: fullFirst,
         nextChargeOn: schedule?.nextChargeDate ?? null,
         nextChargeCents: schedule ? nextChargeCents : null,
       }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });

@@ -59,6 +59,11 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
   /// So re-picking the same plan doesn't wipe an edit the coach just made.
   String? _defaultsFor;
 
+  /// Owner only. Charges the full price today instead of the partial first
+  /// month. The next charge is still the next billing day. Off by default,
+  /// and reset whenever a different plan is picked.
+  bool _fullFirstCharge = false;
+
   @override
   void dispose() {
     _price.dispose();
@@ -70,6 +75,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
   void _applyPlanDefaults(MembershipPlan plan) {
     if (_defaultsFor == plan.id) return;
     _defaultsFor = plan.id;
+    _fullFirstCharge = false;
     _price.text = (plan.priceCents / 100).toStringAsFixed(2);
     _expiresAt = _defaultExpiryFor(plan);
   }
@@ -327,16 +333,36 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
               );
               final typed = ref.watch(couponsProvider.notifier).byCode(isOwner ? (coupon?.code ?? "") : _couponTyped.text.trim());
               final quote = membershipFirstCharge(now: DateTime.now(), priceCents: price, anchorDay: anchor);
+              // Only the owner sees this, and only when today's charge would
+              // otherwise be a partial month.
+              final canChargeFull = isOwner && quote != null && !quote.fullMonth;
+              final fullNow = canChargeFull && _fullFirstCharge;
               final fee = processingFeeCents(
                 enabled: settings.cardFee.enabled,
                 structure: settings.cardFee.structure,
                 percent: settings.cardFee.percent,
                 flatCents: settings.cardFee.flatCents,
-                baseCents: quote?.proratedCents ?? price,
+                baseCents: quote == null ? price : firstChargePlanCents(quote, fullFirstCharge: fullNow),
               );
-              return Text(
-                "${_takePaymentLine(price, anchor, typed ?? coupon)}${fee > 0 ? " Card fee ${money(fee)} on today's ${quote == null ? "amount" : "prorated amount"}." : ""}",
-                style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.4),
+              final feeBase = quote == null || quote.fullMonth
+                  ? "amount"
+                  : (fullNow ? "full amount" : "prorated amount");
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (canChargeFull) ...[
+                    _FullPriceToggle(
+                      value: _fullFirstCharge,
+                      nextChargeDate: prettyDate(quote.nextChargeDate),
+                      onChange: (v) => setState(() => _fullFirstCharge = v),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  Text(
+                    "${_takePaymentLine(price, anchor, typed ?? coupon, fullFirstCharge: fullNow)}${fee > 0 ? " Card fee ${money(fee)} on today's $feeBase." : ""}",
+                    style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.4),
+                  ),
+                ],
               );
             }),
           ],
@@ -462,6 +488,9 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
         // that whoever asked for it is staff.
         priceOverrideCents: isOwner && chargeCents != plan.priceCents ? chargeCents : null,
         accessExpiresAt: _expiryIso,
+        // Owner only. The server checks the signed-in caller is the owner
+        // and ignores it when today is already the billing day.
+        fullFirstCharge: isOwner && _fullFirstCharge,
       );
       if (result.cancelled) return;
       if (!result.ok && !result.noPaymentNeeded) {
@@ -495,7 +524,7 @@ class _PurchaseForClientSectionState extends ConsumerState<PurchaseForClientSect
   }
 }
 
-String _takePaymentLine(int priceCents, int? anchorDay, Coupon? coupon) {
+String _takePaymentLine(int priceCents, int? anchorDay, Coupon? coupon, {bool fullFirstCharge = false}) {
   final quote = membershipFirstCharge(now: DateTime.now(), priceCents: priceCents, anchorDay: anchorDay);
   if (quote == null) return "Today ${money(priceCents)}. Then ${money(priceCents)} each month from this date.";
   return firstChargeSentence(
@@ -505,7 +534,49 @@ String _takePaymentLine(int priceCents, int? anchorDay, Coupon? coupon) {
     flatOffCents: coupon?.flatOffCents ?? 0,
     duration: coupon?.duration ?? "once",
     durationInMonths: coupon?.durationInMonths ?? 1,
+    fullFirstCharge: fullFirstCharge,
   );
+}
+
+/// Same look as the toggles in Customize Platform: gold when on, gray when
+/// off, with a short hint underneath.
+class _FullPriceToggle extends StatelessWidget {
+  const _FullPriceToggle({required this.value, required this.nextChargeDate, required this.onChange});
+
+  final bool value;
+  final String nextChargeDate;
+  final ValueChanged<bool> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TapHighlight(
+            onTap: () => onChange(!value),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text("Charge full price now", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                ),
+                Icon(
+                  value ? LucideIcons.toggleRight : LucideIcons.toggleLeft,
+                  size: 30,
+                  color: value ? AppColors.gold : AppColors.mute,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Skip the partial first month. They pay the full price today and again on $nextChargeDate.",
+            style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Plans bucketed by category, in the gym's own category order.
