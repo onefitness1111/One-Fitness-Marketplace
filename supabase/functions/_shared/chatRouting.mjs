@@ -5,6 +5,23 @@
 // Keep the wording of the business name identical to the app:
 // "ONE Fitness Marketplace" (the prefix already stored on messages).
 
+import {
+  INVITE_SMS_BODY,
+  INVITE_YES_CONFIRMATION,
+  inviteConsentRecord,
+  isInviteYes,
+  staffClientSmsAction,
+} from "./smsInvite.mjs";
+
+export {
+  INVITE_SMS_BODY,
+  INVITE_SMS_VERSION,
+  INVITE_YES_CONFIRMATION,
+  inviteConsentRecord,
+  isInviteYes,
+  staffClientSmsAction,
+} from "./smsInvite.mjs";
+
 export const WINDOW_MS = 6 * 60 * 60 * 1000;
 
 export const BUSINESS_NAME = "ONE Fitness Marketplace";
@@ -268,7 +285,16 @@ export function staffPushCopy(clientName, messageBody) {
  */
 export class ThreadBook {
   constructor(people) {
-    this.people = new Map(people.map((p) => [p.id, { optedOut: false, hasConsent: false, phone: "", coachName: "", ...p }]));
+    this.people = new Map(people.map((p) => [p.id, {
+      optedOut: false,
+      hasConsent: false,
+      declined: false,
+      inviteSentAt: null,
+      inviteText: null,
+      phone: "",
+      coachName: "",
+      ...p,
+    }]));
     this.conversations = new Map();
     this.messages = [];
     this.likes = [];
@@ -389,7 +415,7 @@ export class ThreadBook {
       channel: "app",
       direction: "outbound",
     });
-    if (includeSms || clientToStaff(from, to)) this.textPerson(to, message.body);
+    this._relaySaved({ from, to, message, includeSms, now });
 
     if (from.role === "owner" && convo.routedTo === "business") {
       const tagged = matchCoachTag(text, this.coaches()) || matchCoachTag(message.body, this.coaches());
@@ -411,6 +437,28 @@ export class ThreadBook {
     }
 
     return { message, sms: this.outbox.slice(before) };
+  }
+
+  /**
+   * Staff to a client follows the invite rules. Everyone else is texted
+   * only when canText says so. A client writing staff still ignores the
+   * channel picker.
+   */
+  _relaySaved({ from, to, message, includeSms, now }) {
+    if (includeSms && isStaffRole(from.role) && to.role === "client") {
+      const action = staffClientSmsAction(to);
+      if (action === "send") this.textPerson(to, message.body);
+      else if (action === "invite") {
+        this.outbox.push({ toId: to.id, body: INVITE_SMS_BODY, at: this.outbox.length, kind: "invite" });
+        to.inviteSentAt = new Date(now).toISOString();
+        to.inviteText = INVITE_SMS_BODY;
+        message.smsPending = true;
+      } else if (action === "hold") {
+        message.smsPending = true;
+      }
+      return;
+    }
+    if (includeSms || clientToStaff(from, to)) this.textPerson(to, message.body);
   }
 
   likeApp({ userId, messageId, reaction, now }) {
@@ -481,6 +529,29 @@ export class ThreadBook {
     }
 
     const from = this.person(fromId);
+    // YES accepts the invite. It is not a chat message. A client who already
+    // agreed, or who never got an invite, is saying yes to a person.
+    if (
+      from.role === "client" &&
+      isInviteYes(text) &&
+      from.inviteSentAt &&
+      from.optedOut !== true &&
+      from.declined !== true &&
+      from.hasConsent !== true
+    ) {
+      from.hasConsent = true;
+      from.declined = false;
+      return {
+        kind: "invite-yes",
+        twiml: null,
+        confirmation: INVITE_YES_CONFIRMATION,
+        consentText: inviteConsentRecord(from.inviteText || INVITE_SMS_BODY),
+        sms: [],
+        deliverHeld: true,
+        routedTo: null,
+      };
+    }
+
     const tap = parseTapback(text);
     if (tap) {
       const active = this.activeConvos(from.id, now);
@@ -582,12 +653,54 @@ export class ThreadBook {
   }
 }
 
+/**
+ * Staff messages held for SMS, oldest first, in the same wording a live
+ * send would have used. who must be "trainer". The sender name is the
+ * coach name already on the row.
+ */
+export function heldStaffTexts(rows) {
+  return (rows || [])
+    .filter((row) => row && row.smsPending === true && row.who === "trainer")
+    .slice()
+    .sort((a, b) => (a.at || 0) - (b.at || 0) || String(a.id).localeCompare(String(b.id)))
+    .map((row) => ({
+      id: row.id,
+      body: savedMessageText({
+        sender: row.sender,
+        recipient: row.recipient,
+        body: row.body,
+        originChannel: row.originChannel || "app",
+        routedTo: row.routedTo || "conversation",
+        groupName: row.groupName,
+      }),
+    }));
+}
+
 /** What the app-send texter should send for a row that is already saved. */
 export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName }) {
   const sms = [];
   const passAlong = [];
-  // Client to staff ignores the channel picker. Staff to client still honors it.
-  if ((includeSms || clientToStaff(sender, recipient)) && recipient && canText(recipient)) {
+  let clientSms = null;
+  let invite = null;
+  let hold = false;
+  const staffToClient = Boolean(includeSms && isStaffRole(sender?.role) && recipient?.role === "client");
+  if (staffToClient) {
+    // Never reads primary_trainer_id. The action only looks at consent,
+    // opt-out, an in-app decline, a phone, and whether the invite went out.
+    clientSms = staffClientSmsAction(recipient);
+    if (clientSms === "send") {
+      sms.push({
+        toId: recipient.id,
+        body: savedMessageText({ sender, recipient, body, originChannel, routedTo, groupName }),
+      });
+    } else if (clientSms === "invite") {
+      invite = { toId: recipient.id, body: INVITE_SMS_BODY };
+      hold = true;
+    } else if (clientSms === "hold") {
+      hold = true;
+    }
+  } else if ((includeSms || clientToStaff(sender, recipient)) && recipient && canText(recipient)) {
+    // Client to staff ignores the channel picker. Staff to client still honors it.
     sms.push({
       toId: recipient.id,
       body: savedMessageText({ sender, recipient, body, originChannel, routedTo, groupName }),
@@ -599,5 +712,5 @@ export function planTextsForSavedMessage({ sender, recipient, body, originChanne
       passAlong.push({ coachId: tagged.id, clientId: recipient.id, body });
     }
   }
-  return { sms, passAlong };
+  return { sms, passAlong, clientSms, invite, hold };
 }

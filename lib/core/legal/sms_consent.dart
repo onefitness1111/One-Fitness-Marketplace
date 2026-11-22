@@ -38,3 +38,29 @@ const String kSmsConsentDisclosure =
 /// What gets stored against the client as the record of what they agreed
 /// to, so there is evidence to show a carrier if consent is ever queried.
 String smsConsentRecord() => "$kSmsConsentLabel $kSmsConsentDisclosure (v$kSmsConsentVersion)";
+
+/// The client row written when they use the Text messages switch.
+/// Turning it off sets [sms_declined_at]. That is a no: no texts, and no
+/// invite. Turning it on clears that. "Not now" does not call this — a
+/// snooze leaves sms_declined_at unset, which is not a no.
+Map<String, Object?> smsPreferenceClientWrite({
+  required bool optIn,
+  required String now,
+}) =>
+    {
+      "sms_opt_in": optIn,
+      "sms_opt_in_at": optIn ? now : null,
+      "sms_consent_text": optIn ? smsConsentRecord() : null,
+      "sms_declined_at": optIn ? null : now,
+    };
+
+/// Turning texts off also clears the profile consent timestamp, so a stale
+/// yes cannot keep texts going. Turning them on does not write the profile
+/// here; the screen that showed the disclosure does that.
+Map<String, Object?>? smsPreferenceProfileWrite({required bool optIn}) {
+  if (optIn) return null;
+  return {
+    "sms_consent_at": null,
+    "sms_consent_text": null,
+  };
+}

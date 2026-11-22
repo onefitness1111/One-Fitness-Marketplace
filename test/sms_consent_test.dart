@@ -56,4 +56,22 @@ void main() {
     expect(record, contains(kSmsConsentVersion),
         reason: "consent must stay attributable to the exact text shown");
   });
+
+  test("turning texts off in the app is a decline, and turning them on clears it", () {
+    final off = smsPreferenceClientWrite(optIn: false, now: "2026-11-21T12:00:00Z");
+    expect(off["sms_opt_in"], isFalse);
+    expect(off["sms_opt_in_at"], isNull);
+    expect(off["sms_consent_text"], isNull);
+    expect(off["sms_declined_at"], "2026-11-21T12:00:00Z");
+    expect(smsPreferenceProfileWrite(optIn: false), {
+      "sms_consent_at": null,
+      "sms_consent_text": null,
+    });
+
+    final on = smsPreferenceClientWrite(optIn: true, now: "2026-11-21T12:05:00Z");
+    expect(on["sms_opt_in"], isTrue);
+    expect(on["sms_declined_at"], isNull);
+    expect(on["sms_consent_text"], smsConsentRecord());
+    expect(smsPreferenceProfileWrite(optIn: true), isNull);
+  });
 }

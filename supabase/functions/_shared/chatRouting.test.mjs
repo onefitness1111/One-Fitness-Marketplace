@@ -17,6 +17,9 @@ import {
   planTextsForSavedMessage,
   prefixBody,
   staffPushCopy,
+  INVITE_SMS_BODY,
+  INVITE_YES_CONFIRMATION,
+  heldStaffTexts,
   quoteMatches,
   windowOpen,
   WINDOW_MS,
@@ -438,16 +441,97 @@ test("an inbound text reaches a coach or the owner without a consent timestamp",
   assert.equal(toOwner.sms[0].toId, "owner");
 });
 
-test("a client without consent is not texted, and a coach with no phone is not texted", () => {
+test("a client who never answered gets one invite, not the coach's message", () => {
   const book = gym();
   book.person("sam").hasConsent = false;
+  book.person("sam").primaryTrainerId = null;
   const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
-  assert.equal(sent.sms.length, 0);
   assert.equal(sent.message.body, "Coach Chris: See you");
+  assert.equal(sent.message.smsPending, true);
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].body, INVITE_SMS_BODY);
+  assert.equal(sent.sms[0].body.includes("Sam"), false);
+  const again = book.sendApp({ fromId: "chris", toId: "sam", text: "Still here", now: T0 + MIN });
+  assert.equal(again.sms.length, 0);
+  assert.equal(again.message.smsPending, true);
+  assert.equal(again.message.body, "Coach Chris: Still here");
   book.person("chris").phone = "";
   book.person("sam").hasConsent = true;
-  const back = book.sendApp({ fromId: "sam", toId: "chris", text: "Ok", now: T0 + MIN, includeSms: false });
+  const back = book.sendApp({ fromId: "sam", toId: "chris", text: "Ok", now: T0 + 2 * MIN, includeSms: false });
   assert.equal(back.sms.length, 0);
+});
+
+test("YES after the invite opts the client in and is not a chat message", () => {
+  const book = gym();
+  book.person("sam").hasConsent = false;
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
+  const before = book.messages.length;
+  for (const text of ["YES", "y", "yes!", "ok yes"]) {
+    book.person("sam").hasConsent = false;
+    const yes = book.receiveSms({ fromId: "sam", text, now: T0 + MIN });
+    assert.equal(yes.kind, "invite-yes", text);
+    assert.equal(yes.confirmation, INVITE_YES_CONFIRMATION);
+    assert.equal(yes.sms.length, 0);
+    assert.equal(book.messages.length, before, text);
+    assert.equal(book.person("sam").hasConsent, true);
+  }
+  const chatting = book.receiveSms({ fromId: "sam", text: "YES", now: T0 + 2 * MIN });
+  assert.equal(chatting.kind, "active");
+  assert.equal(chatting.message.body, "Sam: YES");
+  const follow = book.sendApp({ fromId: "chris", toId: "sam", text: "Now by text", now: T0 + 3 * MIN });
+  assert.equal(follow.sms.length, 1);
+  assert.equal(follow.sms[0].body, "Coach Chris: Now by text");
+  assert.equal(follow.message.smsPending, undefined);
+});
+
+test("held staff texts go out oldest first, in the coach's public name", () => {
+  const texts = heldStaffTexts([
+    {
+      id: "b",
+      who: "trainer",
+      smsPending: true,
+      at: 2,
+      body: "Coach Pat: Later",
+      sender: { role: "coach", displayName: "Coach Pat" },
+      recipient: { role: "client" },
+      originChannel: "app",
+      routedTo: "conversation",
+    },
+    {
+      id: "a",
+      who: "trainer",
+      smsPending: true,
+      at: 1,
+      body: "Coach Chris: See you",
+      sender: { role: "coach", displayName: "Coach Chris" },
+      recipient: { role: "client" },
+      originChannel: "app",
+      routedTo: "conversation",
+    },
+    {
+      id: "c",
+      who: "client",
+      smsPending: true,
+      at: 0,
+      body: "Sam: no",
+      sender: { role: "client", displayName: "Sam" },
+      recipient: { role: "coach" },
+    },
+  ]);
+  assert.deepEqual(texts.map((item) => item.body), ["Coach Chris: See you", "Coach Pat: Later"]);
+});
+
+test("STOP and an in-app decline get no invite", () => {
+  const book = gym();
+  book.person("sam").hasConsent = false;
+  book.person("sam").declined = true;
+  const declined = book.sendApp({ fromId: "owner", toId: "sam", text: "Hello", now: T0 });
+  assert.equal(declined.sms.length, 0);
+  assert.equal(declined.message.smsPending, undefined);
+  book.person("sam").declined = false;
+  book.person("sam").optedOut = true;
+  const stopped = book.sendApp({ fromId: "chris", toId: "sam", text: "Hello again", now: T0 + MIN });
+  assert.equal(stopped.sms.length, 0);
 });
 
 test("a saved in-app client message texts staff with the coach-facing name", () => {
@@ -498,6 +582,8 @@ test("staff to client still follows the channel picker and client consent", () =
     includeSms: false,
   });
   assert.equal(quiet.sms.length, 0);
+  assert.equal(quiet.clientSms, null);
+  assert.equal(quiet.invite, null);
   const unconsented = planTextsForSavedMessage({
     sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
     recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, hasConsent: false },
@@ -508,6 +594,42 @@ test("staff to client still follows the channel picker and client consent", () =
     includeSms: true,
   });
   assert.equal(unconsented.sms.length, 0);
+  assert.equal(unconsented.clientSms, "invite");
+  assert.equal(unconsented.invite.body, INVITE_SMS_BODY);
+  assert.equal(unconsented.hold, true);
+  const held = planTextsForSavedMessage({
+    sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
+    recipient: {
+      id: "sam",
+      role: "client",
+      phone: "+15551110002",
+      optedOut: false,
+      hasConsent: false,
+      inviteSentAt: "2026-11-21T00:00:00Z",
+      primaryTrainerId: "someone-else",
+    },
+    body: "Coach Chris: On my way",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(held.clientSms, "hold");
+  assert.equal(held.invite, null);
+  assert.equal(held.hold, true);
+  assert.equal(held.sms.length, 0);
+  const saidNo = planTextsForSavedMessage({
+    sender: { id: "chris", role: "coach", displayName: "Coach Chris" },
+    recipient: { id: "sam", role: "client", phone: "+15551110002", optedOut: false, declined: true, hasConsent: true },
+    body: "Coach Chris: On my way",
+    originChannel: "app",
+    routedTo: "conversation",
+    coaches: [],
+    includeSms: true,
+  });
+  assert.equal(saidNo.clientSms, "skip");
+  assert.equal(saidNo.invite, null);
+  assert.equal(saidNo.hold, false);
   const optedOut = planTextsForSavedMessage({
     sender: { id: "sam", role: "client", displayName: "Sam" },
     recipient: { id: "chris", role: "coach", phone: "+15551110001", optedOut: true, hasConsent: false },

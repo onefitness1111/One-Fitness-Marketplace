@@ -39,7 +39,11 @@ export async function loadParty(admin: Admin, id: string) {
     .eq("id", id)
     .maybeSingle();
   if (!profile) return null;
-  const { data: client } = await admin.from("clients").select("sms_opt_in").eq("profile_id", id).maybeSingle();
+  const { data: client } = await admin
+    .from("clients")
+    .select("sms_opt_in, sms_declined_at, sms_invite_sent_at, sms_invite_text")
+    .eq("profile_id", id)
+    .maybeSingle();
   const name = await displayName(admin, id);
   const role = String(profile.role || "");
   return {
@@ -49,7 +53,11 @@ export async function loadParty(admin: Admin, id: string) {
     coachName: role === "coach" ? name : "",
     phone: String(profile.phone || "").trim(),
     optedOut: profile.sms_opted_out === true,
+    declined: client?.sms_declined_at != null,
+    inviteSentAt: (client?.sms_invite_sent_at as string | null) ?? null,
+    inviteText: (client?.sms_invite_text as string | null) ?? null,
     // A client's name here is profiles.name, the name coaches see.
+    // A coach's name is the coach name, never the legal name.
     hasConsent: hasSmsConsent({
       role,
       smsConsentAt: profile.sms_consent_at,
@@ -92,6 +100,7 @@ export async function markOptIn(admin: Admin, profileId: string): Promise<void> 
     sms_opt_in: true,
     sms_opt_in_at: now,
     sms_consent_text: CONSENT_TEXT,
+    sms_declined_at: null,
   }).eq("profile_id", profileId);
 }
 

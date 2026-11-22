@@ -3023,6 +3023,7 @@ class SupabaseService {
         "sms_opt_in": true,
         "sms_opt_in_at": now,
         "sms_consent_text": text,
+        "sms_declined_at": null,
       }).eq("profile_id", profileId);
       saved = true;
     } catch (_) {}
@@ -6375,16 +6376,15 @@ class SupabaseService {
       client.from("clients").update({"booking_location": location}).eq("profile_id", clientId);
 
   /// Notifications spec — the client's own SMS opt-in toggle (Profile
-  /// Settings → Notification Preferences).
-  static Future<void> updateSmsOptIn(String clientId, bool optIn) =>
-      client.from("clients").update({
-        "sms_opt_in": optIn,
-        // Evidence of express consent: when, and to what wording. Cleared
-        // on opt-out so a stale timestamp can't imply consent that was
-        // withdrawn.
-        "sms_opt_in_at": optIn ? DateTime.now().toUtc().toIso8601String() : null,
-        "sms_consent_text": optIn ? smsConsentRecord() : null,
-      }).eq("profile_id", clientId);
+  /// Settings → Notification Preferences). Off is a decline, not "Not now".
+  static Future<void> updateSmsOptIn(String clientId, bool optIn) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await client.from("clients").update(smsPreferenceClientWrite(optIn: optIn, now: now)).eq("profile_id", clientId);
+    final profile = smsPreferenceProfileWrite(optIn: optIn);
+    if (profile != null) {
+      await client.from("profiles").update(profile).eq("id", clientId);
+    }
+  }
 
   /// App (push) notifications on/off — sendPush skips anyone with this off.
   static Future<void> updatePushOptIn(String profileId, bool optIn) =>
