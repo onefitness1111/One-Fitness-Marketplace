@@ -1,5 +1,6 @@
 -- Verifies the least-privilege reads on profiles, clients, and trainers
--- (migration 20261123020000) as anon, a client, a coach, and the owner.
+-- (migrations 20261123020000 and 20261123030000) as anon, a client, a
+-- coach, and the owner.
 --
 -- One DO block. It always ends by raising an error that carries the report,
 -- so nothing it does (including the no-op updates it tries) is ever kept.
@@ -65,6 +66,9 @@ begin
       (23, 'client', $q$client no-op profile update$q$, $q$with u as (update public.profiles set push_opt_in = push_opt_in where id = '{C}' returning 1) select count(*) from u$q$, '1'),
       (24, 'client', $q$client no-op client row update$q$, $q$with u as (update public.clients set tour_seen = tour_seen where profile_id = '{C}' returning 1) select count(*) from u$q$, '1'),
       (25, 'client', $q$client sign-up upsert (no-op values)$q$, $q$with u as (insert into public.clients (profile_id, city, state) select profile_id, city, state from public.clients where profile_id = '{C}' on conflict (profile_id) do update set city = excluded.city, state = excluded.state returning 1) select count(*) from u$q$, '1'),
+      (25.1, 'client', $q$client reads own booking_location$q$, $q$select count(*) from (select booking_location from public.clients where profile_id = '{C}') s$q$, '1'),
+      (25.2, 'client', $q$client saves own booking_location (no-op)$q$, $q$with u as (update public.clients set booking_location = booking_location where profile_id = '{C}' returning 1) select count(*) from u$q$, '1'),
+      (25.3, 'client', $q$client cannot change another client's booking_location$q$, $q$with u as (update public.clients set booking_location = booking_location where profile_id = '{X}' returning 1) select count(*) from u$q$, '0'),
       (26, 'coach', $q$coach reads roster client rows, app columns$q$, $q$select count(*) from (select profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason from public.clients) s$q$, '>0'),
       (27, 'coach', $q$coach cannot read client phones$q$, $q$select count(phone) from public.profiles$q$, 'denied'),
       (28, 'coach', $q$coach cannot read client emails directly$q$, $q$select count(email) from public.profiles$q$, 'denied'),

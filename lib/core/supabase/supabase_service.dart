@@ -564,7 +564,7 @@ class SupabaseService {
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
-      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason";
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason, booking_location";
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =

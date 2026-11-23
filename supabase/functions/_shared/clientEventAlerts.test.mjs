@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  sameCoachName,
   CLIENT_ALERTS_PER_HOUR,
   buildAlert,
   callerTargetAllowed,
@@ -23,6 +24,7 @@ test("the titles the 1.1.2 app sends map to events", () => {
   assert.equal(k("Measurement logged", OWNER), "measurement");
   assert.equal(k("New nutrition program needed", OWNER), "intake");
   assert.equal(k("New training program needed", OWNER), "intake");
+  assert.equal(k("Exercise swap"), "swap");
   assert.equal(classifyClientPush({ callerId: C, profileId: OWNER, title: "New nutrition program needed" }).intakeKind, "nutrition");
 });
 
@@ -32,8 +34,8 @@ test("a client's notice to themself is a no-op, whatever the title", () => {
   }
 });
 
-test("unknown titles, Exercise swap, and blank ids are refused", () => {
-  for (const t of ["Exercise swap", "Free money", "new booking", "", "New booking!"]) {
+test("unknown titles and blank ids are refused", () => {
+  for (const t of ["Free money", "new booking", "", "New booking!", "exercise swap"]) {
     assert.equal(classifyClientPush({ callerId: C, profileId: COACH, title: t }).kind, null);
   }
   assert.equal(classifyClientPush({ callerId: "", profileId: COACH, title: "New booking" }).kind, null);
@@ -127,4 +129,56 @@ test("send-push routes clients to the safe path; that path never texts", () => {
   assert.equal(clientPath.includes("body.body"), false, "client words must never be sent");
   assert.equal(clientPath.includes("body.data"), false);
   assert.ok(clientPath.includes('.eq("client_id", callerId)'));
+});
+
+test("swap alert goes to the program's coach, with a count and no client words", () => {
+  const facts = { nowMs: NOW, clientName: "Sam", owners: [OWNER], programCoachId: COACH,
+    swap: { logId: "log-1", swapsAt: ago(2), count: 2 } };
+  const a = buildAlert({ kind: "swap" }, facts);
+  assert.deepEqual(a.recipients, [COACH]);
+  assert.equal(a.title, "Exercise swap");
+  assert.equal(a.body, "Sam swapped 2 exercises in today's workout. The program was not changed.");
+  assert.equal(a.ref, `swap:log-1:${ago(2)}`);
+  assert.equal(buildAlert({ kind: "swap" }, { ...facts, swap: { ...facts.swap, count: 1 } }).body,
+    "Sam swapped 1 exercise in today's workout. The program was not changed.");
+});
+
+test("swap alert falls back to the owner when no coach matches the program", () => {
+  const a = buildAlert({ kind: "swap" }, { nowMs: NOW, clientName: "Sam", owners: [OWNER],
+    swap: { logId: "log-1", swapsAt: ago(1), count: 1 } });
+  assert.deepEqual(a.recipients, [OWNER]);
+});
+
+test("swap alert needs a fresh stamped swap", () => {
+  const base = { nowMs: NOW, owners: [OWNER] };
+  assert.equal(buildAlert({ kind: "swap" }, { ...base, swap: null }), null);
+  assert.equal(buildAlert({ kind: "swap" }, { ...base, swap: { logId: "l", swapsAt: ago(30), count: 1 } }), null);
+  assert.equal(buildAlert({ kind: "swap" }, { ...base, swap: { logId: "l", swapsAt: ago(1), count: 0 } }), null);
+  assert.equal(buildAlert({ kind: "swap" }, { nowMs: NOW, owners: [], swap: { logId: "l", swapsAt: ago(1), count: 1 } }), null);
+});
+
+test("swap calls may target any staff member; other kinds only server recipients", () => {
+  const swap = buildAlert({ kind: "swap" }, { nowMs: NOW, owners: [OWNER], swap: { logId: "l", swapsAt: ago(1), count: 1 } });
+  assert.ok(callerTargetAllowed(swap, "any-coach", "coach"));
+  assert.ok(callerTargetAllowed(swap, OWNER, "owner"));
+  assert.ok(!callerTargetAllowed(swap, "a-client", "client"));
+  assert.ok(!callerTargetAllowed(swap, "nobody", ""));
+  const booking = buildAlert({ kind: "booking" }, { nowMs: NOW,
+    booking: { id: "b", trainer_id: COACH, date: "2026-11-24", slot_min: 600, created_at: ago(1) } });
+  assert.ok(!callerTargetAllowed(booking, "other-coach", "coach"));
+});
+
+test("coach-name match is exact, trimmed, case-insensitive, never blank", () => {
+  assert.ok(sameCoachName(" Coach Chris ", "coach chris"));
+  assert.ok(!sameCoachName("Coach Chris", "Coach Christine"));
+  assert.ok(!sameCoachName("", ""));
+  assert.ok(!sameCoachName(null, "Owner"));
+});
+
+test("the swap path reads only the caller's record and still never texts", () => {
+  const clientPath = readFileSync(new URL("./clientEventPush.ts", import.meta.url), "utf8");
+  const swap = clientPath.slice(clientPath.indexOf('case "swap"'), clientPath.indexOf("const alert = buildAlert"));
+  assert.ok(swap.includes('.eq("profile_id", callerId)'));
+  assert.equal(swap.includes("primary_trainer_id"), false);
+  assert.equal(clientPath.includes("primary_trainer_id"), false);
 });

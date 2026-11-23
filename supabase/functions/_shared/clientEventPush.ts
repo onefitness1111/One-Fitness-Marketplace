@@ -12,6 +12,7 @@ import {
   buildAlert,
   callerTargetAllowed,
   classifyClientPush,
+  sameCoachName,
 } from "./clientEventAlerts.mjs";
 
 export type ClientPushResult = { ok: boolean; sent: number; skipped?: string };
@@ -78,11 +79,41 @@ export async function handleClientPush(
       facts.intakeFlag = rows.find((r) => (r.kind === "nutrition") === wantNutrition) ?? null;
       break;
     }
+    case "swap": {
+      facts.owners = await ownerIds(admin);
+      // swaps_at / swap_log_id are stamped by trg_client_records_stamp_swap
+      // when a saved workout gains (or changes) its swaps.
+      const { data } = await admin.from("client_records")
+        .select("swaps_at, swap_log_id, logs:data->workoutLogs, programs:data->savedPrograms")
+        .eq("profile_id", callerId).maybeSingle();
+      const logs = Array.isArray(data?.logs) ? data.logs : [];
+      // deno-lint-ignore no-explicit-any
+      const entry = logs.find((l: any) => String(l?.id ?? "") === String(data?.swap_log_id ?? ""));
+      const count = Array.isArray(entry?.swaps) ? entry.swaps.length : 0;
+      facts.swap = data?.swap_log_id ? { logId: data.swap_log_id, swapsAt: data.swaps_at, count } : null;
+      const programs = Array.isArray(data?.programs) ? data.programs : [];
+      // deno-lint-ignore no-explicit-any
+      const program = programs.find((p: any) => String(p?.id ?? "") === String(entry?.programId ?? ""));
+      const author = String(program?.createdBy ?? "").trim();
+      if (author) {
+        const { data: coaches } = await admin.from("trainers").select("profile_id, coach_name").not("coach_name", "is", null);
+        // deno-lint-ignore no-explicit-any
+        const hit = (coaches ?? []).find((t: any) => sameCoachName(t.coach_name, author));
+        if (hit?.profile_id) {
+          const { data: who } = await admin.from("profiles").select("role, deleted_at").eq("id", hit.profile_id).maybeSingle();
+          if ((who?.role === "coach" || who?.role === "owner") && !who?.deleted_at) facts.programCoachId = hit.profile_id;
+        }
+      }
+      break;
+    }
   }
 
   const alert = buildAlert(classified, facts);
   if (!alert) return { ok: false, sent: 0, skipped: "no-matching-event" };
-  if (!callerTargetAllowed(alert, profileId)) return { ok: false, sent: 0, skipped: "wrong-recipient" };
+  const { data: target } = await admin.from("profiles").select("role").eq("id", profileId).maybeSingle();
+  if (!callerTargetAllowed(alert, profileId, String(target?.role ?? ""))) {
+    return { ok: false, sent: 0, skipped: "wrong-recipient" };
+  }
 
   // Per-client cap, then one row per (event, recipient) so repeats send nothing.
   const hourAgo = new Date(nowMs - 3_600_000).toISOString();
