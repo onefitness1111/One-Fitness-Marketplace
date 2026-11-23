@@ -1,5 +1,5 @@
 // Alerts a client's own action sends to staff (new booking, cancel, sign-up,
-// measurement, intake). Pure rules only; send-push does the database reads.
+// measurement, intake, exercise swap). Pure rules only; send-push does the database reads.
 //
 // The app (1.1.2 and later) calls send-push once per staff recipient with a
 // title and body it wrote itself. For a client caller the server keeps only
@@ -24,6 +24,7 @@ const STAFF_TITLES = new Map([
   ["Measurement logged", "measurement"],
   ["New nutrition program needed", "intake"],
   ["New training program needed", "intake"],
+  ["Exercise swap", "swap"],
 ]);
 
 /**
@@ -83,7 +84,8 @@ export function isRecent(iso, nowMs, minutes) {
  * don't show a real, recent event by this client.
  *
  * facts: { nowMs, clientName, owners: [id], booking?, cancel?, profileCreatedAt?,
- *          measurementAt?, intakeFlag? }
+ *          measurementAt?, intakeFlag?, swap?: { logId, swapsAt, count },
+ *          programCoachId? }
  */
 export function buildAlert(classified, facts) {
   const now = facts.nowMs;
@@ -138,12 +140,43 @@ export function buildAlert(classified, facts) {
         body: `${name} filed a new intake.`,
       };
     }
+    case "swap": {
+      // The app sends this to every coach. The server sends it once, to the
+      // coach who wrote the program the session came from (matched by their
+      // coach name), or to the owner when no coach can be matched.
+      const sw = facts.swap;
+      if (!sw?.logId || !(sw.count > 0) || !isRecent(sw.swapsAt, now, EVENT_WINDOW_MIN)) return null;
+      const recipients = facts.programCoachId ? [facts.programCoachId] : owners;
+      if (!recipients.length) return null;
+      const n = Math.min(Math.floor(sw.count), 99);
+      return {
+        kind: "swap",
+        ref: `swap:${sw.logId}:${sw.swapsAt}`,
+        recipients,
+        title: "Exercise swap",
+        body: `${name} swapped ${n} exercise${n === 1 ? "" : "s"} in today's workout. The program was not changed.`,
+      };
+    }
     default:
       return null;
   }
 }
 
-/** The app names one recipient per call; it must be one the server chose. */
-export function callerTargetAllowed(alert, profileId) {
-  return !!alert && alert.recipients.includes(String(profileId ?? "").trim());
+/** Case-insensitive, trimmed coach-name match; blank never matches. */
+export function sameCoachName(a, b) {
+  const x = String(a ?? "").trim().toLowerCase();
+  const y = String(b ?? "").trim().toLowerCase();
+  return x !== "" && x === y;
+}
+
+/**
+ * The app names one recipient per call. For most alerts it must be one the
+ * server chose. The swap alert is fanned out by the app to every coach, so
+ * any staff member is an acceptable target; the server still sends only to
+ * its own recipients, once.
+ */
+export function callerTargetAllowed(alert, profileId, targetRole) {
+  if (!alert) return false;
+  if (alert.kind === "swap") return targetRole === "coach" || targetRole === "owner";
+  return alert.recipients.includes(String(profileId ?? "").trim());
 }
