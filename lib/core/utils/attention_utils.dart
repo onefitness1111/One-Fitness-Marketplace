@@ -29,6 +29,47 @@ List<AttentionItem> computeNeedsAttention(List<ClientInfo> myRoster, Map<String,
   return out;
 }
 
+/// How far ahead a coach's "needs a program" list looks: clients booked
+/// with that coach in the next 7 days.
+const needsProgramLookaheadDays = 7;
+
+/// Clients with a session with [coachId] (as the session's trainer) that
+/// hasn't ended yet and starts within the next [needsProgramLookaheadDays]
+/// days, in the gym's local time. Cancelled sessions don't count. Based
+/// only on bookings, never on a primary coach or any assignment.
+Set<String> clientsBookedWithCoachSoon(Iterable<Booking> bookings, String coachId, {DateTime? now}) {
+  final wallNow = pacificWallNow(now);
+  final until = DateTime(wallNow.year, wallNow.month, wallNow.day + needsProgramLookaheadDays,
+      wallNow.hour, wallNow.minute, wallNow.second);
+  final out = <String>{};
+  for (final b in bookings) {
+    if (b.trainerId != coachId || b.clientId.isEmpty) continue;
+    if (b.status == "cancelled" || (b.attendanceStatus ?? "").contains("cancel")) continue;
+    final day = DateTime.tryParse(b.date);
+    if (day == null) continue;
+    final start = DateTime(day.year, day.month, day.day, 0, b.slot);
+    final end = DateTime(day.year, day.month, day.day, 0, b.slot + (b.durationMin > 0 ? b.durationMin : 60));
+    if (end.isAfter(wallNow) && !start.isAfter(until)) out.add(b.clientId);
+  }
+  return out;
+}
+
+/// Who the "No workout program" / "No nutrition program" / program-update
+/// rows are about. The owner sees everyone. A coach sees only clients
+/// booked with them in the next 7 days ([clientsBookedWithCoachSoon]).
+List<ClientInfo> needsProgramRoster({
+  required List<ClientInfo> roster,
+  required List<Booking> bookings,
+  required bool isOwner,
+  required String? coachId,
+  DateTime? now,
+}) {
+  if (isOwner) return roster;
+  if (coachId == null || coachId.isEmpty) return const [];
+  final ids = clientsBookedWithCoachSoon(bookings, coachId, now: now);
+  return roster.where((c) => ids.contains(c.id)).toList();
+}
+
 /// Mirrors attentionHelpers.js `computeUnloggedAttendance` — past-or-today
 /// sessions the coach never marked an outcome for.
 List<AttentionItem> computeUnloggedAttendance(List<ClientInfo> myRoster, List<Booking> bookings) {
