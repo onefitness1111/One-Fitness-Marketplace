@@ -81,13 +81,18 @@ String stamp([DateTime? at]) {
 }
 
 /// yyyy-MM-dd in America/Los_Angeles, which is the gym's calendar day.
-String isoTodayPacific([DateTime? now]) {
+String isoTodayPacific([DateTime? now]) => isoDate(pacificWallNow(now));
+
+/// The gym's wall-clock time (America/Los_Angeles) as a plain date-time,
+/// whatever time zone the phone is in. Compare it only with other wall
+/// times built the same way (e.g. a booking's date + slot minutes).
+DateTime pacificWallNow([DateTime? now]) {
   final utc = (now ?? DateTime.now()).toUtc();
   final start = DateTime.utc(utc.year, 3, _nthSunday(utc.year, 3, 2), 10);
   final end = DateTime.utc(utc.year, 11, _nthSunday(utc.year, 11, 1), 9);
   final daylight = !utc.isBefore(start) && utc.isBefore(end);
   final wall = utc.subtract(Duration(hours: daylight ? 7 : 8));
-  return isoDate(wall);
+  return DateTime(wall.year, wall.month, wall.day, wall.hour, wall.minute, wall.second);
 }
 
 int _nthSunday(int year, int month, int n) {

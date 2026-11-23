@@ -264,11 +264,20 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     final sessionBookings = isOwner ? bookings : bookings.where((b) => b.trainerId == trainerAuth).toList();
     final codeAlerts = isOwner ? roster : roster.where((c) => c.referredByTrainerId == trainerAuth).toList();
 
+    // Program gaps: a coach sees only clients booked with them in the next
+    // 7 days (bookings only, never a primary coach). The owner sees everyone.
+    final programRoster = needsProgramRoster(
+      roster: roster,
+      bookings: bookings,
+      isOwner: isOwner,
+      coachId: trainerAuth,
+    );
+
     final needsAttention = [
-      ...computeNeedsAttention(roster, clientRecords),
+      ...computeNeedsAttention(programRoster, clientRecords),
       ...computeUnloggedAttendance(roster, sessionBookings),
       ...computeCoachCodeAlerts(codeAlerts),
-      ...programRefreshAttention(roster, clientRecords, forOwner: isOwner),
+      ...programRefreshAttention(programRoster, clientRecords, forOwner: isOwner),
       ...quietClientAttention(
         nudges: ref.watch(dashboardExtrasProvider).nudges,
         records: clientRecords,
