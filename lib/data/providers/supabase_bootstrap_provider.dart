@@ -23,7 +23,6 @@ import "../models/charge.dart";
 import "../models/client_record.dart";
 import "../models/comm_message.dart";
 import "../models/earned_badge.dart";
-import "../models/exercise_def.dart";
 import "../models/membership_plan.dart";
 import "../models/points_ledger_entry.dart";
 import "../models/squad.dart";
@@ -120,8 +119,11 @@ void _subscribeRealtimeUpdates(Ref ref) {
         schema: "public",
         table: "exercises",
         callback: (payload) async {
-          final exercises = await SupabaseService.loadExercises();
-          if (exercises.isNotEmpty) ref.read(exerciseCatalogProvider.notifier).setAll(exercises);
+          await _loadExerciseCatalog(
+            ref.read(exerciseCatalogProvider.notifier),
+            ref.read(exerciseCatalogStatusProvider.notifier),
+            fresh: true,
+          );
         },
       )
       .subscribe();
@@ -1260,9 +1262,8 @@ void _startDeferred(_Hold hold, int generation, String? ownClientId) {
   later(SupabaseService.loadProgramsLibrary(), "programs", hold.programs.setAll);
   later(SupabaseService.loadNutritionLibrary(), "nutrition", hold.nutrition.setAll);
   later(SupabaseService.loadCustomMeals(), "custom meals", hold.meals.setAll);
-  later(SupabaseService.loadExercises(), "exercises", (List<ExerciseDef> v) {
-    if (v.isNotEmpty) hold.exercises.setAll(v);
-  });
+  // Not gated on [generation]: see [_loadExerciseCatalog].
+  unawaited(_loadExerciseCatalog(hold.exercises, hold.exerciseStatus));
   later(SupabaseService.loadSquads(), "squads", hold.squads.setAll);
   later(SupabaseService.loadWaitlist(), "waitlist", hold.waitlist.setAll);
   later(SupabaseService.loadPackageCategories(), "package categories", hold.categories.setAll);
@@ -1284,6 +1285,52 @@ void _startDeferred(_Hold hold, int generation, String? ownClientId) {
 }
 
 final Map<GymSection, Future<void>> _sectionInflight = {};
+
+Future<void>? _exerciseLoad;
+
+/// Loads the exercise library and shows it.
+///
+/// The library is one gym-wide table that every signed-in account reads the
+/// same way, so a result is applied even when a newer sign-in load started
+/// while it was in flight. Before, a result that arrived after the load
+/// generation moved on was dropped without a word, and the page kept
+/// showing the built-in sample list. A non-empty list is never replaced
+/// with an empty one. [fresh] waits out a load already running and then
+/// reads again, for a change that may have landed after it started.
+Future<void> _loadExerciseCatalog(
+  ExerciseCatalogNotifier catalog,
+  ExerciseCatalogStatusNotifier status, {
+  bool fresh = false,
+}) {
+  final running = _exerciseLoad;
+  if (running != null) {
+    if (!fresh) return running;
+    return running.then((_) => _loadExerciseCatalog(catalog, status));
+  }
+  final load = () async {
+    try {
+      final rows = await SupabaseService.loadExercises();
+      if (rows.isNotEmpty || catalog.isEmpty) catalog.setAll(rows);
+      status.set(ExerciseCatalogStatus.loaded);
+    } catch (e) {
+      if (!status.isLoaded) status.set(ExerciseCatalogStatus.failed);
+      // ignore: avoid_print
+      print("[exercises] load failed: $e");
+    } finally {
+      _exerciseLoad = null;
+    }
+  }();
+  _exerciseLoad = load;
+  return load;
+}
+
+/// Asks for the exercise library again, for the Exercises page's
+/// "Try again" button and for a page opened before the first load landed.
+Future<void> reloadExerciseCatalog(WidgetRef ref) {
+  final status = ref.read(exerciseCatalogStatusProvider.notifier);
+  if (!status.isLoaded) status.set(ExerciseCatalogStatus.loading);
+  return _loadExerciseCatalog(ref.read(exerciseCatalogProvider.notifier), status);
+}
 bool _fullBookingsLoaded = false;
 final Map<String, Future<void>> _fullRecords = {};
 
@@ -1381,9 +1428,10 @@ Future<void> _loadSection(_Hold hold, int generation, GymSection section) async 
         final rows = await SupabaseService.loadCustomMeals();
         if (generation == _loadGeneration) hold.meals.setAll(rows);
       case GymSection.exercises:
-        final rows = await SupabaseService.loadExercises();
-        if (generation != _loadGeneration || rows.isEmpty) return;
-        hold.exercises.setAll(rows);
+        await _loadExerciseCatalog(hold.exercises, hold.exerciseStatus);
+        // Never remember a load that didn't land, so opening Exercises
+        // again asks the server again instead of keeping an empty page.
+        if (!hold.exerciseStatus.isLoaded) _sectionInflight.remove(section);
       case GymSection.squads:
         final rows = await SupabaseService.loadSquads();
         if (generation == _loadGeneration) hold.squads.setAll(rows);
@@ -1544,6 +1592,7 @@ class _Hold {
         nutrition = ref.read(nutritionLibraryProvider.notifier),
         meals = ref.read(customMealsProvider.notifier),
         exercises = ref.read(exerciseCatalogProvider.notifier),
+        exerciseStatus = ref.read(exerciseCatalogStatusProvider.notifier),
         squads = ref.read(squadsProvider.notifier),
         waitlist = ref.read(waitlistProvider.notifier),
         categories = ref.read(packageCategoriesProvider.notifier),
@@ -1582,6 +1631,7 @@ class _Hold {
   final NutritionLibraryNotifier nutrition;
   final CustomMealsNotifier meals;
   final ExerciseCatalogNotifier exercises;
+  final ExerciseCatalogStatusNotifier exerciseStatus;
   final SquadsNotifier squads;
   final WaitlistNotifier waitlist;
   final PackageCategoriesNotifier categories;

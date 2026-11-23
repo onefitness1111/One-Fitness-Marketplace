@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:image_picker/image_picker.dart";
@@ -9,6 +11,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/exercise_def.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../data/providers/supabase_bootstrap_provider.dart";
 
 /// Mirrors ExercisesTab.jsx + ExerciseEditForm.jsx — the coach-editable
 /// exercise library. Trimmed: no regression/progression swap-links, no
@@ -32,6 +35,19 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
   bool _creatingNew = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Opened before the library arrived (or after a load that failed):
+    // ask again now rather than wait for the next sign-in.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ref.read(exerciseCatalogStatusProvider) != ExerciseCatalogStatus.loaded) {
+        unawaited(reloadExerciseCatalog(ref));
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _search.dispose();
     super.dispose();
@@ -40,9 +56,18 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
   @override
   Widget build(BuildContext context) {
     final catalog = ref.watch(exerciseCatalogProvider);
+    final status = ref.watch(exerciseCatalogStatusProvider);
     try {
       if (ExercisesScreen.debugThrowInBuild) {
         throw StateError("exercises");
+      }
+      // Never show a partial or stand-in list as the library. Until the
+      // real one is in, say so.
+      if (status != ExerciseCatalogStatus.loaded && catalog.isEmpty && !_creatingNew) {
+        return _ExercisesNotLoaded(
+          failed: status == ExerciseCatalogStatus.failed,
+          onRetry: () => unawaited(reloadExerciseCatalog(ref)),
+        );
       }
       return _buildLoaded(catalog);
     } catch (e, st) {
@@ -201,6 +226,52 @@ class _ExercisesScreenState extends ConsumerState<ExercisesScreen> {
           ),
           if (visible.isEmpty)
             const HintBox(text: "No exercises match that search."),
+        ],
+      ),
+    );
+  }
+}
+
+/// The library hasn't arrived yet, or the last try failed.
+class _ExercisesNotLoaded extends StatelessWidget {
+  const _ExercisesNotLoaded({required this.failed, required this.onRetry});
+
+  final bool failed;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel("Exercises"),
+          const SizedBox(height: 10),
+          if (!failed) ...[
+            Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.gold),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(child: Text("Loading your exercise library…")),
+              ],
+            ),
+          ] else ...[
+            const HintBox(text: "Your exercise library didn't load. Check your connection and try again."),
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: Icon(LucideIcons.refreshCw, size: 14, color: AppColors.gold),
+              label: Text(
+                "Try again",
+                style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 12),
+              ),
+            ),
+          ],
         ],
       ),
     );

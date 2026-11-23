@@ -1,6 +1,5 @@
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../core/utils/date_utils.dart";
-import "../mock/exercise_catalog.dart";
 import "../mock/meal_catalog.dart";
 import "../mock/mock_data.dart";
 import "../models/blocked_time.dart";
@@ -161,11 +160,15 @@ class BlockedTimesNotifier extends Notifier<List<BlockedTime>> {
 
 final blockedTimesProvider = NotifierProvider<BlockedTimesNotifier, List<BlockedTime>>(BlockedTimesNotifier.new);
 
-/// The coach-editable exercise library (src/data/exercises.js), starting
-/// from the curated seed catalog.
+/// The coach-editable exercise library, as stored in `public.exercises`.
+///
+/// Starts empty. It used to start from a 49-item sample list, which the
+/// owner then saw as their whole library whenever the real load was
+/// dropped. [exerciseCatalogStatusProvider] says whether the real list has
+/// arrived, so a screen can show "Loading" instead of a short list.
 class ExerciseCatalogNotifier extends Notifier<List<ExerciseDef>> {
   @override
-  List<ExerciseDef> build() => kExerciseCatalog;
+  List<ExerciseDef> build() => const [];
 
   void upsert(ExerciseDef ex) {
     final exists = state.any((e) => e.id == ex.id);
@@ -175,9 +178,26 @@ class ExerciseCatalogNotifier extends Notifier<List<ExerciseDef>> {
   void remove(String id) => state = state.where((e) => e.id != id).toList();
 
   void setAll(List<ExerciseDef> next) => state = next;
+
+  bool get isEmpty => state.isEmpty;
 }
 
 final exerciseCatalogProvider = NotifierProvider<ExerciseCatalogNotifier, List<ExerciseDef>>(ExerciseCatalogNotifier.new);
+
+/// Where the exercise library load stands on this phone.
+enum ExerciseCatalogStatus { loading, loaded, failed }
+
+class ExerciseCatalogStatusNotifier extends Notifier<ExerciseCatalogStatus> {
+  @override
+  ExerciseCatalogStatus build() => ExerciseCatalogStatus.loading;
+
+  void set(ExerciseCatalogStatus next) => state = next;
+
+  bool get isLoaded => state == ExerciseCatalogStatus.loaded;
+}
+
+final exerciseCatalogStatusProvider =
+    NotifierProvider<ExerciseCatalogStatusNotifier, ExerciseCatalogStatus>(ExerciseCatalogStatusNotifier.new);
 
 /// The gym's charge ledger (Reports → Financial), coach-mutable for
 /// waive/refund actions (mocked as local-only mutations, no real Stripe).
