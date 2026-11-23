@@ -54,6 +54,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("the library starts empty, never as a sample list", (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    expect(container.read(exerciseCatalogProvider), isEmpty);
+    expect(container.read(exerciseCatalogStatusProvider), ExerciseCatalogStatus.loading);
+  });
+
+  testWidgets("before the library arrives the page says it is loading", (tester) async {
+    await _pumpCoachExercises(
+      tester,
+      const [],
+      status: ExerciseCatalogStatus.loading,
+      settle: false,
+    );
+
+    expect(find.text("Loading your exercise library…"), findsOneWidget);
+    expect(find.textContaining("EXERCISES ("), findsNothing);
+    expect(find.text("No exercises match that search."), findsNothing);
+
+    // The page asks for the library itself. With no server in a test that
+    // ask fails, and the page offers Try again rather than a short list.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text("Try again"), findsOneWidget);
+    expect(find.textContaining("EXERCISES ("), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("a failed load offers Try again instead of a short list", (tester) async {
+    await _pumpCoachExercises(tester, const [], status: ExerciseCatalogStatus.failed);
+
+    expect(
+      find.text("Your exercise library didn't load. Check your connection and try again."),
+      findsOneWidget,
+    );
+    expect(find.text("Try again"), findsOneWidget);
+    expect(find.textContaining("EXERCISES ("), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("a build failure shows a message instead of a blank page", (
     tester,
   ) async {
@@ -72,8 +112,10 @@ void main() {
 
 Future<void> _pumpCoachExercises(
   WidgetTester tester,
-  List<ExerciseDef> catalog,
-) async {
+  List<ExerciseDef> catalog, {
+  ExerciseCatalogStatus status = ExerciseCatalogStatus.loaded,
+  bool settle = true,
+}) async {
   tester.view.physicalSize = _phone;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -84,10 +126,12 @@ Future<void> _pumpCoachExercises(
         trainerAuthProvider.overrideWith(() => _CoachAuth()),
         trainerModeProvider.overrideWith(() => _ExercisesMode()),
         exerciseCatalogProvider.overrideWith(() => _FixedCatalog(catalog)),
+        exerciseCatalogStatusProvider.overrideWith(() => _FixedStatus(status)),
       ],
       child: const MaterialApp(home: TrainerShell()),
     ),
   );
+  if (!settle) return;
   // The shell fades the page in. One frame is not enough to paint it.
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
@@ -159,4 +203,12 @@ class _FixedCatalog extends ExerciseCatalogNotifier {
 
   @override
   List<ExerciseDef> build() => items;
+}
+
+class _FixedStatus extends ExerciseCatalogStatusNotifier {
+  _FixedStatus(this.initial);
+  final ExerciseCatalogStatus initial;
+
+  @override
+  ExerciseCatalogStatus build() => initial;
 }
