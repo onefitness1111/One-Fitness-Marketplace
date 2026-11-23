@@ -6,12 +6,20 @@ const sql = readFileSync(new URL("./20261123020000_revoke_temp_select_least_priv
 const dart = readFileSync(new URL("../../lib/core/supabase/supabase_service.dart", import.meta.url), "utf8");
 const dash = readFileSync(new URL("../../lib/data/providers/dashboard_load.dart", import.meta.url), "utf8");
 
-const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+// Later migrations may add columns to the allowed lists (e.g. booking_location).
+const later = ["20261123030000_booking_location_and_swap_stamp.sql"]
+  .map((f) => readFileSync(new URL(`./${f}`, import.meta.url), "utf8"));
+const strip = (t) => t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+const code = strip(sql);
+const laterCode = later.map(strip).join("\n");
 const list = (s) => s.split(",").map((c) => c.trim()).filter(Boolean);
-function granted(table) {
-  const m = new RegExp(`grant select \\(([^)]*)\\) on public\\.${table} to authenticated`).exec(code);
-  assert.ok(m, `no column grant for ${table}`);
-  return new Set(list(m[1]));
+function granted(table, withLater = true) {
+  const re = new RegExp(`grant select \\(([^)]*)\\) on public\\.${table} to authenticated`, "g");
+  const m = [...code.matchAll(re)];
+  assert.ok(m.length, `no column grant for ${table}`);
+  const cols = new Set(m.flatMap((x) => list(x[1])));
+  if (withLater) for (const x of laterCode.matchAll(re)) list(x[1]).forEach((c) => cols.add(c));
+  return cols;
 }
 function dartConst(src, name) {
   const m = new RegExp(`${name}\\s*=\\s*"([^"]+)"`).exec(src);
