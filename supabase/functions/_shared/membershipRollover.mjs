@@ -69,10 +69,13 @@ export function rolloverCap(plan, enrollment) {
   return planRolloverMax(plan);
 }
 
-/// Allowance for one month. legacy.applies is true only for the plan that
-/// currently occupies the client's membership slot, and only as a fallback
-/// when that plan entry has no maxSessionsOverride of its own.
-export function sessionAllowance(plan, enrollment, month, legacy) {
+/// Base allowance for one month: the plan count, or this client's override
+/// for that month. Sessions already rolled into the month are not included,
+/// so a carry-over expires with the month and cannot be rolled again.
+/// legacy.applies is true only for the plan that currently occupies the
+/// client's membership slot, and only as a fallback when that plan entry
+/// has no maxSessionsOverride of its own.
+export function baseSessionAllowance(plan, enrollment, month, legacy) {
   let base = planMaxSessions(plan);
   let override = num(enrollment?.maxSessionsOverride);
   let overrideMonth = enrollment?.maxSessionsOverrideMonth || null;
@@ -84,6 +87,14 @@ export function sessionAllowance(plan, enrollment, month, legacy) {
     const stale = planKind(plan) === "membership" && !!overrideMonth && overrideMonth !== month;
     if (!stale) base = Math.max(0, override);
   }
+  return base;
+}
+
+/// Allowance for one month: baseSessionAllowance plus sessions already
+/// rolled into that month. Use this to show what the client can use now.
+/// Month-end rollover uses baseSessionAllowance.
+export function sessionAllowance(plan, enrollment, month, legacy) {
+  let base = baseSessionAllowance(plan, enrollment, month, legacy);
   if (planKind(plan) === "membership" && enrollment?.rolloverMonth === month) {
     base += Math.max(0, num(enrollment.rolloverSessions) ?? 0);
   }
@@ -117,7 +128,9 @@ export function applyMonthEndEnrollment(plan, enrollment, bookings, newMonth, le
   if (start && start > prev) return { enrollment, changed: false };
   const ends = enrollment.endsAt ? String(enrollment.endsAt).slice(0, 10) : "";
   if (ends && ends < `${newMonth}-01`) return { enrollment, changed: false };
-  const allowance = sessionAllowance(plan, enrollment, prev, legacy);
+  // Unused of this month's own allowance only. Sessions already rolled
+  // into prev expire with that month and are not carried again.
+  const allowance = baseSessionAllowance(plan, enrollment, prev, legacy);
   const used = consumedSessions(bookings, enrollment.planId || plan.id, prev);
   const unused = Math.max(0, allowance - used);
   const rolled = Math.min(unused, rolloverCap(plan, enrollment));

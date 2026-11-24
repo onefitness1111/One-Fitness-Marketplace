@@ -93,6 +93,8 @@ test("rollover does not compound and a second run is a no-op", () => {
   assert.equal(second.changed, false);
   assert.equal(second.enrollment.rolloverSessions, 4);
 
+  // November's own 10 were unused, so 4 of those (the cap) roll into
+  // December. The 4 already sitting in November are not in this count.
   const december = applyMonthEndEnrollment(
     ten,
     enrol("ten", { rolloverSessions: 4, rolloverMonth: "2026-11" }),
@@ -102,6 +104,46 @@ test("rollover does not compound and a second run is a no-op", () => {
   );
   assert.equal(december.enrollment.rolloverSessions, 4);
   assert.equal(december.enrollment.rolloverMonth, "2026-12");
+});
+
+test("rolled sessions expire after one month and are not rolled again", () => {
+  const usedAllBase = [
+    { planId: "ten", date: "2026-11-02", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-03", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-04", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-05", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-06", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-07", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-08", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-09", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-10", attendanceStatus: "checked-in" },
+    { planId: "ten", date: "2026-11-11", attendanceStatus: "checked-in" },
+  ];
+  // November was 10 + 4 rolled in, and all 10 of the base were used. The
+  // leftover 4 expire; December gets none.
+  const spent = applyMonthEndEnrollment(
+    ten,
+    enrol("ten", { rolloverSessions: 4, rolloverMonth: "2026-11" }),
+    usedAllBase,
+    "2026-12",
+    null,
+  );
+  assert.equal(spent.changed, true);
+  assert.equal(spent.enrollment.rolloverSessions, 0);
+  assert.equal(spent.enrollment.rolloverMonth, "2026-12");
+
+  // Eight of the base 10 were used, so 2 of November's own unused sessions
+  // roll (under the cap of 4). The leftover rolled-in 4 still expire.
+  const usedEight = usedAllBase.slice(0, 8);
+  const leftover = applyMonthEndEnrollment(
+    ten,
+    enrol("ten", { rolloverSessions: 4, rolloverMonth: "2026-11" }),
+    usedEight,
+    "2026-12",
+    null,
+  );
+  assert.equal(leftover.enrollment.rolloverSessions, 2);
+  assert.equal(leftover.enrollment.rolloverMonth, "2026-12");
 });
 
 test("a new member and an ended plan are left alone", () => {
