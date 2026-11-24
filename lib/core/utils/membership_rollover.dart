@@ -60,14 +60,16 @@ int rolloverCap(MembershipPlan plan, ClientPlanEnrollment? enrollment) {
   return plan.rolloverMaxVisits < 0 ? 0 : plan.rolloverMaxVisits;
 }
 
-/// Allowance for [month] ("YYYY-MM"): the plan count, or this client's
-/// override for this plan, plus sessions already rolled into that month.
+/// Base allowance for [month] ("YYYY-MM"): the plan count, or this client's
+/// override for this plan. Sessions already rolled into that month are not
+/// included — those expire with the month and must not be counted again
+/// when deciding what rolls into the next month.
 ///
 /// [legacyOverride] is the old client-wide column. It counts only when
 /// [legacyApplies] is true, which callers set for the plan currently in the
 /// client's membership slot, and only when the plan entry has no override
 /// of its own.
-int sessionAllowance({
+int baseSessionAllowance({
   required MembershipPlan plan,
   ClientPlanEnrollment? enrollment,
   required String month,
@@ -90,6 +92,29 @@ int sessionAllowance({
         overrideMonth != month;
     if (!stale) base = override < 0 ? 0 : override;
   }
+  return base;
+}
+
+/// Allowance for [month]: [baseSessionAllowance] plus sessions already
+/// rolled into that month. Use this to show what the client can use now.
+/// Month-end rollover uses [baseSessionAllowance] so a carry-over cannot
+/// be rolled a second time.
+int sessionAllowance({
+  required MembershipPlan plan,
+  ClientPlanEnrollment? enrollment,
+  required String month,
+  int? legacyOverride,
+  String? legacyMonth,
+  bool legacyApplies = false,
+}) {
+  var base = baseSessionAllowance(
+    plan: plan,
+    enrollment: enrollment,
+    month: month,
+    legacyOverride: legacyOverride,
+    legacyMonth: legacyMonth,
+    legacyApplies: legacyApplies,
+  );
   if (plan.kind == PlanKind.membership && enrollment?.rolloverMonth == month) {
     final extra = enrollment!.rolloverSessions;
     base += extra < 0 ? 0 : extra;
@@ -167,7 +192,9 @@ ClientPlanEnrollment? rollMembershipMonth({
   if (start.isNotEmpty && start.compareTo(prev) > 0) return null;
   final ends = enrollment.endsAt;
   if (ends != null && ends.isNotEmpty && ends.compareTo("$newMonth-01") < 0) return null;
-  final allowance = sessionAllowance(
+  // Unused of this month's own allowance only. Sessions already rolled
+  // into [prev] expire with that month and are not carried again.
+  final allowance = baseSessionAllowance(
     plan: plan,
     enrollment: enrollment,
     month: prev,

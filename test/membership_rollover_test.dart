@@ -178,9 +178,9 @@ void main() {
       visit("ten", "2026-10-06", attendance: "early-cancel"),
       visit("sixteen", "2026-10-02", attendance: "checked-in"),
     ];
-    // October allowance is 10 + 4 rolled in. Three sessions were used.
-    // 11 unused, cap 4, so 4 roll into November. The open booking and the
-    // other plan's check-in do not count.
+    // October's own allowance is 10, and three were used. 7 unused, cap 4,
+    // so 4 roll into November. The 4 already rolled into October expire.
+    // The open booking and the other plan's check-in do not count.
     final rolled = rollMembershipMonth(
       plan: ten,
       enrollment: enrollment,
@@ -214,9 +214,39 @@ void main() {
       bookings: const [],
       newMonth: "2026-12",
     );
-    // November allowance was 14 and none were used, but the cap is still 4.
+    // November's own 10 were unused, so 4 of those (the cap) roll into
+    // December. The 4 already sitting in November are not in this count.
     expect(december?.rolloverSessions, 4);
     expect(december?.rolloverMonth, "2026-12");
+  });
+
+  test("rolled sessions expire after one month and are not rolled again", () {
+    Booking used(String day) => visit("ten", "2026-11-$day", attendance: "checked-in");
+    final usedAllBase = [
+      used("02"), used("03"), used("04"), used("05"), used("06"),
+      used("07"), used("08"), used("09"), used("10"), used("11"),
+    ];
+    // November was 10 + 4 rolled in, and all 10 of the base were used. The
+    // leftover 4 expire; December gets none.
+    final spent = rollMembershipMonth(
+      plan: ten,
+      enrollment: enrol("ten", rollover: 4, rolloverMonth: "2026-11"),
+      bookings: usedAllBase,
+      newMonth: "2026-12",
+    );
+    expect(spent?.rolloverSessions, 0);
+    expect(spent?.rolloverMonth, "2026-12");
+
+    // Eight of the base 10 were used, so 2 of November's own unused
+    // sessions roll. The leftover rolled-in 4 still expire.
+    final leftover = rollMembershipMonth(
+      plan: ten,
+      enrollment: enrol("ten", rollover: 4, rolloverMonth: "2026-11"),
+      bookings: usedAllBase.take(8).toList(),
+      newMonth: "2026-12",
+    );
+    expect(leftover?.rolloverSessions, 2);
+    expect(leftover?.rolloverMonth, "2026-12");
   });
 
   test("a client who joined this month, or whose plan already ended, gets nothing", () {
