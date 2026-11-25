@@ -1,6 +1,7 @@
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/foundation.dart";
+import "../feature_flags.dart";
 import "../platform/host_platform.dart";
 import "../supabase/supabase_service.dart";
 
@@ -41,8 +42,17 @@ class PushService {
   /// would get no indication at all.
   static void Function(Map<String, dynamic> data)? onForegroundMessage;
 
+  /// Whether a received push should be delivered to [onOpenRoute] or
+  /// [onForegroundMessage]. Beep Your Coach payloads are ignored while
+  /// [kBeepYourCoachEnabled] is off.
+  static bool shouldHandlePush(Map<String, dynamic> data) {
+    if (!kBeepYourCoachEnabled && data["type"] == "beep") return false;
+    return true;
+  }
+
   static void _handle(RemoteMessage m, {required bool opened}) {
     final data = Map<String, dynamic>.from(m.data);
+    if (!shouldHandlePush(data)) return;
     if (opened) {
       onOpenRoute?.call(data);
     } else {

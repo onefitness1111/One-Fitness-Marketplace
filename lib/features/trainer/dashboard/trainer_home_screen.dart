@@ -8,6 +8,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
+import "../../../core/feature_flags.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/web/portal_layout.dart";
@@ -127,7 +128,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       // so this says what was lost rather than blocking the session.
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Session started, but Beep Your Coach couldn't be switched on.")),
+        SnackBar(
+          content: Text(
+            kBeepYourCoachEnabled
+                ? "Session started, but Beep Your Coach couldn't be switched on."
+                : "Session started, but the live clock couldn't be switched on.",
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _startingRun = false);
@@ -145,7 +152,13 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
     await _endRun();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Session time is up — your clients can no longer beep you.")),
+      SnackBar(
+        content: Text(
+          kBeepYourCoachEnabled
+              ? "Session time is up — your clients can no longer beep you."
+              : "Session time is up.",
+        ),
+      ),
     );
   }
 
@@ -341,9 +354,11 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
           builder: (ctx) => AlertDialog(
             backgroundColor: AppColors.card,
             title: const Text("End this session?", style: TextStyle(fontSize: 15)),
-            content: const Text(
-              "The clock stops and your clients can no longer beep you. You can start it again if you need to.",
-              style: TextStyle(fontSize: 13),
+            content: Text(
+              kBeepYourCoachEnabled
+                  ? "The clock stops and your clients can no longer beep you. You can start it again if you need to."
+                  : "The clock stops. You can start it again if you need to.",
+              style: const TextStyle(fontSize: 13),
             ),
             actions: [
               TextButton(
@@ -612,19 +627,21 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
       // Beeps are overlaid on the session screen rather than pushed as a
       // route: the coach is mid-set with someone else, and an alert that
       // took over the screen would be worse than the problem it reports.
+      final sessionPage = LocalBackScope(
+        isOpen: true,
+        onBack: closeSession,
+        child: activeClientId != null && loggable.length > 1
+            ? LocalBackScope(
+                isOpen: true,
+                onBack: () => setState(() => _sessionClientId = null),
+                child: sessionContent,
+              )
+            : sessionContent,
+      );
+      if (!kBeepYourCoachEnabled) return sessionPage;
       return CoachBeepAlerts(
         trainerId: trainerAuth ?? "",
-        child: LocalBackScope(
-          isOpen: true,
-          onBack: closeSession,
-          child: activeClientId != null && loggable.length > 1
-              ? LocalBackScope(
-                  isOpen: true,
-                  onBack: () => setState(() => _sessionClientId = null),
-                  child: sessionContent,
-                )
-              : sessionContent,
-        ),
+        child: sessionPage,
       );
     }
 

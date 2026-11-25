@@ -7,6 +7,7 @@ import "../../../core/utils/nearest_location.dart";
 import "../../../core/widgets/address_fields.dart";
 import "../../../core/widgets/map_location_picker.dart";
 import "../../../core/supabase/supabase_service.dart";
+import "../../../core/feature_flags.dart";
 import "../../../core/notifications/beep_sounds.dart";
 import "../../../core/utils/gym_location_link.dart";
 import "../../../core/utils/session_places.dart";
@@ -662,17 +663,19 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
                   _MoneyRow(label: "Client Milestone", badgeKey: "client_milestone", cents: s.badgeClientMilestoneCents, onChange: (v) => _set((d) => d.copyWith(badgeClientMilestoneCents: v))),
                   _MoneyRow(label: "Retention Streak", badgeKey: "retention_streak", cents: s.badgeRetentionCents, onChange: (v) => _set((d) => d.copyWith(badgeRetentionCents: v))),
 
-                  const SizedBox(height: 10),
-                  const SectionLabel("Beep Your Coach — alert sounds"),
-                  const HintBox(text: "What a coach's phone plays when a client beeps during a semi-private session. One choice per request type, applied to every coach. Tap a sound to hear it."),
-                  for (final kind in BeepKind.values)
-                    _BeepSoundRow(
-                      kind: kind,
-                      selectedId: s.beepSounds[kind.key] ?? defaultSoundId(kind),
-                      onChange: (id) => _set((d) => d.copyWith(
-                            beepSounds: {...d.beepSounds, kind.key: id},
-                          )),
-                    ),
+                  if (kBeepYourCoachEnabled) ...[
+                    const SizedBox(height: 10),
+                    const SectionLabel("Beep Your Coach — alert sounds"),
+                    const HintBox(text: "What a coach's phone plays when a client beeps during a semi-private session. One choice per request type, applied to every coach. Tap a sound to hear it."),
+                    for (final kind in BeepKind.values)
+                      _BeepSoundRow(
+                        kind: kind,
+                        selectedId: s.beepSounds[kind.key] ?? defaultSoundId(kind),
+                        onChange: (id) => _set((d) => d.copyWith(
+                              beepSounds: {...d.beepSounds, kind.key: id},
+                            )),
+                      ),
+                  ],
                 ],
                 if (_saveError != null) ...[
                   const SizedBox(height: 14),

@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 
+import "../../../core/feature_flags.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
@@ -100,17 +101,21 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
               ),
               const SizedBox(height: 6),
               Text(
-                "Your coach has started the session. Head over — you can beep "
-                "or message them from here at any time.",
+                kBeepYourCoachEnabled
+                    ? "Your coach has started the session. Head over — you can beep "
+                        "or message them from here at any time."
+                    : "Your coach has started the session. Head over — you can message them from here at any time.",
                 style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.4),
               ),
               if (run != null) ...[
                 const SizedBox(height: 12),
                 SessionTimer(run: run, label: "SESSION LIVE"),
               ],
+              if (kBeepYourCoachEnabled) ...[
+                const SizedBox(height: 14),
+                const BeepBar(exerciseNames: [], focusIndex: 0),
+              ],
               const SizedBox(height: 14),
-              const BeepBar(exerciseNames: [], focusIndex: 0),
-              const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: () {
                   Navigator.of(ctx).pop();
@@ -163,7 +168,7 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
 
     final beepable = ref.watch(liveSessionsProvider.notifier).beepable;
     ref.watch(liveSessionsProvider);
-    final showBeep = coachLiveBarShowsBeep(coachLed, beepable);
+    final showBeep = kBeepYourCoachEnabled && coachLiveBarShowsBeep(coachLed, beepable);
 
     return Positioned(
       left: 12,
