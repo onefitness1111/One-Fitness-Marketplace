@@ -2762,25 +2762,24 @@ class SupabaseService {
     String? body,
   }) async {
     final me = currentUser?.id;
-    if (me == null) return;
-    await client.from("coach_reviews").upsert({
-      "booking_id": bookingId,
-      "client_id": me,
-      "trainer_id": trainerId,
-      "stars": stars,
-      "body": (body ?? "").trim().isEmpty ? null : body!.trim(),
-      "updated_at": DateTime.now().toUtc().toIso8601String(),
-    }, onConflict: "booking_id");
+    if (me == null) throw StateError("Not signed in");
+    final trimmed = (body ?? "").trim();
+    await client.rpc("submit_coach_review", params: {
+      "p_booking_id": bookingId,
+      "p_trainer_id": trainerId,
+      "p_stars": stars,
+      "p_body": trimmed.isEmpty ? null : trimmed,
+    });
   }
 
   static Future<void> deferReview(String bookingId, String trainerId) async {
     final me = currentUser?.id;
-    if (me == null) return;
+    if (me == null) throw StateError("Not signed in");
     await client.from("review_prompts").upsert({
       "booking_id": bookingId,
       "client_id": me,
       "trainer_id": trainerId,
-      "deferred_on": isoDate(DateTime.now()),
+      "deferred_on": isoTodayPacific(),
       "updated_at": DateTime.now().toUtc().toIso8601String(),
     });
   }
