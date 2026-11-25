@@ -165,6 +165,7 @@ class ClientRecord {
   bool loggedOn(String isoDate) => loggedDates.contains(isoDate);
 
   ClientRecord copyWith({
+    String? id,
     List<CommMessage>? comms,
     List<SavedProgram>? savedPrograms,
     List<ProgramDay>? programDays,
@@ -197,7 +198,7 @@ class ClientRecord {
     Map<String, String>? programRefresh,
   }) =>
       ClientRecord(
-        id: id,
+        id: id ?? this.id,
         loggedDates: loggedDates ?? this.loggedDates,
         habits: habits ?? this.habits,
         customHabits: customHabits ?? this.customHabits,
@@ -227,5 +228,48 @@ class ClientRecord {
         photoVideoOptOut: photoVideoOptOut ?? this.photoVideoOptOut,
         guardianName: guardianName ?? this.guardianName,
         programRefresh: programRefresh ?? this.programRefresh,
+      );
+
+  /// Merges the Plans/Nutrition slice into an existing record so home-read
+  /// fields (habits, workoutLogs, intake, signatures) and Log Progress fields
+  /// stay intact.
+  ClientRecord mergePlansFrom(ClientRecord loaded) => copyWith(
+        id: id.isEmpty && loaded.id.isNotEmpty ? loaded.id : null,
+        savedPrograms: loaded.savedPrograms,
+        nutrition: loaded.nutrition,
+        clearNutrition: loaded.nutrition == null,
+        programDays: loaded.programDays,
+        savedNutritionPrograms: loaded.savedNutritionPrograms,
+        foodLog: loaded.foodLog,
+        myMeals: loaded.myMeals,
+      );
+
+  /// Merges the Log Progress slice (measurements, goal, photos) into an
+  /// existing record without clearing home or Plans fields.
+  ClientRecord mergeProgressFrom(ClientRecord loaded) => copyWith(
+        id: id.isEmpty && loaded.id.isNotEmpty ? loaded.id : null,
+        measurements: loaded.measurements,
+        progressGoal: loaded.progressGoal,
+        clearProgressGoal: loaded.progressGoal == null,
+        photos: loaded.photos,
+      );
+
+  /// Merges the home-read slice into an existing record so a late or
+  /// background home refresh never wipes Plans, Log Progress, or comms.
+  ClientRecord mergeHomeFrom(ClientRecord home) => copyWith(
+        id: id.isEmpty && home.id.isNotEmpty ? home.id : null,
+        habits: home.habits,
+        customHabits: home.customHabits,
+        habitLogByDate: home.habitLogByDate,
+        tourSeenDashboard: home.tourSeenDashboard,
+        tourSeenDrawer: home.tourSeenDrawer,
+        intake: home.intake,
+        signatures: home.signatures,
+        workoutLogs: home.workoutLogs,
+        loggedDates: home.loggedDates,
+        adoptedSignatureImage: home.adoptedSignatureImage,
+        adoptedInitialsImage: home.adoptedInitialsImage,
+        photoVideoOptOut: home.photoVideoOptOut,
+        guardianName: home.guardianName,
       );
 }

@@ -113,6 +113,17 @@ const coachDashboardRecordColumns =
 const clientHomeRecordColumns =
     "profile_id,habitSettings:data->habitSettings,habitLogs:data->habitLogs,tourSeen:data->tourSeen,intake:data->intake,signatures:data->signatures,workoutLogs:data->workoutLogs";
 
+/// Programs, nutrition, meal choices, and food log for the client's Plans
+/// and Nutrition screens. Photos stay out so opening Plans does not pull
+/// multi-megabyte inline images.
+const clientPlansRecordColumns =
+    "profile_id,savedPrograms:data->savedPrograms,nutrition:data->nutrition,programDays:data->programDays,savedNutritionPrograms:data->savedNutritionPrograms,foodLog:data->foodLog,myMeals:data->myMeals";
+
+/// Measurements, goal, and progress photos for the client's Log Progress
+/// screen. Kept out of both the home read and the Plans read.
+const clientProgressRecordColumns =
+    "profile_id,measurements:data->measurements,progressGoal:data->progressGoal,photos:data->photos";
+
 /// Programs, nutrition, notes, and logs for the coach home's attention list
 /// and status dots. Fetched after the schedule is on screen, and decoded
 /// off the UI isolate.
@@ -166,6 +177,8 @@ enum GymSection {
   messages,
   plans,
   waivers,
+  clientPlans,
+  clientProgress,
 }
 
 /// What to fetch when a client opens [screen]. The dashboard itself is
@@ -177,13 +190,25 @@ Set<GymSection> sectionsForClientScreen(String screen) => switch (screen) {
           GymSection.programs,
           GymSection.meals,
           GymSection.nutritionLibrary,
+          GymSection.clientPlans,
         },
-      "booking" || "advancedBooking" || "day" => {
+      "booking" || "advancedBooking" => {
           GymSection.bookingsRest,
           GymSection.blocked,
           GymSection.waitlist,
           GymSection.plans,
           GymSection.waivers,
+        },
+      "day" => {
+          GymSection.bookingsRest,
+          GymSection.blocked,
+          GymSection.waitlist,
+          GymSection.plans,
+          GymSection.waivers,
+          GymSection.clientPlans,
+        },
+      "progress" || "photos" || "measurements" => {
+          GymSection.clientProgress,
         },
       "chat" => {GymSection.messages},
       "memberships" => {

@@ -1065,27 +1065,39 @@ class SupabaseService {
     return [for (final r in rows as List) Map<String, dynamic>.from(r as Map)];
   }
 
+  /// Extracts every client-record field a partial PostgREST `client_records`
+  /// select may return (either aliased `key` or raw `data->key`).
+  static Map<String, dynamic> recordPayloadFromRow(Map<String, dynamic> row) {
+    dynamic pick(String key) => row[key] ?? row["data->$key"];
+    return {
+      "savedPrograms": pick("savedPrograms"),
+      "nutrition": pick("nutrition"),
+      "programDays": pick("programDays"),
+      "savedNutritionPrograms": pick("savedNutritionPrograms"),
+      "foodLog": pick("foodLog"),
+      "myMeals": pick("myMeals"),
+      "measurements": pick("measurements"),
+      "progressGoal": pick("progressGoal"),
+      "photos": pick("photos"),
+      "workoutLogs": pick("workoutLogs"),
+      "trainerNotes": pick("trainerNotes"),
+      "programRefresh": pick("programRefresh"),
+      "habitSettings": pick("habitSettings"),
+      "habitLogs": pick("habitLogs"),
+      "tourSeen": pick("tourSeen"),
+      "intake": pick("intake"),
+      "signatures": pick("signatures"),
+      "logs": pick("logs"),
+    };
+  }
+
   static Map<String, ClientRecord> recordsFromDashboardRows(List<Map<String, dynamic>> rows) {
     final out = <String, ClientRecord>{};
     for (final row in rows) {
       final id = row["profile_id"]?.toString() ?? "";
       if (id.isEmpty) continue;
-      dynamic pick(String key) => row[key] ?? row["data->$key"];
       try {
-        out[id] = _clientRecordFromJson(id, {
-          "savedPrograms": pick("savedPrograms"),
-          "nutrition": pick("nutrition"),
-          "programDays": pick("programDays"),
-          "workoutLogs": pick("workoutLogs"),
-          "trainerNotes": pick("trainerNotes"),
-          "programRefresh": pick("programRefresh"),
-          "habitSettings": pick("habitSettings"),
-          "habitLogs": pick("habitLogs"),
-          "tourSeen": pick("tourSeen"),
-          "intake": pick("intake"),
-          "signatures": pick("signatures"),
-          "logs": pick("logs"),
-        });
+        out[id] = _clientRecordFromJson(id, recordPayloadFromRow(row));
       } catch (e) {
         // ignore: avoid_print
         print("[SupabaseService] skipped client record $id: $e");

@@ -666,6 +666,11 @@ Future<void> _openClient({
   if (clearSamples) {
     final ownId = _restoreSession(hold, profile, roster, const [], bookings, records);
     if (ownId == _signedOut) return;
+  } else {
+    final homeRecord = records[me];
+    if (homeRecord != null) {
+      hold.ownRecord.update((existing) => existing.mergeHomeFrom(homeRecord));
+    }
   }
   LoginPrompts.finishDashboardLoad();
   LaunchTiming.markDashboardUsable("client home");
@@ -689,7 +694,7 @@ Future<void> _openClient({
       if (generation != _loadGeneration) return;
       final record = SupabaseService.recordsFromDashboardRows(rows)[me];
       if (record != null) {
-        hold.ownRecord.update((_) => record);
+        hold.ownRecord.update((existing) => existing.mergeHomeFrom(record));
         hold.records.setAll({me: record});
         _rememberScreen(
           userId: me,
@@ -989,22 +994,8 @@ Future<T?> _ifReady<T>(Future<T> future) {
   ]);
 }
 
-Map<String, dynamic> _recordPayload(Map<String, dynamic> row) {
-  dynamic pick(String key) => row[key] ?? row["data->$key"];
-  return {
-    "habitSettings": pick("habitSettings"),
-    "habitLogs": pick("habitLogs"),
-    "tourSeen": pick("tourSeen"),
-    "intake": pick("intake"),
-    "signatures": pick("signatures"),
-    "workoutLogs": pick("workoutLogs"),
-    "logs": pick("logs"),
-    "savedPrograms": pick("savedPrograms"),
-    "nutrition": pick("nutrition"),
-    "trainerNotes": pick("trainerNotes"),
-    "programRefresh": pick("programRefresh"),
-  };
-}
+Map<String, dynamic> _recordPayload(Map<String, dynamic> row) =>
+    SupabaseService.recordPayloadFromRow(row);
 
 void _rememberScreen({
   required String? userId,
@@ -1206,7 +1197,7 @@ String? _restoreSession(
     hold.role.set("client");
     hold.ownClientId = id;
     hold.info.update((_) => matches.first);
-    hold.ownRecord.update((_) => records[id] ?? const ClientRecord(id: ""));
+    hold.ownRecord.update((_) => records[id] ?? ClientRecord(id: id));
     hold.clientBookings.setAll(bookings.where((b) => b.clientId == id).toList());
     hold.signedIn.signIn();
     _armPush(hold, prompt: false);
@@ -1353,17 +1344,53 @@ void _resetSections(int generation) {
 
 int _sectionGeneration = -1;
 
-Future<void> ensureClientSections(dynamic ref, String screen) =>
-    _ensureAll(ref, sectionsForClientScreen(screen));
+typedef ClientRecordRowsFetcher = Future<List<Map<String, dynamic>>> Function(
+  String columns, {
+  String? profileId,
+});
+
+@visibleForTesting
+void resetSectionsForTest() {
+  _sectionInflight.clear();
+}
+
+Future<void> ensureClientSections(
+  dynamic ref,
+  String screen, {
+  @visibleForTesting ClientRecordRowsFetcher? fetchRecordRows,
+  @visibleForTesting String? clientId,
+}) =>
+    _ensureAll(
+      ref,
+      sectionsForClientScreen(screen),
+      fetchRecordRows: fetchRecordRows,
+      clientId: clientId,
+    );
 
 Future<void> ensureStaffSections(dynamic ref, String screen) =>
     _ensureAll(ref, sectionsForStaffScreen(screen));
 
-Future<void> _ensureAll(dynamic ref, Set<GymSection> sections) async {
-  if (sections.isEmpty || !_hasSession()) return;
+Future<void> _ensureAll(
+  dynamic ref,
+  Set<GymSection> sections, {
+  ClientRecordRowsFetcher? fetchRecordRows,
+  String? clientId,
+}) async {
+  final hasSession = clientId != null ? clientId.isNotEmpty : _hasSession();
+  if (sections.isEmpty || !hasSession) return;
   final hold = _Hold.read(ref);
   final generation = _loadGeneration;
-  await Future.wait(sections.map((section) => _ensureOne(hold, generation, section)));
+  await Future.wait(
+    sections.map(
+      (section) => _ensureOne(
+        hold,
+        generation,
+        section,
+        fetchRecordRows: fetchRecordRows,
+        clientId: clientId,
+      ),
+    ),
+  );
 }
 
 bool _hasSession() {
@@ -1374,15 +1401,42 @@ bool _hasSession() {
   }
 }
 
-Future<void> _ensureOne(_Hold hold, int generation, GymSection section) {
+String? _currentUserId() {
+  try {
+    final id = SupabaseService.currentUser?.id;
+    return (id == null || id.isEmpty) ? null : id;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _ensureOne(
+  _Hold hold,
+  int generation,
+  GymSection section, {
+  ClientRecordRowsFetcher? fetchRecordRows,
+  String? clientId,
+}) {
   final existing = _sectionInflight[section];
   if (existing != null) return existing;
-  final future = _loadSection(hold, generation, section);
+  final future = _loadSection(
+    hold,
+    generation,
+    section,
+    fetchRecordRows: fetchRecordRows,
+    clientId: clientId,
+  );
   _sectionInflight[section] = future;
   return future;
 }
 
-Future<void> _loadSection(_Hold hold, int generation, GymSection section) async {
+Future<void> _loadSection(
+  _Hold hold,
+  int generation,
+  GymSection section, {
+  ClientRecordRowsFetcher? fetchRecordRows,
+  String? clientId,
+}) async {
   try {
     switch (section) {
       case GymSection.bookingsRest:
@@ -1475,6 +1529,32 @@ Future<void> _loadSection(_Hold hold, int generation, GymSection section) async 
       case GymSection.waivers:
         final rows = SupabaseService.waiversFromRows(await SupabaseService.fetchWaiverRows());
         if (generation == _loadGeneration) hold.waivers.setAll(rows);
+      case GymSection.clientPlans:
+        final own = clientId ?? hold.ownClientId ?? _currentUserId();
+        if (own == null || own.isEmpty) {
+          if (generation == _loadGeneration) _sectionInflight.remove(section);
+          return;
+        }
+        final fetcher = fetchRecordRows ?? SupabaseService.fetchRecordRowsOffMain;
+        final rows = await fetcher(clientPlansRecordColumns, profileId: own);
+        if (generation != _loadGeneration) return;
+        final loaded = SupabaseService.recordsFromDashboardRows(rows)[own];
+        if (loaded != null) {
+          hold.ownRecord.update((r) => r.mergePlansFrom(loaded));
+        }
+      case GymSection.clientProgress:
+        final own = clientId ?? hold.ownClientId ?? _currentUserId();
+        if (own == null || own.isEmpty) {
+          if (generation == _loadGeneration) _sectionInflight.remove(section);
+          return;
+        }
+        final fetcher = fetchRecordRows ?? SupabaseService.fetchRecordRowsOffMain;
+        final rows = await fetcher(clientProgressRecordColumns, profileId: own);
+        if (generation != _loadGeneration) return;
+        final loaded = SupabaseService.recordsFromDashboardRows(rows)[own];
+        if (loaded != null) {
+          hold.ownRecord.update((r) => r.mergeProgressFrom(loaded));
+        }
     }
   } catch (e) {
     // A failed section can be asked for again the next time its screen opens.
@@ -1602,7 +1682,8 @@ class _Hold {
         prEvents = ref.read(coachPrEventsProvider.notifier),
         owners = ref.read(ownerDirectoryProvider.notifier),
         extras = ref.read(dashboardExtrasProvider.notifier),
-        details = ref.read(homeDetailsReadyProvider.notifier);
+        details = ref.read(homeDetailsReadyProvider.notifier),
+        ownClientId = _readOwnClientId(ref);
 
   final TrainerRosterNotifier roster;
   final TrainersNotifier trainers;
@@ -1646,6 +1727,16 @@ class _Hold {
   bool payReady = false;
   List<Trainer> paintedTrainers = const [];
   String? ownClientId;
+
+  static String? _readOwnClientId(dynamic ref) {
+    try {
+      if (ref.read(clientSignedInProvider) != true) return null;
+      final id = ref.read(clientInfoProvider).id as String;
+      return id.isEmpty ? null : id;
+    } catch (_) {
+      return null;
+    }
+  }
 
   void markPay(bool ready) {
     payReady = ready;
