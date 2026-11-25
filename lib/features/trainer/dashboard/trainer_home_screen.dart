@@ -284,6 +284,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
         rosterIds: roster.map((c) => c.id).toSet(),
         isOwner: isOwner,
         viewerId: isOwner ? null : trainerAuth,
+        bookings: bookings,
       ),
     ];
     final grouped = <String, List<AttentionItem>>{};

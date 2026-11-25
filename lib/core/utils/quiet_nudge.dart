@@ -1,3 +1,4 @@
+import "../../data/models/booking.dart";
 import "../../data/models/client_record.dart";
 import "../../data/models/quiet_nudge.dart";
 import "attention_utils.dart";
@@ -78,20 +79,26 @@ bool loggedSince(ClientRecord record, String lastActivityOn) {
   return latest.compareTo(lastActivityOn) > 0;
 }
 
-/// The in-app line for the coach who was alerted, and for the owner.
-/// It stays until the client logs again.
+/// The in-app "Hasn't logged lately" line. It stays until the client logs
+/// again. The owner sees every open alert. A coach sees one only when that
+/// client is booked with them in the next 7 days ([clientsBookedWithCoachSoon]),
+/// never based on [QuietNudge.coachId] or a primary coach.
 List<AttentionItem> quietClientAttention({
   required List<QuietNudge> nudges,
   required Map<String, ClientRecord> records,
   required Set<String> rosterIds,
   required bool isOwner,
   required String? viewerId,
+  required List<Booking> bookings,
+  DateTime? now,
 }) {
+  if (!isOwner && (viewerId == null || viewerId.isEmpty)) return const [];
+  final soonIds = isOwner ? null : clientsBookedWithCoachSoon(bookings, viewerId!, now: now);
   final items = <AttentionItem>[];
   for (final nudge in nudges) {
     if (!nudge.staffAlertOpen) continue;
     if (!rosterIds.contains(nudge.clientId)) continue;
-    if (!isOwner && (viewerId == null || nudge.coachId != viewerId)) continue;
+    if (!isOwner && !soonIds!.contains(nudge.clientId)) continue;
     final record = records[nudge.clientId];
     if (record != null && loggedSince(record, nudge.lastActivityOn)) continue;
     items.add(

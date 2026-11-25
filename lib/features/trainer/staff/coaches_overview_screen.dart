@@ -13,11 +13,13 @@ import "../../../core/utils/booking_utils.dart" show addDaysIso;
 import "../../../core/utils/coach_merit_badge_utils.dart";
 import "../../../core/utils/date_utils.dart";
 import "../../../core/utils/domain_labels.dart";
+import "../../../core/utils/quiet_nudge.dart";
 import "../../../core/utils/report_utils.dart";
 import "../../../core/widgets/password_actions.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 
@@ -174,6 +176,7 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
     final roster = ref.watch(trainerRosterProvider);
     final records = ref.watch(trainerClientRecordsProvider);
     final bookings = ref.watch(allBookingsProvider);
+    final nudges = ref.watch(dashboardExtrasProvider).nudges;
     final prEvents = ref.watch(coachPrEventsProvider);
     final challenges = ref.watch(challengesProvider);
     final settings = ref.watch(platformSettingsProvider);
@@ -300,10 +303,21 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
             final coachedIds = bookings.where((b) => b.trainerId == t.id).map((b) => b.clientId).toSet();
             final myRoster = roster.where((c) => coachedIds.contains(c.id)).toList();
             final theirBookings = bookings.where((b) => b.trainerId == t.id).toList();
-            // Program gaps match what this coach sees: clients booked with
-            // them in the next 7 days.
+            // Program gaps and quiet-client alerts match what this coach
+            // sees: clients booked with them in the next 7 days.
             final programRoster = needsProgramRoster(roster: myRoster, bookings: theirBookings, isOwner: false, coachId: t.id);
-            final flags = [...computeNeedsAttention(programRoster, records), ...computeUnloggedAttendance(myRoster, theirBookings)];
+            final flags = [
+              ...computeNeedsAttention(programRoster, records),
+              ...computeUnloggedAttendance(myRoster, theirBookings),
+              ...quietClientAttention(
+                nudges: nudges,
+                records: records,
+                rosterIds: myRoster.map((c) => c.id).toSet(),
+                isOwner: false,
+                viewerId: t.id,
+                bookings: theirBookings,
+              ),
+            ];
             final isNew = !t.reviewedByOwner;
             final open = _openId == t.id;
             return AppCard(
