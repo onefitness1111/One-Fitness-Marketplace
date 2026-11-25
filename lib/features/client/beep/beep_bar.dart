@@ -5,6 +5,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 
+import "../../../core/feature_flags.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
@@ -144,6 +145,7 @@ class _BeepBarState extends ConsumerState<BeepBar> {
 
   @override
   Widget build(BuildContext context) {
+    if (!kBeepYourCoachEnabled) return const SizedBox.shrink();
     final clientId = ref.watch(clientInfoProvider).id;
     final coachLed = ref.watch(coachLedDaysProvider.notifier).forClient(clientId);
     ref.watch(coachLedDaysProvider);

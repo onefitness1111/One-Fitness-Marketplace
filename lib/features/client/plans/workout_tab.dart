@@ -18,6 +18,7 @@ import "../../../data/models/program_day.dart";
 import "../../../data/models/saved_program.dart";
 import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../core/feature_flags.dart";
 import "../../shared/session_logger_view.dart";
 import "../beep/beep_bar.dart";
 
@@ -337,11 +338,13 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
               onSave: _saveSession,
               initialDayId: _loggingDayId,
               exerciseFooterBuilder: _exerciseFooter,
-              beepBarBuilder: (names, focusIndex, fullView) => BeepBar(
-                exerciseNames: names,
-                focusIndex: focusIndex,
-                fullView: fullView,
-              ),
+              beepBarBuilder: kBeepYourCoachEnabled
+                  ? (names, focusIndex, fullView) => BeepBar(
+                        exerciseNames: names,
+                        focusIndex: focusIndex,
+                        fullView: fullView,
+                      )
+                  : null,
               footer: const Padding(
                 padding: EdgeInsets.fromLTRB(18, 0, 18, 18),
                 child: SourceCitations(

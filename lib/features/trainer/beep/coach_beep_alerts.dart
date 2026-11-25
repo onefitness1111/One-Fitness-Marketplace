@@ -4,6 +4,7 @@ import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 
+import "../../../core/feature_flags.dart";
 import "../../../core/notifications/beep_sounds.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -49,7 +50,9 @@ class _CoachBeepAlertsState extends ConsumerState<CoachBeepAlerts> {
   @override
   void initState() {
     super.initState();
-    _spotTimer = Timer.periodic(_spotRepeat, (_) => _rebuzzUnansweredSpots());
+    if (kBeepYourCoachEnabled) {
+      _spotTimer = Timer.periodic(_spotRepeat, (_) => _rebuzzUnansweredSpots());
+    }
   }
 
   @override
@@ -112,6 +115,7 @@ class _CoachBeepAlertsState extends ConsumerState<CoachBeepAlerts> {
 
   @override
   Widget build(BuildContext context) {
+    if (!kBeepYourCoachEnabled) return widget.child;
     final all = ref.watch(beepsProvider);
     // A cancelled beep disappears from the queue, and its banner with it.
     final liveIds = all.where((b) => !b.isCancelled).map((b) => b.id).toSet();

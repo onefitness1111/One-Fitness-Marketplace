@@ -11,6 +11,7 @@ import "../../core/motion/stagger_in.dart";
 import "../../core/live_log/live_log_sync.dart";
 import "../../core/navigation/local_back_stack.dart";
 import "../../core/supabase/supabase_service.dart";
+import "../../core/feature_flags.dart";
 import "../../core/theme/app_colors.dart";
 import "../../core/utils/date_utils.dart";
 import "../../core/utils/program_utils.dart";
@@ -123,6 +124,10 @@ class SessionLoggerView extends StatefulWidget {
   /// the right one.
   final Widget Function(List<String> exerciseNames, int focusIndex, bool fullView)?
       beepBarBuilder;
+
+  /// Hidden while [kBeepYourCoachEnabled] is off, even if a builder was
+  /// supplied, so a missed call site cannot show the bar.
+  bool get _showBeepBar => kBeepYourCoachEnabled && beepBarBuilder != null;
 
   /// Optional extra content rendered under each exercise's set grid — used
   /// by the client's own view to show/edit a per-exercise note to their
@@ -730,7 +735,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.beepBarBuilder != null && _fullView)
+          if (widget._showBeepBar && _fullView)
             const SizedBox(height: 58),
           if (programs.length > 1)
             Padding(
@@ -1069,7 +1074,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
                   // In the focused view the bar sits in the flow, directly
                   // under the toggle. In Full view it is pinned instead (see
                   // the Stack below), so it must not also appear here.
-                  if (widget.beepBarBuilder != null && !_fullView)
+                  if (widget._showBeepBar && !_fullView)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: widget.beepBarBuilder!(
@@ -1256,7 +1261,7 @@ class _SessionLoggerViewState extends State<SessionLoggerView> {
         ],
       ),
       ),
-          if (widget.beepBarBuilder != null && _fullView)
+          if (widget._showBeepBar && _fullView)
             Positioned(
               top: 0,
               left: 0,
