@@ -10,7 +10,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendPush } from "./sendPush.ts";
 import { sendEmail } from "./sendEmail.ts";
-import { sendSms } from "./sendSms.ts";
+import { smsClientIfOptedIn } from "./notifySms.ts";
 
 /// How long each person has to answer.
 export const OFFER_WINDOW_MINUTES = 240;
@@ -32,12 +32,11 @@ function fmtSlot(minutes: number): string {
 async function notifyClient(clientId: string, title: string, body: string, emailBody?: string) {
   const { data: tokens } = await admin.from("device_tokens").select("token").eq("profile_id", clientId);
   await sendPush((tokens || []).map((t: { token: string }) => t.token), title, body);
-  const { data: profile } = await admin.from("profiles").select("email, name, phone").eq("id", clientId).maybeSingle();
-  // Respect the client's own SMS preference (Profile Settings ->
-  // Notification Preferences), not just whether we happen to have a number.
-  const { data: prefs } = await admin.from("clients").select("sms_opt_in").eq("profile_id", clientId).maybeSingle();
-  const phone = String(profile?.phone ?? "").trim();
-  if (phone && prefs?.sms_opt_in !== false) await sendSms(phone, `ONE Fitness: ${body}`);
+  const { data: profile } = await admin.from("profiles").select("email, name").eq("id", clientId).maybeSingle();
+  // TCPA: text only a client who opted in (sms_opt_in === true). A client
+  // who never answered (null) or replied STOP (which clears sms_opt_in and
+  // sets profiles.sms_opted_out) gets push and email only.
+  await smsClientIfOptedIn(admin, clientId, body);
   if (profile?.email) await sendEmail(profile.email, title, emailBody ?? `Hi ${profile.name ?? ""},\n\n${body}\n\n— ONE Fitness`);
 }
 

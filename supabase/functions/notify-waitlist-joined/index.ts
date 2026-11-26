@@ -66,7 +66,7 @@ serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
     const { data: profile } = await admin
       .from("profiles")
-      .select("email, name, phone")
+      .select("email, name, phone, sms_opted_out")
       .eq("id", user.id)
       .maybeSingle();
     const { data: prefs } = await admin
@@ -97,12 +97,12 @@ serve(async (req) => {
       console.error("waitlist join push failed:", e);
     }
 
-    // SMS — only with a number on file AND the client's SMS preference on.
-    // Phone is optional at signup now, so "no number" is a normal state,
-    // not a fault.
+    // SMS — only with a number on file AND an explicit opt-in (TCPA). A
+    // client who never answered (sms_opt_in null) or replied STOP is not
+    // texted. Phone is optional at signup, so "no number" is normal.
     try {
       const phone = String(profile?.phone ?? "").trim();
-      const optedIn = prefs?.sms_opt_in !== false;
+      const optedIn = prefs?.sms_opt_in === true && profile?.sms_opted_out !== true;
       if (phone && optedIn) {
         await sendSms(phone, `ONE Fitness: ${body}`);
         sent.push("sms");

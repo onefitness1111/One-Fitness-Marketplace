@@ -78,7 +78,7 @@ serve(async (req) => {
     }
 
     const { data: clients } = await admin.from("clients").select("profile_id, stripe_customer_id, sms_opt_in");
-    const { data: profiles } = await admin.from("profiles").select("id, name, email, phone");
+    const { data: profiles } = await admin.from("profiles").select("id, name, email, phone, sms_opted_out");
     const profileById = new Map((profiles || []).map((p) => [p.id, p]));
     const smsOptedIn = new Set((clients || []).filter((c) => c.sms_opt_in === true).map((c) => c.profile_id));
 
@@ -86,6 +86,8 @@ serve(async (req) => {
     // the habit reminder is daily, so it stays push/email only.
     async function textClient(profileId: string, text: string) {
       if (!smsOptedIn.has(profileId)) return;
+      // STOP is final even if sms_opt_in was somehow left on.
+      if (profileById.get(profileId)?.sms_opted_out === true) return;
       const phone = String(profileById.get(profileId)?.phone ?? "").trim();
       if (phone) await sendSms(phone, `ONE Fitness: ${text}`);
     }
