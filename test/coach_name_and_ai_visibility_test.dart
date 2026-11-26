@@ -43,4 +43,18 @@ void main() {
       contains("AI"),
     );
   });
+
+  test("C9: only the whole word AI is hidden, not names that contain 'ai'", () {
+    for (final ok in ["Aiden", "Craig", "again", "email", "failed", "MAIN", "Thai curry", "Kai"]) {
+      expect(mentionsAi(ok), isFalse, reason: ok);
+      expect(attributionForRole(ok, isOwner: false), ok);
+      expect(ownerOnlyAiText(ok, isOwner: false), ok);
+    }
+    for (final bad in ["AI", "ai draft", "AI-generated", "A.I.", "OpenAI", "ChatGPT", "GPT-4o", "LLM", "Anthropic"]) {
+      expect(mentionsAi(bad), isTrue, reason: bad);
+    }
+    expect(attributionForRole("Coach Craig", isOwner: false), "Coach Craig");
+    expect(clientSafeText("Couldn't save that email.", fallback: "x"), "Couldn't save that email.");
+    expect(clientSafeText("The AI service failed", fallback: "Try again."), "Try again.");
+  });
 }

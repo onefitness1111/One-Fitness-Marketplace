@@ -23,6 +23,7 @@ import "../../../data/models/meal_def.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "restaurant_sheet.dart";
+import "../../../core/utils/ai_visibility.dart";
 
 /// The client's own food log for one day: the ring and the meal rows.
 /// Nothing here changes a meal a coach or the owner uploaded.
@@ -84,9 +85,7 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            text.toLowerCase().contains("ai")
-                ? "Couldn't save that. Try again."
-                : text,
+            clientSafeText(text, fallback: "Couldn't save that. Try again."),
           ),
         ),
       );
@@ -314,10 +313,7 @@ class _FoodLogSectionState extends ConsumerState<FoodLogSection> {
 
   String _plain(Object e) {
     final text = e.toString().replaceFirst("Exception: ", "");
-    if (text.toLowerCase().contains("ai")) {
-      return "Couldn't make an estimate. Try again.";
-    }
-    return text;
+    return clientSafeText(text, fallback: "Couldn't make an estimate. Try again.");
   }
 }
 
