@@ -303,12 +303,12 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
             final coachedIds = bookings.where((b) => b.trainerId == t.id).map((b) => b.clientId).toSet();
             final myRoster = roster.where((c) => coachedIds.contains(c.id)).toList();
             final theirBookings = bookings.where((b) => b.trainerId == t.id).toList();
-            // Program gaps and quiet-client alerts match what this coach
-            // sees: clients booked with them in the next 7 days.
+            // Program gaps, unlogged attendance and quiet-client alerts match
+            // what this coach sees: clients booked with them in the next 7 days.
             final programRoster = needsProgramRoster(roster: myRoster, bookings: theirBookings, isOwner: false, coachId: t.id);
             final flags = [
               ...computeNeedsAttention(programRoster, records),
-              ...computeUnloggedAttendance(myRoster, theirBookings),
+              ...computeUnloggedAttendance(programRoster, theirBookings),
               ...quietClientAttention(
                 nudges: nudges,
                 records: records,
