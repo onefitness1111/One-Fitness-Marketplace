@@ -3,6 +3,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/freeze_utils.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/booking.dart";
@@ -81,7 +82,7 @@ class SessionsRemainingBadge extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              "Contact your gym to unfreeze early — nothing on your plan has been lost.",
+              "${frozenBookingMessage(info.membershipFreezeEndsAt ?? "")} Sessions you hadn't used are kept for after the freeze.",
               style: TextStyle(fontSize: 12, color: AppColors.mute),
             ),
           ],
@@ -134,6 +135,8 @@ class SessionsRemainingBadge extends ConsumerWidget {
     final used = sessionsUsedThisPeriod(info, plan, bookings);
     final booked = sessionsTowardBookingLimit(info, plan, bookings);
     final max = effectiveMaxSessions(info, plan);
+    // Right after a freeze: the sessions held from it, until the billing day.
+    final freezeHold = heldSessionsLeft(info, plan, bookings);
     final remaining = (max - used).clamp(0, max);
     final bookedNotUsed = (booked - used).clamp(0, booked);
     final pct = max > 0 ? remaining / max : 0.0;
@@ -184,7 +187,7 @@ class SessionsRemainingBadge extends ConsumerWidget {
               Text("$remaining", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: color)),
               const SizedBox(width: 6),
               Text(
-                "of $max ${plan.kind == PlanKind.membership ? "this month" : "in package"}",
+                "of $max ${freezeHold != null ? "until ${freezeShortDay(freezeHold.until)}" : (plan.kind == PlanKind.membership ? "this month" : "in package")}",
                 style: TextStyle(fontSize: 13, color: AppColors.mute),
               ),
             ],
@@ -192,6 +195,14 @@ class SessionsRemainingBadge extends ConsumerWidget {
           // Sessions carried in from last month under the plan's roll-over
           // rule — part of the total above, called out so it's clear where
           // the extra sessions came from and that they expire this month.
+          if (freezeHold != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                "${heldSessionsLine(remaining, freezeHold.until)}. Kept from your freeze. Your normal sessions start again on your billing day.",
+                style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w600, height: 1.35),
+              ),
+            ),
           if (bookedNotUsed > 0)
             Padding(
               padding: const EdgeInsets.only(top: 2),

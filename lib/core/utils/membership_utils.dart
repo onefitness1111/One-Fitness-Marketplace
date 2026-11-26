@@ -122,8 +122,19 @@ Iterable<Booking> _planBookings(ClientInfo info, MembershipPlan plan, List<Booki
       (b.planId == null ? plan.allowedTypes.contains(b.sessionType) : b.planId == plan.id) &&
       (b.planId == null || !b.planId!.startsWith("single:")));
   if (plan.kind == PlanKind.membership) {
-    final thisMonth = isoToday().substring(0, 7);
-    return mine.where((b) => b.date.substring(0, 7) == thisMonth);
+    final today = isoToday();
+    final thisMonth = today.substring(0, 7);
+    // After a freeze, sessions held from it are used from its end day until
+    // the next billing day, and only bookings in that window count. Outside
+    // it the monthly count leaves those bookings out, so the normal
+    // allowance starts fresh on the billing day. Same rule as
+    // sessions_toward_booking_limit on the server.
+    final enrollment = activeEnrollment(info, plan.id);
+    if (enrollment != null && enrollment.holdActiveOn(today)) {
+      return mine.where((b) => enrollment.inHoldWindow(b.date));
+    }
+    return mine.where((b) =>
+        b.date.substring(0, 7) == thisMonth && !(enrollment != null && enrollment.inHoldWindow(b.date)));
   }
   return mine;
 }
@@ -162,7 +173,16 @@ int sessionsLeftToBook(ClientInfo info, MembershipPlan plan, List<Booking> booki
 /// back to the plan's own count. Sessions rolled into this month are added
 /// on top and are not themselves an override.
 int effectiveMaxSessions(ClientInfo info, MembershipPlan plan) {
-  final month = isoToday().substring(0, 7);
+  final today = isoToday();
+  final month = today.substring(0, 7);
+  // Sessions held through a freeze replace the monthly count until the next
+  // billing day. Rolled-over sessions for this month still count on top
+  // and still expire with the month.
+  final enrollment = activeEnrollment(info, plan.id);
+  if (plan.kind == PlanKind.membership && enrollment != null && enrollment.holdActiveOn(today)) {
+    final held = enrollment.heldSessions ?? 0;
+    return (held < 0 ? 0 : held) + rolloverSessionsFor(info, plan);
+  }
   return sessionAllowance(
     plan: plan,
     enrollment: activeEnrollment(info, plan.id),

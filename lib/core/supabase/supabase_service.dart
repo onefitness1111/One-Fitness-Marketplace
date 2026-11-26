@@ -2322,11 +2322,41 @@ class SupabaseService {
       await client.from("clients").update(clientFields).eq("profile_id", id);
   }
 
+  /// One entry of `clients.plans`.
+  static ClientPlanEnrollment enrollmentFromJson(Map p) => ClientPlanEnrollment(
+      planId: p["planId"] as String? ?? "",
+      status: p["status"] as String? ?? "active",
+      startDate: p["startDate"] as String? ?? "",
+      termMonths: _asInt(p["termMonths"]),
+      subscriptionId: p["subscriptionId"] as String?,
+      cancelsAt: p["cancelsAt"] as String?,
+      rolloverSessions: _asInt(p["rolloverSessions"]) ?? 0,
+      rolloverMonth: p["rolloverMonth"] as String?,
+      endsAt: p["endsAt"] as String?,
+      priceCents: _asInt(p["priceCents"]),
+      maxSessionsOverride: _asInt(p["maxSessionsOverride"]),
+      maxSessionsOverrideMonth: p["maxSessionsOverrideMonth"] as String?,
+      rolloverMaxOverride: _asInt(p["rolloverMaxOverride"]),
+      heldSessions: _asInt(p["heldSessions"]),
+      frozenFrom: p["frozenFrom"] as String?,
+      heldFrom: p["heldFrom"] as String?,
+      heldUntil: p["heldUntil"] as String?,
+    );
+
+  /// Every entry of a `clients.plans` value, skipping anything malformed.
+  static List<ClientPlanEnrollment> enrollmentsFromJson(Object? raw) =>
+      raw is List ? _safeMap(raw.whereType<Map>(), enrollmentFromJson) : const [];
+
   /// Owner/coach freezing a client's membership — mirrors freezeMembership
   /// in supabaseData.js. Pauses real Stripe billing (resumes automatically
-  /// on `endDate`, server-side, no cron needed) and sets the local
+  /// one hour before midnight Pacific on `endDate`) and sets the local
   /// membership_paused* fields the app reads for display/booking access.
-  static Future<void> freezeMembership(
+  ///
+  /// A start day after today is only scheduled: the result has
+  /// `scheduled: true` and nothing is paused until that day. Otherwise the
+  /// result carries the client's `plans` with the sessions held for after
+  /// the freeze.
+  static Future<Map<String, dynamic>> freezeMembership(
     String clientId,
     String startDate,
     String endDate,
@@ -2339,7 +2369,10 @@ class SupabaseService {
   /// Ends a freeze early — mirrors unfreezeMembership in supabaseData.js.
   /// Resumes real Stripe billing immediately rather than waiting for the
   /// originally-scheduled end date.
-  static Future<void> unfreezeMembership(String clientId) =>
+  /// The result carries the client's `plans`, with the held sessions now
+  /// starting today, and `cancelledScheduled` when the freeze had not
+  /// started yet.
+  static Future<Map<String, dynamic>> unfreezeMembership(String clientId) =>
       _invokeFunction("unfreeze-membership", {"clientId": clientId});
 
   /// How many free session-adds the signed-in coach has used this week.
@@ -6372,28 +6405,7 @@ class SupabaseService {
       homeLng: (c["home_lng"] as num?)?.toDouble(),
       birthday: c["birthday"] as String?,
       membershipPlanId: c["membership_plan_id"] as String?,
-      plans: _safeMap(
-        plansRaw.whereType<Map>(),
-        (p) => ClientPlanEnrollment(
-          planId: p["planId"] as String? ?? "",
-          status: p["status"] as String? ?? "active",
-          startDate: p["startDate"] as String? ?? "",
-          termMonths: _asInt(p["termMonths"]),
-          subscriptionId: p["subscriptionId"] as String?,
-          cancelsAt: p["cancelsAt"] as String?,
-          rolloverSessions: _asInt(p["rolloverSessions"]) ?? 0,
-          rolloverMonth: p["rolloverMonth"] as String?,
-          endsAt: p["endsAt"] as String?,
-          priceCents: _asInt(p["priceCents"]),
-          maxSessionsOverride: _asInt(p["maxSessionsOverride"]),
-          maxSessionsOverrideMonth: p["maxSessionsOverrideMonth"] as String?,
-          rolloverMaxOverride: _asInt(p["rolloverMaxOverride"]),
-          heldSessions: _asInt(p["heldSessions"]),
-          frozenFrom: p["frozenFrom"] as String?,
-          heldFrom: p["heldFrom"] as String?,
-          heldUntil: p["heldUntil"] as String?,
-        ),
-      ),
+      plans: _safeMap(plansRaw.whereType<Map>(), enrollmentFromJson),
       membershipPaused: c["membership_paused"] as bool? ?? false,
       membershipPausedAt: c["membership_paused_at"] as String?,
       membershipFreezeEndsAt: c["membership_freeze_ends_at"] as String?,

@@ -9,6 +9,7 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/domain_labels.dart";
 import "../../../core/utils/date_utils.dart";
+import "../../../core/utils/freeze_utils.dart";
 import "../../../core/utils/membership_utils.dart";
 import "../../../core/widgets/billing_address_form.dart";
 import "../../../core/widgets/widgets.dart";
@@ -906,7 +907,18 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(color: AppColors.gold.withValues(alpha: 0.08), border: Border.all(color: AppColors.goldDim), borderRadius: BorderRadius.circular(8)),
                 child: Text(
-                  "Paused${info.membershipFreezeEndsAt != null ? " until ${info.membershipFreezeEndsAt}" : ""}.",
+                  frozenBookingMessage(info.membershipFreezeEndsAt ?? ""),
+                  style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600),
+                ),
+              )
+            else if (freezeScheduled(info))
+              Container(
+                margin: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(color: AppColors.gold.withValues(alpha: 0.08), border: Border.all(color: AppColors.goldDim), borderRadius: BorderRadius.circular(8)),
+                child: Text(
+                  "Your freeze starts ${freezeShortDay(info.membershipPausedAt!)}"
+                  "${(info.membershipFreezeEndsAt ?? "").isNotEmpty ? ". You can book sessions again starting ${freezeShortDay(info.membershipFreezeEndsAt!)}" : ""}.",
                   style: TextStyle(fontSize: 12, color: AppColors.gold, fontWeight: FontWeight.w600),
                 ),
               )
@@ -995,7 +1007,7 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
                 Padding(
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text(
-                    "Your access is paused by your coach or ONE Fitness — ask them to resume it.",
+                    "To end your freeze early, message ONE Fitness.",
                     style: TextStyle(fontSize: 11, color: AppColors.mute),
                   ),
                 ),
