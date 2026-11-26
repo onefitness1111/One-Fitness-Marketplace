@@ -440,7 +440,7 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
                     BtnGold(
                       full: true,
                       onPressed: () => ref.read(clientScreenProvider.notifier).go("memberships"),
-                      child: const Text("Go to Membership Hub"),
+                      child: const Text("Go to Access Hub"),
                     ),
                   ],
                 ),

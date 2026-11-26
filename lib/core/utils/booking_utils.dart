@@ -403,7 +403,7 @@ BookingCheck canBookOffering(
   if (info.isStaff) return const BookingCheck(ok: true);
 
   if (plans.isEmpty) {
-    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Membership Hub to get started.", noMembership: true);
+    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Access Hub to get started.", noMembership: true);
   }
   if (info.membershipPaused) {
     return const BookingCheck(ok: false, reason: "paused", msg: "Your membership is currently paused — ask your gym to resume it before booking.");

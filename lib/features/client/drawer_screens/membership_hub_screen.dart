@@ -982,7 +982,7 @@ class _MembershipHubScreenState extends ConsumerState<MembershipHubScreen> {
                 child: OutlinedButton(
                   onPressed: _cancelBusy ? null : () => setState(() => _catalog = true),
                   style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.goldDim), foregroundColor: AppColors.gold, padding: const EdgeInsets.symmetric(vertical: 10)),
-                  child: const Text("Membership Hub", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  child: const Text("Browse all plans", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
                 ),
               ),
               const SizedBox(height: 8),
