@@ -1,11 +1,14 @@
 import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../core/privacy/client_email_privacy.dart";
+import "../../../data/providers/trainer_providers.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 
-/// Mirrors ClientSearchPicker.jsx — a compact name/email search list used
-/// inside the scheduling modals.
-class ClientSearchPicker extends StatefulWidget {
+/// Mirrors ClientSearchPicker.jsx — a compact client search list used
+/// inside the scheduling modals. Only the owner sees or searches emails.
+class ClientSearchPicker extends ConsumerStatefulWidget {
   const ClientSearchPicker({super.key, required this.roster, required this.onSelect, this.exclude = const []});
 
   final List<ClientInfo> roster;
@@ -13,10 +16,10 @@ class ClientSearchPicker extends StatefulWidget {
   final List<String> exclude;
 
   @override
-  State<ClientSearchPicker> createState() => _ClientSearchPickerState();
+  ConsumerState<ClientSearchPicker> createState() => _ClientSearchPickerState();
 }
 
-class _ClientSearchPickerState extends State<ClientSearchPicker> {
+class _ClientSearchPickerState extends ConsumerState<ClientSearchPicker> {
   final _controller = TextEditingController();
 
   @override
@@ -28,8 +31,9 @@ class _ClientSearchPickerState extends State<ClientSearchPicker> {
   @override
   Widget build(BuildContext context) {
     final q = _controller.text.trim().toLowerCase();
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final excludeSet = widget.exclude.toSet();
-    final visible = widget.roster.where((c) => !excludeSet.contains(c.id)).where((c) => q.isEmpty || c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q)).take(20).toList();
+    final visible = widget.roster.where((c) => !excludeSet.contains(c.id)).where((c) => clientMatchesSearch(name: c.name, email: c.email, query: q, viewerIsOwner: isOwner)).take(20).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -53,7 +57,8 @@ class _ClientSearchPickerState extends State<ClientSearchPicker> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                                      Text(c.email ?? "", style: TextStyle(fontSize: 11, color: AppColors.mute)),
+                                      if (clientEmailForViewer(c.email, viewerIsOwner: isOwner) case final email?)
+                                        Text(email, style: TextStyle(fontSize: 11, color: AppColors.mute)),
                                     ],
                                   ),
                                 ),

@@ -91,3 +91,33 @@ List<AttentionItem> computeCoachCodeAlerts(List<ClientInfo> myRoster) => myRoste
     .where((c) => c.referredByTrainerId != null && !c.coachCodeAlertSeen)
     .map((c) => AttentionItem(clientId: c.id, key: "coach-code-used", label: "Coach Code"))
     .toList();
+
+/// "No attendance logged" and "Coach Code" rows for whoever is looking.
+///
+/// The owner sees every client: unlogged sessions for every coach, and every
+/// unseen Coach Code signup. A coach sees only clients booked with them in
+/// the next 7 days ([clientsBookedWithCoachSoon]), same as the program and
+/// quiet-client rows: their own unlogged sessions with those clients, and
+/// Coach Code signups with their code among those clients. Based only on
+/// bookings, never on a primary coach or any assignment.
+List<AttentionItem> bookingAttentionForViewer({
+  required List<ClientInfo> roster,
+  required List<Booking> bookings,
+  required bool isOwner,
+  required String? coachId,
+  DateTime? now,
+}) {
+  if (isOwner) {
+    return [
+      ...computeUnloggedAttendance(roster, bookings),
+      ...computeCoachCodeAlerts(roster),
+    ];
+  }
+  if (coachId == null || coachId.isEmpty) return const [];
+  final soon = needsProgramRoster(roster: roster, bookings: bookings, isOwner: false, coachId: coachId, now: now);
+  final mine = bookings.where((b) => b.trainerId == coachId).toList();
+  return [
+    ...computeUnloggedAttendance(soon, mine),
+    ...computeCoachCodeAlerts(soon.where((c) => c.referredByTrainerId == coachId).toList()),
+  ];
+}

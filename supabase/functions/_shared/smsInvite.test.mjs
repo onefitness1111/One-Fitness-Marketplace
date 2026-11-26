@@ -37,14 +37,12 @@ test("a YES stores the reply, the invite wording, and the version", () => {
 });
 
 test("only someone who has never answered is invited, and only when the flag is on", () => {
-  const never = { phone: "5551234567", hasConsent: false, declined: false, optedOut: false, primaryTrainerId: "coach-a" };
+  const never = { phone: "5551234567", hasConsent: false, declined: false, optedOut: false };
   const on = { inviteEnabled: true };
   assert.equal(staffClientSmsAction(never), "disabled");
   assert.equal(inviteEligible(never), false);
   assert.equal(staffClientSmsAction(never, on), "invite");
   assert.equal(inviteEligible(never, on), true);
-  assert.equal(staffClientSmsAction({ ...never, primaryTrainerId: null }, on), "invite");
-  assert.equal(staffClientSmsAction({ ...never, primaryTrainerId: "someone-else" }, on), "invite");
   assert.equal(staffClientSmsAction({ ...never, hasConsent: true }, on), "send");
   assert.equal(inviteEligible({ ...never, hasConsent: true }, on), false);
   assert.equal(staffClientSmsAction({ ...never, inviteSentAt: "2026-11-21T23:00:00Z" }, on), "hold");

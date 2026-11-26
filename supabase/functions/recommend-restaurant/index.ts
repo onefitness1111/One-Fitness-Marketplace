@@ -17,6 +17,7 @@ import {
   json,
   parseModelJson,
   requireClientOrOwner,
+  safeError,
   scrub,
 } from "../_shared/estimateAuth.ts";
 
@@ -122,7 +123,8 @@ serve(async (req) => {
     const named = scrub(body.placeName, 80);
     if (named) {
       const place: Place = {
-        id: scrub(body.placeId, 120),
+        // An id is passed back as is. Stripping letters could change it.
+        id: String(body.placeId ?? "").trim().slice(0, 120),
         name: named,
         address: scrub(body.address, 120),
       };
@@ -143,6 +145,6 @@ serve(async (req) => {
     return json({ ok: true, places, picked: places[0], items });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Couldn't search right now.";
-    return json({ ok: false, error: scrub(message, 180) || "Couldn't search right now." }, 400);
+    return json({ ok: false, error: safeError(message, "Couldn't search right now.") }, 400);
   }
 });

@@ -51,7 +51,6 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
         for (final c in clients)
           BroadcastClient(
             id: c.id,
-            primaryTrainerId: c.primaryTrainerId,
             phone: isOwner ? (c.phone ?? "") : "",
             email: c.email ?? "",
             smsOptIn: c.smsOptIn,

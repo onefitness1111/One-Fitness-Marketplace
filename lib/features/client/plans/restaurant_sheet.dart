@@ -6,6 +6,7 @@ import "../../../core/utils/meal_resize.dart";
 import "../../../core/utils/nutrition_helpers.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/food_log.dart";
+import "../../../core/utils/ai_visibility.dart";
 
 /// Search a restaurant by its Google Maps name and pick a suggestion that
 /// fits this meal. The numbers are labeled Estimate.
@@ -71,8 +72,7 @@ class _RestaurantBodyState extends State<_RestaurantBody> {
 
   String _safe(Object e) {
     final text = e.toString().replaceFirst("Exception: ", "");
-    if (text.toLowerCase().contains("ai")) return "That didn't work. Try again.";
-    return text;
+    return clientSafeText(text, fallback: "That didn't work. Try again.");
   }
 
   Future<void> _search() async {

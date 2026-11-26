@@ -66,7 +66,6 @@ String sanitizeGroupName(String? raw) {
 class BroadcastClient {
   const BroadcastClient({
     required this.id,
-    this.primaryTrainerId,
     this.phone = "",
     this.email = "",
     this.smsOptIn = false,
@@ -74,7 +73,6 @@ class BroadcastClient {
   });
 
   final String id;
-  final String? primaryTrainerId;
   final String phone;
   final String email;
   final bool smsOptIn;

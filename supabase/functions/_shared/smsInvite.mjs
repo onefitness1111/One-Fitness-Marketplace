@@ -45,7 +45,7 @@ export function smsInviteEnabledFlag(row) {
  * An invite may be sent only when every one of these is true:
  * a mobile number, never invited, sms_declined_at is null, not opted out,
  * they have not already agreed, and app_config.sms_invite_enabled is true.
- * The flag defaults to false. primaryTrainerId is ignored.
+ * The flag defaults to false.
  */
 export function inviteEligible(client, { inviteEnabled = false } = {}) {
   const phone = String(client?.phone || "").trim();
@@ -65,8 +65,8 @@ export function inviteEligible(client, { inviteEnabled = false } = {}) {
  *   Keep the message. Do not text.
  * skip: no number, STOP / opted out, or they declined in the app.
  *
- * primaryTrainerId is ignored on purpose. Any coach, or the owner, can
- * reach any client.
+ * There is no coach assignment. Any coach, or the owner, can reach any
+ * client.
  */
 export function staffClientSmsAction(client, options = {}) {
   const phone = String(client?.phone || "").trim();
