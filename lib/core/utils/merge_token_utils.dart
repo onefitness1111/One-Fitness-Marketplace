@@ -103,18 +103,6 @@ String resolveMergeTokens(String text, Map<String, String> values) =>
       return values.containsKey(key) ? values[key]! : m.group(0)!;
     });
 
-/// True once [record]/[info] have what's needed to resolve every
-/// non-structural token a waiver could reasonably use — specifically the
-/// emergency contact, which the spec calls out as "required before waiver
-/// unlocks" (§1). Everything else (name/dob/etc.) always comes from data
-/// that already exists on the account.
-bool hasRequiredContactInfo(ClientRecord record) {
-  final answers = record.intake["personalTraining"]?.answers;
-  final name = answers?["ecName"]?.toString().trim();
-  final phone = answers?["ecPhone"]?.toString().trim();
-  return (name?.isNotEmpty ?? false) && (phone?.isNotEmpty ?? false);
-}
-
 /// Age in whole years as of today — used to gate the minor/guardian flow
 /// (client_dob under 18). Null if no birthday is on file.
 int? ageFromBirthday(String? birthday) {
@@ -186,10 +174,6 @@ List<WaiverSegment> parseWaiverSegments(String resolvedBody) {
   if (lastEnd < resolvedBody.length) segments.add(WaiverTextSegment(resolvedBody.substring(lastEnd)));
   return segments;
 }
-
-/// Total `{{initial}}` tokens in a body — used up front to size the
-/// initials-capture list before walking the document.
-int countInitialSegments(String resolvedBody) => _structuralPattern.allMatches(resolvedBody).where((m) => m.group(1) == "initial").length;
 
 /// SHA-256 of the RAW (not merge-token-resolved) document body — same
 /// value sign-waiver computes and stores as `documentVersionHash`. Hashing

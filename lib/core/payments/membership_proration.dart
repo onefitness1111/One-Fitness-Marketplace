@@ -26,8 +26,6 @@ class FirstCharge {
   final int anchorDay;
 }
 
-const billingTimeZone = "America/Los_Angeles";
-
 int? clampAnchorDay(int? day) {
   if (day == null || day < 1) return null;
   return day > 28 ? 28 : day;

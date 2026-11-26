@@ -231,14 +231,6 @@ class ChargesNotifier extends Notifier<List<Charge>> {
 
 final chargesProvider = NotifierProvider<ChargesNotifier, List<Charge>>(ChargesNotifier.new);
 
-/// Rebuilds with [chargesProvider]. Reads the flag that was set just before
-/// the list changed, so the dashboard can hide its collect banner until a
-/// load that selected `stripe_payment_intent_id` has landed.
-final chargesPaymentIntentKnownProvider = Provider<bool>((ref) {
-  ref.watch(chargesProvider);
-  return ref.read(chargesProvider.notifier).paymentIntentKnown;
-});
-
 /// Coach Merit Badge System — every coach's earned badges, gym-wide (like
 /// [chargesProvider], not scoped to "my own" — the owner needs to see
 /// every coach's history, and Coach of the Month needs to compare across

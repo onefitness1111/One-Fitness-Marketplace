@@ -1,7 +1,6 @@
 import "package:flutter/material.dart";
 import "../../data/models/blocked_time.dart";
 import "../../data/models/booking.dart";
-import "../../data/models/charge.dart";
 import "../../data/models/client_info.dart";
 import "../../data/models/client_record.dart";
 import "../../data/models/membership_plan.dart";
@@ -271,8 +270,6 @@ CalendarDayStatus? calendarDayStatus(ClientRecord client, ClientInfo info, List<
   return date.compareTo(isoToday()) >= 0 ? CalendarDayStatus.upcoming : CalendarDayStatus.missed;
 }
 
-String lateCancellationFeeLabel({int feeCents = kLateCancellationFeeCents}) => "\$${(feeCents / 100).toStringAsFixed(2)}";
-
 /// A booking's `attendanceStatus` value paired with its display label/color —
 /// shared between the coach's attendance-marking UI (trainer_home_screen.dart)
 /// and the client's own Past Visits history (client_visits_section.dart), so
@@ -293,59 +290,6 @@ List<AttendanceOption> get kAttendanceOptions => [
   AttendanceOption("late-cancel", "Late Cancel", AppColors.warning),
   AttendanceOption("no-show", "No Show", AppColors.danger),
 ];
-
-/// Mirrors the Attendance & Cancellation Charging Policy (July 2026):
-/// Late Cancel and No-Show both carry an owner-set fee — but only a
-/// no-show also keeps the session (see kGiveBackAttendanceStatuses).
-/// Checked In and Early Cancel never charge, so this returns null for
-/// anything other than the two feeable statuses. [lateCancellationFeeCents]
-/// / [noShowFeeCents] must be the live `platformSettingsProvider` values,
-/// not the hardcoded fallback — same reasoning as every other optional
-/// param in this file (see header comment).
-Charge? attendanceChargeFor(
-  Booking b,
-  String status, {
-  required String clientName,
-  String? trainerName,
-  int lateCancellationFeeCents = kLateCancellationFeeCents,
-  int noShowFeeCents = kNoShowFeeCents,
-}) {
-  final int cents;
-  final String description;
-  final String chargeType;
-  if (status == "late-cancel") {
-    cents = lateCancellationFeeCents;
-    description = "Late Cancellation Fee";
-    // Not "late-cancel" — the real `charges.type` column has a CHECK
-    // constraint allowing only a fixed set of values ("late", "noshow",
-    // "manual", "purchase", ...), matching web's own recordChargeIfNeeded
-    // (BookSession.jsx), which already writes `type: "late"` for exactly
-    // this case.
-    chargeType = "late";
-  } else if (status == "no-show") {
-    cents = noShowFeeCents;
-    description = "No-Show Fee";
-    chargeType = "noshow";
-  } else {
-    return null;
-  }
-  // A fee the owner has set to zero is "no fee", not a $0.00 line on the
-  // client's statement.
-  if (cents <= 0) return null;
-  return Charge(
-    id: "",
-    clientId: b.clientId,
-    clientName: clientName,
-    type: chargeType,
-    date: isoToday(),
-    at: stamp(),
-    category: "fee",
-    description: description,
-    amount: cents / 100,
-    trainerId: b.trainerId,
-    trainerName: trainerName,
-  );
-}
 
 class BookingCheck {
   const BookingCheck({required this.ok, this.reason, this.msg, this.noMembership = false, this.planId});
@@ -473,10 +417,6 @@ BookingCheck? waiverGateCheck({
         : "You have ${outstanding.length} documents to sign before you can book — it only takes a minute.",
   );
 }
-
-const _weekdayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
-String weekdayKey(int jsWeekday) => _weekdayKeys[jsWeekday];
 
 String startOfWeek(String iso) => isoDate(DateTime.parse(iso).subtract(Duration(days: weekdayOf(iso))));
 

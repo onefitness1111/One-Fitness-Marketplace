@@ -1,7 +1,5 @@
-import "../../data/models/booking.dart";
 import "../../data/models/client_info.dart";
 import "../../data/models/membership_plan.dart";
-import "membership_utils.dart";
 
 /// A session package offers a renewal when it is running out.
 ///
@@ -236,8 +234,3 @@ List<({MembershipPlan plan, String start})> packageEnrollments(
   }
   return out;
 }
-
-/// Sessions still unused on [plan]. Checked-in and no-show count as used.
-/// A booking that has not happened yet does not.
-int packageSessionsLeft(ClientInfo info, MembershipPlan plan, List<Booking> bookings) =>
-    sessionsRemainingBalance(info, plan, bookings);

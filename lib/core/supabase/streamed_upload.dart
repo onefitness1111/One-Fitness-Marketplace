@@ -1,7 +1,6 @@
 import "dart:async";
 import "dart:convert";
 import "dart:math";
-import "dart:typed_data";
 
 import "package:http/http.dart" as http;
 import "package:supabase_flutter/supabase_flutter.dart";
@@ -165,27 +164,6 @@ Stream<List<int>> multipartBodyStream({
 
   yield framing.epilogue;
 }
-
-/// [uploadStreamWithProgress] for content already in memory — a photo, or
-/// anything small enough that holding it is not the problem video is.
-Future<void> uploadBinaryWithProgress({
-  required String bucket,
-  required String path,
-  required Uint8List bytes,
-  required String contentType,
-  UploadProgress? onProgress,
-  bool upsert = false,
-  http.Client? httpClient,
-}) => uploadStreamWithProgress(
-  bucket: bucket,
-  path: path,
-  body: Stream.value(bytes),
-  length: bytes.length,
-  contentType: contentType,
-  onProgress: onProgress,
-  upsert: upsert,
-  httpClient: httpClient,
-);
 
 /// Storage errors come back as `{"message": "..."}`; anything else is passed
 /// over rather than shown raw.

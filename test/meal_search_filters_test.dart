@@ -1,7 +1,6 @@
 import "package:flutter_test/flutter_test.dart";
 import "package:onefitness/core/utils/food_catalog.dart";
 import "package:onefitness/data/models/meal_def.dart";
-import "package:onefitness/data/models/nutrition_plan.dart";
 
 void main() {
   test("lunch and dinner count as both unless the meal says otherwise", () {

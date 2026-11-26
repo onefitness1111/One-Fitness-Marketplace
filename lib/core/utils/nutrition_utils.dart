@@ -12,15 +12,6 @@ String macroShortLabel(String key) => const {
     }[key] ??
     key;
 
-/// (key, label, unit) rows — mirrors schemas.js `MACRO_FIELDS`.
-const kMacroFields = [
-  ("calories", "Calories", "kcal"),
-  ("protein", "Protein %", "%"),
-  ("carbs", "Carbs %", "%"),
-  ("fats", "Fat %", "%"),
-  ("water", "Water", ""),
-];
-
 class TargetMatch {
   const TargetMatch({required this.delta, required this.pct, required this.color});
   final int delta;
