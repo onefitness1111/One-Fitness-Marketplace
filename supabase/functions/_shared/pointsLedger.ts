@@ -53,16 +53,22 @@ export function replayLedger(rows: LedgerRow[], now: Date = new Date()) {
   return { lots, balance, pendingExpiry };
 }
 
+export const REWARD_MIN_REDEEM_POINTS = 40;
+export const REWARD_MAX_REDEEM_POINTS = 100;
+
 export function planRedemption(
   lots: Lot[],
   now: Date = new Date(),
-  { capPoints = 40, minPoints = 40 }: { capPoints?: number; minPoints?: number } = {},
+  { capPoints = REWARD_MAX_REDEEM_POINTS, minPoints = REWARD_MIN_REDEEM_POINTS }: { capPoints?: number; minPoints?: number } = {},
 ) {
+  const effectiveMin = Math.max(minPoints, REWARD_MIN_REDEEM_POINTS);
+  const effectiveCap = Math.min(capPoints, REWARD_MAX_REDEEM_POINTS);
+  if (effectiveCap < effectiveMin) return null;
   const nowMs = now.getTime();
   const active = lots.filter((lot) => lot.remaining > 0 && (!lot.expires_at || toMs(lot.expires_at) > nowMs));
   const balance = active.reduce((s, l) => s + l.remaining, 0);
-  if (balance < minPoints) return null;
-  const points = Math.min(balance, capPoints);
+  if (balance < effectiveMin) return null;
+  const points = Math.min(balance, effectiveCap);
   let left = points;
   const allocations: { lotId: string; amount: number }[] = [];
   for (const lot of active) {

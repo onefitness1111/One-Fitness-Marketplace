@@ -8,7 +8,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { replayLedger, planRedemption, pointsToDiscountCents } from "../_shared/pointsLedger.ts";
+import { replayLedger, planRedemption, pointsToDiscountCents, REWARD_MAX_REDEEM_POINTS, REWARD_MIN_REDEEM_POINTS } from "../_shared/pointsLedger.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
 import { assertPlanPurchasable } from "../_shared/planVisibility.mjs";
@@ -142,7 +142,7 @@ serve(async (req) => {
     } else if (clientRow?.redeem_points_next_renewal) {
       const { data: ledgerRows } = await admin.from("points_ledger").select("*").eq("client_id", beneficiaryId);
       const { lots } = replayLedger(ledgerRows || []);
-      const redemption = planRedemption(lots, new Date(), { capPoints: 40, minPoints: 40 });
+      const redemption = planRedemption(lots, new Date(), { capPoints: REWARD_MAX_REDEEM_POINTS, minPoints: REWARD_MIN_REDEEM_POINTS });
       if (redemption) {
         redeemedPoints = redemption.points;
         discountCents = Math.min(pointsToDiscountCents(redeemedPoints, priceCents), priceCents);

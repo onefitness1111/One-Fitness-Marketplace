@@ -22,7 +22,8 @@ const kWaysToEarn = <WayToEarn>[
 ];
 
 const kRewardMinRedeemPoints = 40;
-const kRewardMaxRedeemPoints = 40;
+const kRewardMaxRedeemPoints = 100;
+const kRewardPointBasisPoints = 50;
 const kRewardExpiringSoonDays = 60;
 
 /// Mirrors src/constants/theme.js `SOURCE_LABELS` (rewards/LedgerTable.jsx).
