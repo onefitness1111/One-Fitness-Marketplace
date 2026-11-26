@@ -15,9 +15,9 @@ import "coach_badge_progress_list.dart";
 /// A coach's own view of the Coach Merit Badge System — mirrors what
 /// BadgeGalleryScreen gives clients for their (separate) client-facing merit
 /// badges: what you have, what you don't yet, and exactly how to earn each
-/// one. Distinct from My Pay's compact "this month" list — this screen adds
-/// the how-it-works explanation, the Coach of the Month badge (which isn't
-/// part of the 6 rate-based badges), and the full earned-badge history.
+/// one: this month's progress, the how-it-works explanation, the Coach of
+/// the Month badge (which isn't part of the 6 rate-based badges), and the
+/// full earned-badge history. Opened from My Profile only (U8).
 class CoachMeritBadgesScreen extends ConsumerStatefulWidget {
   const CoachMeritBadgesScreen({super.key});
 
