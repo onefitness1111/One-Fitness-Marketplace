@@ -25,6 +25,7 @@ import "../../../data/providers/trainer_providers.dart";
 import "../../client/drawer_screens/payment_details_section.dart";
 import "billing_anchor_section.dart";
 import "plan_allowance_section.dart";
+import "../staff/change_role.dart";
 import "plan_expiry_row.dart";
 import "plan_price_row.dart";
 import "renewal_terms_section.dart";
@@ -75,6 +76,13 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
       final phone = await SupabaseService.loadEmergencyPhone(widget.clientId);
       if (mounted) setState(() => _emergencyPhone = phone);
     });
+  }
+
+  /// Closes this client's page. The notifier is taken now, so it still
+  /// works if the roster refresh removes this screen first.
+  VoidCallback _clearSelection() {
+    final selected = ref.read(selectedClientIdProvider.notifier);
+    return () => selected.select(null);
   }
 
   bool _editing = false;
@@ -799,6 +807,14 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
             profileId: info.id,
             email: info.email ?? "",
             name: info.name,
+          ),
+          // Owner only. A client can be made a coach; the plan, balance
+          // and history stay on their account.
+          ChangeRoleAction(
+            profileId: info.id,
+            name: info.name,
+            currentRole: "client",
+            onChanged: _clearSelection(),
           ),
           const SizedBox(height: 8),
           Row(

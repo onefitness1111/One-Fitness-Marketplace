@@ -546,6 +546,26 @@ class SupabaseService {
     return userId;
   }
 
+  /// Owner only: move a person between Client and Coach (`set_user_role`).
+  ///
+  /// [role] is "client" or "coach". The server checks the caller is the
+  /// owner, refuses the owner's own account and any owner account, keeps
+  /// the old role's rows (sessions, plan, balance, history), and writes the
+  /// change to the owner's activity feed. The person gets the other app the
+  /// next time they sign in. Returns the server's reply
+  /// (`changed`, `oldRole`, `newRole`, ...).
+  static Future<Map<String, dynamic>> setUserRole(String userId, String role) async {
+    try {
+      final res = await client.rpc("set_user_role", params: {"p_user": userId, "p_role": role});
+      return res is Map ? Map<String, dynamic>.from(res) : <String, dynamic>{};
+    } on PostgrestException catch (e) {
+      // The function's own refusals ("Only the owner can change...") are
+      // already plain sentences.
+      if (e.code == "P0001" && e.message.trim().isNotEmpty) throw Exception(e.message.trim());
+      _rethrowContactClash(e);
+    }
+  }
+
   /// Runs after the auth session is cleared. The bootstrap uses it to drop
   /// the first-tap prompt. The on-device dashboard snapshot is removed here
   /// so the next person on this phone cannot open it.

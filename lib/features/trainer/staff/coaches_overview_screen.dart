@@ -22,6 +22,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "change_role.dart";
 import "staff_card_details.dart";
 
 /// Mirrors CoachesOverview.jsx (owner-only) — a real coach-approval-code
@@ -452,6 +453,17 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
                       profileId: t.id,
                       email: t.email ?? "",
                       name: t.displayTitle,
+                    ),
+                    // Owner only (this page is the owner's Staff tab). Moves
+                    // the person to the client side; nothing of theirs is
+                    // deleted.
+                    ChangeRoleAction(
+                      profileId: t.id,
+                      name: t.name.trim().isNotEmpty ? t.name.trim() : t.displayTitle,
+                      currentRole: "coach",
+                      onChanged: () {
+                        if (mounted) setState(() => _openId = null);
+                      },
                     ),
                     if (t.signupAt != null) ...[
                       const SizedBox(height: 4),
