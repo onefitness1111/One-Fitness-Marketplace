@@ -72,6 +72,12 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
     final expiringPoints = expiringSoon.fold<int>(0, (s, l) => s + l.remaining);
     final earliestExpiry = expiringSoon.isEmpty ? null : (expiringSoon.map((l) => l.expiresAt!).toList()..sort()).first;
     final redemptionPlan = planRedemption(replay.lots, capPoints: kRewardMaxRedeemPoints, minPoints: kRewardMinRedeemPoints);
+    final redeemPct = redemptionPlan == null ? 0.0 : redemptionPlan.points * (kRewardPointBasisPoints / 100.0);
+    final redeemPctText = redeemPct == redeemPct.roundToDouble() ? "${redeemPct.toInt()}%" : "${redeemPct.toStringAsFixed(1)}%";
+    final remainingAfterRedeem = redemptionPlan == null ? replay.balance : replay.balance - redemptionPlan.points;
+    final remainingNote = remainingAfterRedeem > 0
+        ? " $remainingAfterRedeem point${remainingAfterRedeem == 1 ? "" : "s"} will stay in your balance."
+        : "";
 
     // Only a real top-level Merit Badge counts here — Gym Citizen's 10
     // coach-checked sub-badges aren't in kMeritBadges, so this exclusion
@@ -133,7 +139,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "Turn the toggle on to use your points toward your next purchase or renewal automatically. Leave it off to keep accumulating points — each point stays available for 6 months from the day you earned it.",
+                  "Redeem between $kRewardMinRedeemPoints and $kRewardMaxRedeemPoints points per purchase or renewal (1 point = 0.5% off, up to 50% off). Leave this off to keep saving — there's no cap on your balance, and each point lasts 6 months from the day you earned it.",
                   style: TextStyle(fontSize: 12, color: AppColors.txt, height: 1.5),
                 ),
                 const SizedBox(height: 12),
@@ -141,7 +147,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                   if (info.stripeSubscriptionId != null) ...[
                     _ToggleRow(
                       label: "Redeem ${redemptionPlan.points} points now",
-                      hint: "Applies a discount off your next bill immediately — your subscription is already active, so this can't wait for a future renewal the way a new purchase can.",
+                      hint: "Applies $redeemPctText off your next bill immediately (max $kRewardMaxRedeemPoints points per redemption — your subscription is already active, so this can't wait for a future renewal the way a new purchase can).$remainingNote",
                       value: false,
                       onChanged: (next) {
                         if (next && !_redeeming) _redeemNow();
@@ -151,7 +157,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                   ] else
                     _ToggleRow(
                       label: "Redeem ${redemptionPlan.points} points on my next purchase",
-                      hint: "Applies automatically as a discount at checkout.",
+                      hint: "Applies automatically as $redeemPctText off at checkout ($kRewardMinRedeemPoints–$kRewardMaxRedeemPoints points per redemption).$remainingNote",
                       value: info.redeemPointsNextRenewal,
                       onChanged: _togglingFlag ? null : _toggleRedeemFlag,
                     )
@@ -161,7 +167,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                   // the balance reaches kRewardMinRedeemPoints.
                   _ToggleRow(
                     label: "Use my points on my next purchase",
-                    hint: "You can use your points once you have $kRewardMinRedeemPoints. "
+                    hint: "You need at least $kRewardMinRedeemPoints points to redeem (up to $kRewardMaxRedeemPoints per redemption). "
                         "You have ${replay.balance} — ${kRewardMinRedeemPoints - replay.balance} more to go.",
                     value: false,
                     onChanged: null,

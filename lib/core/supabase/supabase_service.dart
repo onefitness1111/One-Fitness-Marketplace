@@ -61,6 +61,7 @@ import "../../data/models/squad.dart";
 import "../../data/models/squad_chat_message.dart";
 import "../../data/models/trainer.dart";
 import "../../data/models/trainer_note.dart";
+import "../payments/outstanding_balance.dart";
 import "../../data/models/waitlist_entry.dart";
 import "../../data/models/waiver_doc.dart";
 import "../../data/models/waiver_signature_record.dart";
@@ -4175,6 +4176,46 @@ class SupabaseService {
     final rows = await _rpcList("client_billing_for", {"p_ids": [clientId]});
     if (rows.isEmpty || rows.first is! Map) return 0;
     return (rows.first["balance_cents"] as num?)?.toInt() ?? 0;
+  }
+
+  /// Single shared unpaid-balance check for bookings and waitlists.
+  /// Calls `check_booking_balance` in Postgres and falls back to the mirrored
+  /// local rule if that RPC isn't present yet. No phone and no address.
+  static Future<BookingBalanceCheck> checkBookingBalance(
+    String clientId, {
+    bool isWaitlist = false,
+    required bool isSelf,
+    bool isOwner = false,
+    bool isCoach = false,
+  }) async {
+    try {
+      final rows = await _rpcList("check_booking_balance", {
+        "p_client": clientId,
+        "p_target": isWaitlist ? "waitlist" : "booking",
+      });
+      if (rows.isNotEmpty && rows.first is Map) {
+        final row = rows.first as Map;
+        if (row["code"]?.toString() != "NOT_AUTHORIZED") {
+          return BookingBalanceCheck(
+            allowed: row["allowed"] == true,
+            code: row["code"]?.toString() ?? "OK",
+            message: row["message"]?.toString(),
+            balanceCents: (row["balance_cents"] as num?)?.toInt() ?? 0,
+            graceUsed: row["grace_booking_used"] == true,
+            canOverride: row["can_override"] == true,
+          );
+        }
+      }
+    } catch (_) {}
+    final hold = await loadBookingHold(clientId);
+    return evaluateBookingBalance(
+      balanceCents: hold.balanceCents,
+      graceUsed: hold.graceUsed,
+      isSelf: isSelf,
+      isOwner: isOwner,
+      isCoach: isCoach,
+      isWaitlist: isWaitlist,
+    );
   }
 
   /// Amount owed and whether a coach already used the one grace booking.

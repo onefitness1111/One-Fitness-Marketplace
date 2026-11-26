@@ -123,7 +123,151 @@ BalanceAccount applyFeeCharge({
   );
 }
 
-bool bookingBlocked(int balanceCents) => balanceCents < 0;
+const kCoachGraceUsedNote = "You already added them to one session while this is unpaid.";
+
+/// Canonical result of the single shared unpaid-balance check (mirrors SQL
+/// `public.unpaid_balance_rule`).
+class BookingBalanceCheck {
+  const BookingBalanceCheck({
+    required this.allowed,
+    required this.code,
+    this.message,
+    this.balanceCents = 0,
+    this.graceUsed = false,
+    this.canOverride = false,
+  });
+
+  final bool allowed;
+  final String code;
+  final String? message;
+  final int balanceCents;
+  final bool graceUsed;
+  final bool canOverride;
+
+  bool get owes => balanceCents < 0;
+}
+
+/// Single shared rule used everywhere in the app (and mirrored 1:1 in SQL
+/// `public.unpaid_balance_rule` and Edge `evaluateUnpaidBalance`).
+BookingBalanceCheck evaluateBookingBalance({
+  required int balanceCents,
+  bool graceUsed = false,
+  required bool isSelf,
+  bool isOwner = false,
+  bool isCoach = false,
+  bool isWaitlist = false,
+}) {
+  if (balanceCents >= 0) {
+    return BookingBalanceCheck(
+      allowed: true,
+      code: "OK",
+      balanceCents: balanceCents,
+      graceUsed: graceUsed,
+    );
+  }
+  // Waitlist: the owner can always add the client. A coach can add them only
+  // while grace is unused, and that add does not consume the grace. After
+  // grace is used the coach is blocked. The client stays blocked.
+  if (isWaitlist) {
+    if (!isSelf && isOwner) {
+      return BookingBalanceCheck(
+        allowed: true,
+        code: "OK",
+        balanceCents: balanceCents,
+        graceUsed: graceUsed,
+        canOverride: true,
+      );
+    }
+    if (!isSelf && isCoach) {
+      if (graceUsed) {
+        return BookingBalanceCheck(
+          allowed: false,
+          code: "BALANCE_GRACE_USED",
+          message: staffBalanceWarning(balanceCents),
+          balanceCents: balanceCents,
+          graceUsed: graceUsed,
+        );
+      }
+      return BookingBalanceCheck(
+        allowed: true,
+        code: "OK",
+        balanceCents: balanceCents,
+        graceUsed: graceUsed,
+        canOverride: true,
+      );
+    }
+    return BookingBalanceCheck(
+      allowed: false,
+      code: "BALANCE_DUE",
+      message: outstandingBalanceMessage(balanceCents),
+      balanceCents: balanceCents,
+      graceUsed: graceUsed,
+    );
+  }
+  if (!isSelf && isOwner) {
+    return BookingBalanceCheck(
+      allowed: true,
+      code: "BALANCE_OWNER_OVERRIDE",
+      message: staffBalanceWarning(balanceCents),
+      balanceCents: balanceCents,
+      graceUsed: graceUsed,
+      canOverride: true,
+    );
+  }
+  if (!isSelf && isCoach) {
+    if (graceUsed) {
+      return BookingBalanceCheck(
+        allowed: false,
+        code: "BALANCE_GRACE_USED",
+        message: staffBalanceWarning(balanceCents),
+        balanceCents: balanceCents,
+        graceUsed: graceUsed,
+      );
+    }
+    return BookingBalanceCheck(
+      allowed: true,
+      code: "BALANCE_COACH_GRACE",
+      message: staffBalanceWarning(balanceCents),
+      balanceCents: balanceCents,
+      graceUsed: graceUsed,
+      canOverride: true,
+    );
+  }
+  return BookingBalanceCheck(
+    allowed: false,
+    code: "BALANCE_DUE",
+    message: outstandingBalanceMessage(balanceCents),
+    balanceCents: balanceCents,
+    graceUsed: graceUsed,
+  );
+}
+
+/// Extracts the clean unpaid-balance sentence from a server exception when
+/// present, or null when [error] is unrelated to an unpaid balance.
+String? unpaidBalanceErrorMessage(Object error) {
+  final text = error.toString();
+  if (text.contains("BALANCE_DUE")) {
+    final start = text.indexOf(balanceDueLead);
+    if (start >= 0) {
+      final end = text.indexOf("book sessions.", start);
+      if (end >= start) return text.substring(start, end + "book sessions.".length);
+    }
+    return "You have an outstanding balance. Please pay your balance to book sessions.";
+  }
+  if (text.contains("BALANCE_GRACE_USED") || text.contains("This client has an outstanding balance")) {
+    final start = text.indexOf("This client has an outstanding balance");
+    if (start >= 0) {
+      final endMatch = RegExp(r'\.(?=\s|$|,|\))').firstMatch(text.substring(start));
+      if (endMatch != null) return text.substring(start, start + endMatch.start + 1);
+      return text.substring(start);
+    }
+    return "This client has an outstanding balance.";
+  }
+  return null;
+}
+
+bool bookingBlocked(int balanceCents) =>
+    !evaluateBookingBalance(balanceCents: balanceCents, isSelf: true).allowed;
 
 /// One card charge for a pay-per session. A negative balance is added on.
 /// A credit is not subtracted.
@@ -199,22 +343,34 @@ class StaffBalanceChoices {
 /// The owner can always book past a balance. A coach can once. After that
 /// one grace booking, the coach's button stays off until the balance is paid.
 StaffBalanceChoices staffBalanceChoices({required bool isOwner, required BalanceGate gate}) {
-  if (!gate.owes || isOwner || !gate.graceUsed) {
+  final check = evaluateBookingBalance(
+    balanceCents: gate.balanceCents,
+    graceUsed: gate.graceUsed,
+    isSelf: false,
+    isOwner: isOwner,
+    isCoach: !isOwner,
+  );
+  if (check.allowed) {
     return const StaffBalanceChoices(bookAnywayEnabled: true);
   }
   return const StaffBalanceChoices(
     bookAnywayEnabled: false,
-    note: "You already added them to one session while this is unpaid.",
+    note: kCoachGraceUsedNote,
   );
 }
 
 /// The owner can add the client any number of times. A coach can add them
 /// once. The client is never covered here — they stay fully blocked.
 StaffAdd staffAddDecision({required bool isOwner, required BalanceGate gate}) {
-  if (!gate.owes) return StaffAdd.clear;
-  if (isOwner) return StaffAdd.warned;
-  if (!gate.graceUsed) return StaffAdd.warned;
-  return StaffAdd.blocked;
+  final check = evaluateBookingBalance(
+    balanceCents: gate.balanceCents,
+    graceUsed: gate.graceUsed,
+    isSelf: false,
+    isOwner: isOwner,
+    isCoach: !isOwner,
+  );
+  if (!check.owes) return StaffAdd.clear;
+  return check.allowed ? StaffAdd.warned : StaffAdd.blocked;
 }
 
 /// A coach's first add uses the grace booking. The owner's adds do not.

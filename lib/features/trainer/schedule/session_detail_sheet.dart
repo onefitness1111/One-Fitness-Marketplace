@@ -287,7 +287,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
       await insert(overrideReason);
     } catch (e) {
       final text = e.toString();
-      if (text.contains("This client has an outstanding balance") && mounted) {
+      if (isUnpaidBalanceError(e) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(staffBalanceWarningFromError(text))),
         );
@@ -330,7 +330,7 @@ class _SessionDetailBodyState extends ConsumerState<_SessionDetailBody> {
       } catch (e2) {
         if (!mounted) return;
         final again = e2.toString();
-        if (again.contains("This client has an outstanding balance")) {
+        if (isUnpaidBalanceError(e2)) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(staffBalanceWarningFromError(again))),
           );

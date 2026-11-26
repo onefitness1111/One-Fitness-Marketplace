@@ -24,6 +24,7 @@ import "../drawer_screens/waiver_signing_screen.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../core/payments/outstanding_balance.dart";
 import "balance_due_sheet.dart";
 
 const _kWeekdayOptions = [
@@ -357,7 +358,7 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           bookedIds.add(saved.id);
           booked++;
         } catch (e) {
-          if (e.toString().contains("BALANCE_DUE")) {
+          if (unpaidBalanceErrorMessage(e) != null) {
             final owed = await unpaidBalanceCents(info.id);
             if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
             break;
@@ -405,7 +406,7 @@ class _AdvancedBookingScreenState extends ConsumerState<AdvancedBookingScreen> {
           ref.read(waitlistProvider.notifier).add(entry);
           waitlisted++;
         } catch (e) {
-          if (e.toString().contains("BALANCE_DUE")) {
+          if (unpaidBalanceErrorMessage(e) != null) {
             final owed = await unpaidBalanceCents(info.id);
             if (mounted && owed != null) await showOutstandingBalanceSheet(context, balanceCents: owed);
             break;

@@ -1,6 +1,7 @@
 import "package:supabase_flutter/supabase_flutter.dart"
     show FunctionException, PostgrestException;
 
+import "../payments/outstanding_balance.dart";
 import "date_utils.dart";
 
 /// How the live `enforce_booking_limits` trigger refused an insert.
@@ -143,15 +144,9 @@ String clientBookingErrorMessage(Object error) {
   // The freeze trigger already says when the freeze ends (U14).
   final frozen = frozenSentence(error);
   if (frozen != null) return frozen;
-  if (text.contains("BALANCE_DUE")) {
-    final start = text.indexOf("You have an outstanding balance");
-    if (start >= 0) {
-      final end = text.indexOf("book sessions.");
-      if (end > start)
-        return text.substring(start, end + "book sessions.".length);
-    }
-    return "You have an outstanding balance. Please pay your balance to book sessions.";
-  }
+  // Unified unpaid-balance check (O4): BALANCE_DUE and BALANCE_GRACE_USED.
+  final balanceMsg = unpaidBalanceErrorMessage(text);
+  if (balanceMsg != null) return balanceMsg;
   if (text.contains("waiver-required")) {
     return "Please sign the waiver under Signatures (in the menu) before booking.";
   }

@@ -20,7 +20,6 @@ import {
   filledSessionRefundNotice,
   pacificWeekRange,
   singleSessionTotal,
-  staffMayAddSingle,
 } from "../_shared/singleSessionRules.mjs";
 
 const CORS_HEADERS = {
@@ -51,16 +50,21 @@ serve(async (req) => {
     const { data: caller } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
     if (caller?.role !== "owner" && caller?.role !== "coach") throw new Error("Only a coach or the owner can do this.");
 
-    // Amount and the grace flag only. Phone and billing address are not read.
-    const { data: clientRow } = await admin.from("clients").select("stripe_customer_id, balance_cents, grace_booking_used").eq("profile_id", clientId).maybeSingle();
-    const gate = mode === "free"
-      ? staffMayAddSingle({
-        role: caller.role,
-        balanceCents: clientRow?.balance_cents ?? 0,
-        graceUsed: clientRow?.grace_booking_used === true,
-      })
-      : { ok: true, consumeGrace: false, code: "", message: "" };
-    if (!gate.ok) return json({ status: "error", code: gate.code, message: gate.message });
+    // Amount and customer id only. Phone and billing address are not read.
+    const { data: clientRow } = await admin.from("clients").select("stripe_customer_id, balance_cents").eq("profile_id", clientId).maybeSingle();
+    if (mode === "free") {
+      const { data: balRows, error: balErr } = await admin.rpc("check_booking_balance", {
+        p_client: clientId,
+        p_target: "booking",
+        p_actor_id: user.id,
+        p_actor_role: caller.role,
+      });
+      if (balErr) throw new Error(balErr.message);
+      const gate = Array.isArray(balRows) ? balRows[0] : balRows;
+      if (gate && !gate.allowed) {
+        return json({ status: "error", code: gate.code, message: gate.message });
+      }
+    }
 
     if (mode === "free" && coachFreeAddBlocked({ role: caller.role, usedThisWeek: await freeAddsThisWeek(admin, user.id) })) {
       return json({ status: "error", code: "FREE_ADD_LIMIT", message: FREE_ADD_LIMIT_MESSAGE });
@@ -179,9 +183,7 @@ serve(async (req) => {
           });
         }
       }
-      if (gate.consumeGrace) {
-        await admin.from("clients").update({ grace_booking_used: true }).eq("profile_id", clientId);
-      }
+
     }
     return json(res);
   } catch (e) {

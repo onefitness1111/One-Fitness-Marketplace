@@ -345,7 +345,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
     } catch (e) {
       if (!mounted) return;
       final text = e.toString();
-      if (text.contains("outstanding balance")) {
+      if (isUnpaidBalanceError(e)) {
         setState(() {
           _saving = false;
           _error = staffBalanceWarningFromError(text);
@@ -393,7 +393,7 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
         final again = e2.toString();
         setState(() {
           _saving = false;
-          _error = again.contains("outstanding balance")
+          _error = isUnpaidBalanceError(e2)
               ? staffBalanceWarningFromError(again)
               : staffBookingFailureMessage(e2);
         });

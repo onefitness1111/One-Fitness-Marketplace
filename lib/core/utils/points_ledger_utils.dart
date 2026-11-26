@@ -1,5 +1,6 @@
 import "../../data/models/points_ledger_entry.dart";
 import "date_utils.dart";
+import "rewards_domain.dart";
 
 /// Ported from src/data/pointsLedger.js — pure FIFO ledger-replay logic,
 /// the single source of truth for balance, "expiring soon," and
@@ -82,14 +83,22 @@ class RedemptionPlan {
 
 /// Mirrors `planRedemption` — FIFO redemption plan, or null under the
 /// minimum.
-RedemptionPlan? planRedemption(List<PointsLot> lots, {DateTime? now, int capPoints = 40, int minPoints = 40}) {
+RedemptionPlan? planRedemption(
+  List<PointsLot> lots, {
+  DateTime? now,
+  int capPoints = kRewardMaxRedeemPoints,
+  int minPoints = kRewardMinRedeemPoints,
+}) {
+  final effectiveMin = minPoints < kRewardMinRedeemPoints ? kRewardMinRedeemPoints : minPoints;
+  final effectiveCap = capPoints > kRewardMaxRedeemPoints ? kRewardMaxRedeemPoints : capPoints;
+  if (effectiveCap < effectiveMin) return null;
   final nowDt = now ?? _parse(isoToday());
   final active = lots.where((lot) => lot.remaining > 0 && (lot.expiresAt == null || _parse(lot.expiresAt!).isAfter(nowDt)));
   final balance = active.fold<int>(0, (s, l) => s + l.remaining);
-  if (balance < minPoints) return null;
-  final points = balance < capPoints ? balance : capPoints;
+  if (balance < effectiveMin) return null;
+  final points = balance < effectiveCap ? balance : effectiveCap;
   return RedemptionPlan(points: points);
 }
 
 /// Mirrors `pointsToDiscountCents` — 1 point = 0.5% = 50 basis points.
-int pointsToDiscountCents(int points, int subtotalCents, {int rateBp = 50}) => (subtotalCents * points * rateBp / 10000).round();
+int pointsToDiscountCents(int points, int subtotalCents, {int rateBp = kRewardPointBasisPoints}) => (subtotalCents * points * rateBp / 10000).round();

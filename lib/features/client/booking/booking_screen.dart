@@ -728,6 +728,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final waitlist = ref.read(waitlistProvider);
     final already = waitlist.any((w) => w.clientId == info.id && w.trainerId == t.id && w.date == _date && w.slot == slot && w.status == "waiting");
     if (already) return;
+    if (await stopForOutstandingBalance(context, info.id, isWaitlist: true)) return;
+    if (!mounted) return;
     final position = waitlist.where((w) => w.trainerId == t.id && w.date == _date && w.slot == slot && w.status == "waiting").length + 1;
     setState(() => _waitlistBusyKeys.add(key));
     try {
@@ -757,6 +759,17 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         print("[waitlist join notify] failed: $e");
       });
     } catch (e) {
+      if (unpaidBalanceErrorMessage(e) != null) {
+        final owed = await unpaidBalanceCents(info.id, isWaitlist: true);
+        if (mounted && owed != null) {
+          await showOutstandingBalanceSheet(context, balanceCents: owed);
+          return;
+        }
+        if (mounted) {
+          _showError(unpaidBalanceErrorMessage(e)!);
+          return;
+        }
+      }
       _showError("Couldn't join the waitlist — check your connection and try again.");
     } finally {
       if (mounted) setState(() => _waitlistBusyKeys.remove(key));
@@ -908,7 +921,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       if (!mounted) return;
       // The server found a waiver this device didn't know about yet — open
       // it right here, then come back to this same confirm screen.
-      if (e.toString().contains("BALANCE_DUE")) {
+      if (unpaidBalanceErrorMessage(e) != null) {
         final owed = await unpaidBalanceCents(info.id);
         if (mounted && owed != null) {
           await showOutstandingBalanceSheet(context, balanceCents: owed);
