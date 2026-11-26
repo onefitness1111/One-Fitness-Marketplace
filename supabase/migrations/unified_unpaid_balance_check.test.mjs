@@ -37,7 +37,51 @@ test("JS mirror evaluateUnpaidBalance matches owner override, coach 1-time grace
   assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: true, role: "client", target: "waitlist" }).code, "BALANCE_DUE");
   assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: false, role: "coach", graceUsed: false }).consumeGrace, true);
   assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: false, role: "coach", graceUsed: true }).code, "BALANCE_GRACE_USED");
-  assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: false, role: "coach", graceUsed: true, target: "waitlist" }).allowed, true);
   assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: false, role: "owner", graceUsed: true }).allowed, true);
+  assert.equal(evaluateUnpaidBalance({ balanceCents: -2500, isSelf: false, role: "owner", graceUsed: true, target: "waitlist" }).allowed, true);
   assert.equal(staffMayAddSingle({ role: "coach", balanceCents: -2500, graceUsed: true }).code, "BALANCE_GRACE_USED");
+});
+
+test("coach waitlist add is allowed before grace, blocked with BALANCE_GRACE_USED after, and never consumes grace", () => {
+  const before = evaluateUnpaidBalance({
+    balanceCents: -2500,
+    isSelf: false,
+    role: "coach",
+    graceUsed: false,
+    target: "waitlist",
+  });
+  assert.equal(before.allowed, true);
+  assert.equal(before.code, "OK");
+  assert.equal(before.consumeGrace, false);
+
+  const after = evaluateUnpaidBalance({
+    balanceCents: -2500,
+    isSelf: false,
+    role: "coach",
+    graceUsed: true,
+    target: "waitlist",
+  });
+  assert.equal(after.allowed, false);
+  assert.equal(after.code, "BALANCE_GRACE_USED");
+  assert.equal(after.consumeGrace, false);
+  assert.equal(after.message, "This client has an outstanding balance of $25.00.");
+
+  const self = evaluateUnpaidBalance({
+    balanceCents: -2500,
+    isSelf: true,
+    role: "coach",
+    graceUsed: false,
+    target: "waitlist",
+  });
+  assert.equal(self.code, "BALANCE_DUE");
+
+  const waitlistRule = migration.slice(
+    migration.indexOf("if target = 'waitlist'"),
+    migration.indexOf("-- Booking:"),
+  );
+  assert.match(waitlistRule, /p_actor_role = 'owner'/);
+  assert.match(waitlistRule, /p_actor_role = 'coach'/);
+  assert.match(waitlistRule, /if used then[\s\S]*'BALANCE_GRACE_USED'/);
+  assert.match(waitlistRule, /return query select true, 'OK'::text, null::text, false, true;/);
+  assert.match(waitlistRule, /'BALANCE_DUE'/);
 });

@@ -165,8 +165,29 @@ BookingBalanceCheck evaluateBookingBalance({
       graceUsed: graceUsed,
     );
   }
+  // Waitlist: the owner can always add the client. A coach can add them only
+  // while grace is unused, and that add does not consume the grace. After
+  // grace is used the coach is blocked. The client stays blocked.
   if (isWaitlist) {
-    if (!isSelf && (isOwner || isCoach)) {
+    if (!isSelf && isOwner) {
+      return BookingBalanceCheck(
+        allowed: true,
+        code: "OK",
+        balanceCents: balanceCents,
+        graceUsed: graceUsed,
+        canOverride: true,
+      );
+    }
+    if (!isSelf && isCoach) {
+      if (graceUsed) {
+        return BookingBalanceCheck(
+          allowed: false,
+          code: "BALANCE_GRACE_USED",
+          message: staffBalanceWarning(balanceCents),
+          balanceCents: balanceCents,
+          graceUsed: graceUsed,
+        );
+      }
       return BookingBalanceCheck(
         allowed: true,
         code: "OK",

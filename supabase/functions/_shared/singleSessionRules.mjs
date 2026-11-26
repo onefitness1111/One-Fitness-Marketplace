@@ -61,8 +61,23 @@ export function evaluateUnpaidBalance({
     return { allowed: true, code: "OK", message: null, consumeGrace: false, canOverride: false };
   }
   const amount = money(balanceCents);
+  // Waitlist: owner can always add the client. A coach can add them only
+  // while grace is unused, and that add does not consume the grace. After
+  // grace is used the coach is blocked. The client stays blocked.
   if (target === "waitlist") {
-    if (!isSelf && (role === "owner" || role === "coach")) {
+    if (!isSelf && role === "owner") {
+      return { allowed: true, code: "OK", message: null, consumeGrace: false, canOverride: true };
+    }
+    if (!isSelf && role === "coach") {
+      if (graceUsed === true) {
+        return {
+          allowed: false,
+          code: "BALANCE_GRACE_USED",
+          message: `This client has an outstanding balance of ${amount}.`,
+          consumeGrace: false,
+          canOverride: false,
+        };
+      }
       return { allowed: true, code: "OK", message: null, consumeGrace: false, canOverride: true };
     }
     return {

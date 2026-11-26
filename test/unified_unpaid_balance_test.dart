@@ -29,7 +29,7 @@ void main() {
       expect(wait.message, book.message);
     });
 
-    test("coach gets one grace booking, is blocked after, and can still waitlist", () {
+    test("coach gets one grace booking and is blocked after it is used", () {
       final first = evaluateBookingBalance(balanceCents: -2500, graceUsed: false, isSelf: false, isCoach: true);
       expect(first.allowed, isTrue);
       expect(first.code, "BALANCE_COACH_GRACE");
@@ -39,16 +39,41 @@ void main() {
       expect(second.allowed, isFalse);
       expect(second.code, "BALANCE_GRACE_USED");
       expect(second.message, "This client has an outstanding balance of \$25.00.");
+    });
 
-      final wait = evaluateBookingBalance(
+    test("coach waitlist add is allowed before grace and blocked after it is used", () {
+      final before = evaluateBookingBalance(
+        balanceCents: -2500,
+        graceUsed: false,
+        isSelf: false,
+        isCoach: true,
+        isWaitlist: true,
+      );
+      expect(before.allowed, isTrue);
+      expect(before.code, "OK");
+      expect(before.canOverride, isTrue);
+
+      final after = evaluateBookingBalance(
         balanceCents: -2500,
         graceUsed: true,
         isSelf: false,
         isCoach: true,
         isWaitlist: true,
       );
-      expect(wait.allowed, isTrue);
-      expect(wait.code, "OK");
+      expect(after.allowed, isFalse);
+      expect(after.code, "BALANCE_GRACE_USED");
+      expect(after.message, "This client has an outstanding balance of \$25.00.");
+      expect(after.canOverride, isFalse);
+
+      final self = evaluateBookingBalance(
+        balanceCents: -2500,
+        graceUsed: false,
+        isSelf: true,
+        isCoach: true,
+        isWaitlist: true,
+      );
+      expect(self.allowed, isFalse);
+      expect(self.code, "BALANCE_DUE");
     });
 
     test("owner can always override balance block even after coach grace is used", () {
@@ -56,6 +81,17 @@ void main() {
       expect(owner.allowed, isTrue);
       expect(owner.code, "BALANCE_OWNER_OVERRIDE");
       expect(owner.canOverride, isTrue);
+
+      final ownerWaitlist = evaluateBookingBalance(
+        balanceCents: -2500,
+        graceUsed: true,
+        isSelf: false,
+        isOwner: true,
+        isWaitlist: true,
+      );
+      expect(ownerWaitlist.allowed, isTrue);
+      expect(ownerWaitlist.code, "OK");
+      expect(ownerWaitlist.canOverride, isTrue);
 
       // Owner booking themselves still gets blocked like any self-booking.
       final selfOwner = evaluateBookingBalance(balanceCents: -2500, graceUsed: false, isSelf: true, isOwner: true);

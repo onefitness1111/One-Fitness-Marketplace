@@ -3,13 +3,15 @@
 -- ONE shared unpaid-balance rule used everywhere.
 -- Not applied to the live database by this change.
 --
--- Behavior preserved:
+-- Behavior:
 --   * Clients cannot book or join a waitlist while balance_cents < 0 (BALANCE_DUE).
 --   * Owner can always override the balance block (for bookings and waitlists)
 --     without consuming the coach's grace booking.
 --   * Coaches keep their one-time grace booking for a client who owes money;
 --     a second booking by a coach while still unpaid is blocked (BALANCE_GRACE_USED).
---   * Staff adding a client to a waitlist does not consume the grace booking.
+--   * A coach may add that client to a waitlist only while grace_booking_used
+--     is false. The waitlist add does not consume the grace. After the grace
+--     booking has been used, the coach is blocked (BALANCE_GRACE_USED).
 --   * Paid single-session purchases (purchase / staff_charge) already include and
 --     settle the unpaid balance on the card charge, so they are not blocked.
 --   * No automatic late-cancel/no-show fee charging is added.
@@ -48,9 +50,24 @@ begin
 
   dollars := to_char((-owed)::numeric / 100, 'FM999990.00');
 
-  -- Waitlist: staff can add a client without consuming the coach grace booking.
+  -- Waitlist: owner can always add the client. A coach can add them only
+  -- while grace is unused, and that add does not consume the grace. After
+  -- grace_booking_used, the coach is blocked. The client stays blocked.
   if target = 'waitlist' then
-    if p_actor_role in ('owner', 'coach') and p_actor_id is distinct from p_client then
+    if p_actor_role = 'owner' and p_actor_id is distinct from p_client then
+      return query select true, 'OK'::text, null::text, false, true;
+      return;
+    end if;
+    if p_actor_role = 'coach' and p_actor_id is distinct from p_client then
+      if used then
+        return query select
+          false,
+          'BALANCE_GRACE_USED'::text,
+          'This client has an outstanding balance of $' || dollars || '.',
+          false,
+          false;
+        return;
+      end if;
       return query select true, 'OK'::text, null::text, false, true;
       return;
     end if;
