@@ -3637,7 +3637,7 @@ class SupabaseService {
               },
             },
             ...priorHistory,
-          ].take(kMaxIntakeHistory).toList()
+          ]
         : priorHistory;
 
     final nextIntake = {

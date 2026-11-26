@@ -402,16 +402,15 @@ void main() {
       expect(blankWithPast.supersededBy(second).history, hasLength(1));
     });
 
-    test("stops at the cap rather than growing without limit", () {
-      // An intake entry rides along in every roster load, so this can't grow
-      // forever.
+    test("keeps every earlier submission, with no cap (L4)", () {
       var rec = first;
-      for (var i = 0; i < kMaxIntakeHistory + 5; i++) {
+      for (var i = 0; i < 45; i++) {
         rec = rec.supersededBy(IntakeRecord(answers: const {}, completed: true, at: "fill-$i"));
       }
-      expect(rec.history, hasLength(kMaxIntakeHistory));
-      // The most recent ones are the ones kept.
-      expect(rec.history.first.at, "fill-${kMaxIntakeHistory + 3}");
+      expect(rec.history, hasLength(45));
+      expect(rec.history.first.at, "fill-43");
+      // The very first filing is still there.
+      expect(rec.history.last.at, "2026-05-14");
     });
   });
 

@@ -263,13 +263,9 @@ class IntakeSubmission {
   };
 }
 
-/// How many superseded submissions one form keeps.
-///
-/// Not unbounded: an intake entry lives in `client_records.data`, which is
-/// bulk-loaded for the whole roster at sign-in, so every kept submission is
-/// weight every coach downloads to open the app. Twenty is far more re-intakes
-/// than a real client accumulates, and the attachments are only pointers.
-const kMaxIntakeHistory = 20;
+// Every superseded submission is kept (L4). There used to be a cap of 20
+// that silently dropped the oldest; a long-term client's first intakes are
+// exactly the ones worth keeping.
 
 /// One entry in client.intake — mirrors {answers, completed, at, by}, plus
 /// the files attached to it and any submissions it replaced.
@@ -360,7 +356,7 @@ class IntakeRecord {
           extra: extra,
         ),
         ...history,
-      ].take(kMaxIntakeHistory).toList(),
+      ],
     );
   }
 
