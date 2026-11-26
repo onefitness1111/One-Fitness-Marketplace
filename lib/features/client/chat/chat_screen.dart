@@ -11,6 +11,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/report_block_sheet.dart";
 import "../drawer_screens/add_phone_screen.dart";
 import "../../../core/chat/chat_entry.dart";
+import "../../../core/chat/owner_thread_name.dart";
 import "../../../core/chat/staff_alert.dart";
 import "../../../core/utils/chat_channels.dart";
 import "../../../core/widgets/chat_gate.dart";
@@ -308,7 +309,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         id: coach.id,
         name: coach.displayTitle,
         photo: coach.photo,
-        preview: last.text,
+        preview: _clientText(last, coach.id),
         at: last.sentAt,
         outgoing: last.who == "client",
         unread: unreadKeys.contains(coach.id),
@@ -346,10 +347,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final pastOwners = [
       for (final owner in owners)
         if (reach.historyIds.contains(owner.id) && realCandidates.every((t) => t.id != owner.id))
+          // Clients never see the owner's real name on this thread.
           Trainer(
             id: owner.id,
-            name: owner.name,
-            coachName: owner.name.isEmpty ? null : owner.name,
+            name: kOwnerThreadNameForClients,
+            coachName: kOwnerThreadNameForClients,
           ),
     ];
     final candidates = [
@@ -485,6 +487,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// A message as this client reads it. In a direct thread with the owner,
+  /// the sender shows as ONE Fitness Market, never the owner's name.
+  String _clientText(CommMessage m, String threadId) {
+    if (m.who == "client") return m.text;
+    final owners = ref.read(ownerDirectoryProvider);
+    if (!owners.any((o) => o.id == threadId)) return m.text;
+    return ownerThreadTextForClient(m.text, ownerNames: owners.map((o) => o.name));
+  }
+
   List<Widget> _buildBubbleList(List<CommMessage> thread, Trainer coach, String infoId) {
     final items = <Widget>[];
     DateTime? lastDay;
@@ -496,6 +507,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
       items.add(_Bubble(
         message: c,
+        displayText: _clientText(c, coach.id),
         isPending: _pendingIds.contains(c.id),
         onReact: _pendingIds.contains(c.id)
             ? null
@@ -511,7 +523,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   reportedUserName: coach.displayTitle,
                   contentType: "message",
                   contentId: c.id,
-                  excerpt: c.text,
+                  excerpt: _clientText(c, coach.id),
                 ),
       ));
     }
@@ -1039,11 +1051,16 @@ class _DaySeparator extends StatelessWidget {
 class _Bubble extends StatelessWidget {
   const _Bubble({
     required this.message,
+    this.displayText,
     required this.isPending,
     this.onReport,
     this.onReact,
   });
   final CommMessage message;
+
+  /// The text to show, when it differs from what is stored (the owner
+  /// thread's sender name). Null shows [CommMessage.text].
+  final String? displayText;
   final bool isPending;
 
   /// Long-press to report or block — offered on every message the client
@@ -1092,7 +1109,7 @@ class _Bubble extends StatelessWidget {
                   borderRadius: radius,
                 ),
                 child: Text(
-                  message.text,
+                  displayText ?? message.text,
                   style: TextStyle(color: isMine ? AppColors.onGold : AppColors.txt, fontSize: 14, height: 1.35),
                 ),
               ),
