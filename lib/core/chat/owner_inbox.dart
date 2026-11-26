@@ -15,8 +15,13 @@ const kOneFitnessLabel = "ONE Fitness";
 /// The business choice in the coach filter.
 const kOneFitnessBusinessLabel = "ONE Fitness (business)";
 
-/// Staff-to-staff threads, when any exist.
-const kTeamChatLabel = "Team Chat";
+/// Staff-to-staff threads, when any exist. Also the name of the filter that
+/// shows only those threads (U3: Coach Chats is a filter inside Chat, not a
+/// tab or a separate screen).
+const kTeamChatLabel = "Coach Chats";
+
+/// Filter value for staff-to-staff threads only.
+const kOwnerCoachChatsKey = "coach-chats";
 
 /// Shown above the composer's send box so an owner reply is not mistaken
 /// for the coach in that thread.
@@ -91,7 +96,8 @@ String ownerUnreadKey(String clientId, String coachKey) => "owner:$clientId:$coa
   return (clientId: rest.substring(0, split), coachKey: rest.substring(split + 1));
 }
 
-/// All coaches, each coach by coach name, then the business.
+/// All coaches, Coach Chats (staff-to-staff threads only), each coach by
+/// coach name, then the business.
 ///
 /// Coach names come from [Trainer.displayTitle]. A legal name is never used.
 List<OwnerCoachOption> ownerCoachFilters(Iterable<Trainer> coaches) {
@@ -99,6 +105,7 @@ List<OwnerCoachOption> ownerCoachFilters(Iterable<Trainer> coaches) {
     ..sort((a, b) => a.displayTitle.toLowerCase().compareTo(b.displayTitle.toLowerCase()));
   return [
     const OwnerCoachOption(key: kOwnerFilterAll, label: "All coaches"),
+    const OwnerCoachOption(key: kOwnerCoachChatsKey, label: kTeamChatLabel),
     for (final coach in list) OwnerCoachOption(key: coach.id, label: coach.displayTitle),
     const OwnerCoachOption(key: kOwnerBusinessKey, label: kOneFitnessBusinessLabel),
   ];
@@ -176,6 +183,7 @@ List<OwnerInboxRow> filterOwnerInbox(
 
 bool _matchesCoach(OwnerInboxRow row, String coachKey) {
   if (coachKey == kOwnerFilterAll) return true;
+  if (coachKey == kOwnerCoachChatsKey) return row.team;
   if (row.team) {
     if (coachKey == kOwnerBusinessKey) return row.coachKey == kOwnerBusinessKey;
     return row.participantIds.contains(coachKey);
