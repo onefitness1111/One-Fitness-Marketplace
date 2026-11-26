@@ -4,6 +4,7 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "../../../core/coach/coach_public_stats.dart";
 import "../../../core/coach/next_open_slot.dart";
 import "../../../core/motion/motion.dart";
+import "../../../core/privacy/owner_hidden.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/address_utils.dart";
@@ -23,6 +24,9 @@ class CoachProfileScreen extends ConsumerStatefulWidget {
   final VoidCallback? onBook;
 
   static Future<void> open(BuildContext context, Trainer trainer, {VoidCallback? onBook}) {
+    // An owner profile never opens as a profile for a client.
+    final owners = ProviderScope.containerOf(context, listen: false).read(ownerDirectoryProvider);
+    if (isOwnerProfileId(trainer.id, owners.map((o) => o.id))) return Future<void>.value();
     return Navigator.of(context).push(PageRouteBuilder<void>(
       transitionDuration: const Duration(milliseconds: 900),
       reverseTransitionDuration: motionPress,

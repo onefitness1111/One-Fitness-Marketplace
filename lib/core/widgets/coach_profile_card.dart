@@ -12,6 +12,8 @@ import "../utils/date_utils.dart";
 import "../utils/unavailability.dart";
 import "avatar.dart";
 import "tag.dart";
+import "../privacy/owner_hidden.dart";
+import "../../data/providers/client_providers.dart";
 
 /// Mirrors CoachProfileCard.jsx — the read-only "Meet the Coach" view
 /// opened from a "Meet the Coach ›" cue in the booking flow: photo,
@@ -24,6 +26,9 @@ class CoachProfileCard extends ConsumerWidget {
   final VoidCallback onClose;
 
   static Future<void> show(BuildContext context, Trainer trainer) {
+    // An owner profile is never shown as a profile card.
+    final owners = ProviderScope.containerOf(context, listen: false).read(ownerDirectoryProvider);
+    if (isOwnerProfileId(trainer.id, owners.map((o) => o.id))) return Future<void>.value();
     return showDialog(
       context: context,
       barrierColor: const Color(0xB3000000),
