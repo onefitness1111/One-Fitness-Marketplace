@@ -78,7 +78,7 @@ const _drawerItems = [
   _NavItem("forms", "Assessments", LucideIcons.fileText),
   _NavItem("shop", "Shop", LucideIcons.shoppingBag),
   _NavItem("rewards", "Rewards", LucideIcons.gift),
-  _NavItem("badges", "Merit Badges", LucideIcons.award),
+  // Merit Badges is not a menu row: it opens from Profile Settings only (U5).
   _NavItem("challenges", "Challenges", LucideIcons.trophy),
   _NavItem("squad", "My Squad", LucideIcons.users2),
   _NavItem("signatures", "Signatures", LucideIcons.fileSignature),
@@ -86,12 +86,19 @@ const _drawerItems = [
   _NavItem("settings", "Profile Settings", LucideIcons.settings2),
 ];
 
+/// Old screen keys that now open another one. "advancedBooking" was the
+/// same flow as Recurring Booking under a second name (U9); an old deep
+/// link or stale state still lands on the one Recurring Booking screen.
+const kClientScreenAliases = {
+  "advancedBooking": "recurringBooking",
+};
+
 const _titles = {
   "dashboard": "Dashboard",
   "plans": "Plans",
   "booking": "Booking",
   "day": "Booking",
-  "advancedBooking": "Recurring Booking",
+  "recurringBooking": "Recurring Booking",
   "chat": "Chat",
   "memberships": "Access Hub",
   "nutrition": "Nutrition Plan",
@@ -441,7 +448,8 @@ class _ClientShellState extends ConsumerState<ClientShell> {
 
   @override
   Widget build(BuildContext context) {
-    final screen = ref.watch(clientScreenProvider);
+    final rawScreen = ref.watch(clientScreenProvider);
+    final screen = kClientScreenAliases[rawScreen] ?? rawScreen;
     final info = ref.watch(clientInfoProvider);
     final client = ref.watch(clientRecordProvider);
     final bookings = ref.watch(clientBookingsProvider);
@@ -458,7 +466,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
       // only. Without this it would reopen every later visit, so a client
       // who already signed it couldn't reach their own list of signatures.
       if (key != "signatures") _waiverToOpen = null;
-      ref.read(clientScreenProvider.notifier).go(key);
+      ref.read(clientScreenProvider.notifier).go(kClientScreenAliases[key] ?? key);
       _scaffoldKey.currentState?.closeDrawer();
     }
 
@@ -679,7 +687,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                           onPickDate: pickCalendarDate,
                           onGoHabits: () => go("habits"),
                           earnedBadges: earnedBadges,
-                          onGoBadges: () => go("badges"),
+                          onGoHistory: () => go("history"),
                           onGoMemberships: () => go("memberships"),
                           onGoToForm: (formKey) {
                             ref
@@ -708,7 +716,10 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                           onReschedule: startReschedule,
                           onGoPlans: () => go("plans"),
                         ),
-                        "advancedBooking" => AdvancedBookingScreen(
+                        // The one Recurring Booking flow (U9). The widget
+                        // keeps its old class name; every label says
+                        // Recurring Booking.
+                        "recurringBooking" => AdvancedBookingScreen(
                           onDone: () => go("booking"),
                           onGoSignatures: () => go("signatures"),
                         ),
@@ -735,12 +746,14 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                         ),
                         "shop" => const ShopScreen(),
                         "challenges" => const ChallengesScreen(),
-                        "rewards" => RewardsScreen(
-                          clientId: info.id,
-                          onOpenBadges: () => go("badges"),
-                        ),
+                        // No "See all Merit Badges" link here: the gallery
+                        // opens from Profile Settings only (U5).
+                        "rewards" => RewardsScreen(clientId: info.id),
                         "badges" => BadgeGalleryScreen(clientId: info.id),
-                        "settings" => ProfileSettingsScreen(onReschedule: startReschedule),
+                        "settings" => ProfileSettingsScreen(
+                          onReschedule: startReschedule,
+                          onOpenHistory: () => go("history"),
+                        ),
                         "squad" => const SquadDashboardScreen(),
                         "forms" => IntakeAreaScreen(
                           profileId: info.id,
@@ -766,7 +779,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                   ],
                 ),
               ),
-              // Advanced Booking — pinned above the bottom bar, Booking tab only.
+              // Recurring Booking — pinned above the bottom bar, Booking tab only.
               // Scaffold already sizes `body` to exclude bottomNavigationBar, so
               // bottom: 8 here lands just above it, no extra offset needed.
               // Hidden without a plan for the same reason the booking steps
@@ -787,7 +800,7 @@ class _ClientShellState extends ConsumerState<ClientShell> {
                     full: true,
                     onPressed: () {
                       ref.read(pendingBookingTargetProvider.notifier).set(null);
-                      go("advancedBooking");
+                      go("recurringBooking");
                     },
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,

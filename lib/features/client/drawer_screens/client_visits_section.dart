@@ -17,9 +17,9 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../booking/booking_cancel_screen.dart";
 
-/// New "Visits" entry inside Profile Settings — toggles between past
-/// sessions (with their attendance outcome, from kAttendanceOptions) and
-/// upcoming ones (with an Edit menu offering Reschedule/Cancel). The cancel
+/// New "Visits" entry inside Profile Settings — upcoming sessions (with an
+/// Edit menu offering Reschedule/Cancel). Past Visits links to History,
+/// which holds the one full past-sessions list (U6). The cancel
 /// flow mirrors day_detail_screen.dart's/booking_screen.dart's own
 /// `_confirmCancel` exactly (same delete + late-cancel charge logic);
 /// Reschedule reuses client_shell.dart's `startReschedule` so it lands on
@@ -29,10 +29,14 @@ class ClientVisitsSection extends ConsumerStatefulWidget {
     super.key,
     required this.onBack,
     required this.onReschedule,
+    this.onOpenHistory,
   });
 
   final VoidCallback onBack;
   final ValueChanged<Booking> onReschedule;
+
+  /// Opens History, the one full past-sessions list (U6).
+  final VoidCallback? onOpenHistory;
 
   @override
   ConsumerState<ClientVisitsSection> createState() =>
@@ -132,8 +136,6 @@ class _ClientVisitsSectionState extends ConsumerState<ClientVisitsSection> {
 
     final future = bookings.where((b) => b.date.compareTo(today) >= 0).toList()
       ..sort((a, b) => (a.date + a.slot.toString().padLeft(4, '0')).compareTo(b.date + b.slot.toString().padLeft(4, '0')));
-    final past = bookings.where((b) => b.date.compareTo(today) < 0).toList()
-      ..sort((a, b) => (b.date + b.slot.toString().padLeft(4, '0')).compareTo(a.date + a.slot.toString().padLeft(4, '0')));
 
     Trainer? trainerFor(Booking b) {
       final matches = trainers.where((t) => t.id == b.trainerId);
@@ -198,10 +200,26 @@ class _ClientVisitsSectionState extends ConsumerState<ClientVisitsSection> {
                   onCancel: () => setState(() => _cancelTarget = b),
                 ),
               )
-          else if (past.isEmpty)
-            const HintBox(text: "No past sessions yet.")
           else
-            ...past.map((b) => _PastVisitCard(booking: b, trainer: trainerFor(b))),
+            // U6: the full past-sessions list lives in History only.
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Your past sessions are all in one place: History.",
+                    style: TextStyle(fontSize: 13, color: AppColors.txt),
+                  ),
+                  const SizedBox(height: 10),
+                  BtnGhost(
+                    key: const Key("visits-open-history"),
+                    full: true,
+                    onPressed: widget.onOpenHistory,
+                    child: const Text("See past sessions in History →"),
+                  ),
+                ],
+              ),
+            ),
           if (_credits.isNotEmpty) ...[
             const SizedBox(height: 18),
             const SectionLabel("Single sessions you've bought"),
@@ -325,60 +343,6 @@ class _FutureVisitCard extends StatelessWidget {
                     Icon(LucideIcons.chevronDown, size: 13, color: AppColors.mute),
                   ],
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PastVisitCard extends StatelessWidget {
-  const _PastVisitCard({required this.booking, required this.trainer});
-
-  final Booking booking;
-  final Trainer? trainer;
-
-  @override
-  Widget build(BuildContext context) {
-    final b = booking;
-    final matches = kAttendanceOptions.where((o) => o.key == b.attendanceStatus);
-    final opt = matches.isNotEmpty ? matches.first : null;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: AppCard(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "${sessionTypeLabel(b.sessionType)} · ${disciplineLabel(b.discipline)}",
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(trainer?.displayTitle ?? "Removed", style: TextStyle(fontSize: 12, color: AppColors.mute)),
-                  const SizedBox(height: 3),
-                  Text(
-                    "${dayLabel(b.date)} · ${fmtSlot(b.slot)}",
-                    style: TextStyle(fontSize: 12, color: AppColors.mute),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                border: Border.all(color: opt?.color ?? AppColors.line),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                opt?.label ?? "Unmarked",
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: opt?.color ?? AppColors.mute),
               ),
             ),
           ],

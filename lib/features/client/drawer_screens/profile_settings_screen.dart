@@ -23,6 +23,7 @@ import "../../../data/models/client_info.dart";
 import "../../../data/models/membership_plan.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../shared/balance_card.dart";
+import "../badges/badge_gallery_screen.dart";
 import "../shop/my_orders_section.dart";
 import "client_visits_section.dart";
 import "membership_hub_screen.dart";
@@ -31,17 +32,20 @@ import "../../../core/utils/phone_guard.dart";
 
 /// Mirrors ProfileSettingsScreen.jsx, trimmed to the rows that don't need
 /// Stripe/2FA/the full intake questionnaire: Edit Profile (name/email/
-/// phone/city), Membership (reuses MembershipHubScreen), a disabled Payment
+/// phone/city), Access Hub (reuses MembershipHubScreen), Merit Badges, a disabled Payment
 /// Details row, and a "coming soon" notification-preferences row. The
 /// Two-Factor row is skipped entirely since it's gated behind a platform
 /// setting that defaults to "off".
 class ProfileSettingsScreen extends ConsumerStatefulWidget {
-  const ProfileSettingsScreen({super.key, required this.onReschedule});
+  const ProfileSettingsScreen({super.key, required this.onReschedule, this.onOpenHistory});
 
   /// Reuses client_shell.dart's own `startReschedule` — moves the app to the
   /// Booking tab with the given booking pre-loaded for rescheduling, same as
   /// every other Reschedule entry point in the app.
   final ValueChanged<Booking> onReschedule;
+
+  /// Opens History, the one full past-sessions list (U6). Visits links there.
+  final VoidCallback? onOpenHistory;
 
   @override
   ConsumerState<ProfileSettingsScreen> createState() =>
@@ -69,6 +73,25 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
         child: ClientVisitsSection(
           onBack: () => setState(() => _section = null),
           onReschedule: widget.onReschedule,
+          onOpenHistory: widget.onOpenHistory,
+        ),
+      );
+    }
+    // U5: the client's Merit Badges open from here and nowhere else.
+    if (_section == "badges") {
+      final clientId = ref.watch(clientInfoProvider).id;
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _section = null),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+              child: BackBar(onBack: () => setState(() => _section = null), title: "Profile Settings"),
+            ),
+            Expanded(child: BadgeGalleryScreen(clientId: clientId)),
+          ],
         ),
       );
     }
@@ -193,9 +216,10 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
             detail: "${info.name} · ${info.email ?? ''}",
             onTap: () => setState(() => _section = "profile"),
           ),
+          // U4: the client's plan page is called Access Hub everywhere.
           _SettingRow(
             icon: LucideIcons.creditCard,
-            label: "Membership",
+            label: "Access Hub",
             detail: plan != null
                 ? "${plan.name} · ${mStatus ?? '—'} sessions remaining"
                 : "No membership",
@@ -209,9 +233,15 @@ class _ProfileSettingsScreenState extends ConsumerState<ProfileSettingsScreen> {
             onTap: () => setState(() => _section = "payment"),
           ),
           _SettingRow(
+            icon: LucideIcons.award,
+            label: "Merit Badges",
+            detail: "Badges you've earned and how to earn the rest",
+            onTap: () => setState(() => _section = "badges"),
+          ),
+          _SettingRow(
             icon: LucideIcons.calendarClock,
             label: "Visits",
-            detail: "Past & upcoming sessions",
+            detail: "Upcoming sessions · past sessions are in History",
             onTap: () => setState(() => _section = "visits"),
           ),
           _SettingRow(
