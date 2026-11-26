@@ -5,9 +5,16 @@ import { coachDisplayName } from "./coachName.mjs";
 export const DEFAULT_TIME_ZONE = "America/Los_Angeles";
 export const CACHE_CONTROL = "private, max-age=900";
 
-/// The owner account has no calendar. Clients and coaches do.
+/// Clients, coaches and the owner can sync. The owner's feed carries only
+/// the sessions the owner runs personally (trainer_id = the owner's own
+/// profile), the same rule as a coach (U13).
 export function calendarSyncAllowed(role) {
-  return role === "client" || role === "coach";
+  return role === "client" || role === "coach" || role === "owner";
+}
+
+/// Which bookings column scopes a feed: staff run sessions, clients book them.
+export function calendarFeedScopeColumn(role) {
+  return role === "coach" || role === "owner" ? "trainer_id" : "client_id";
 }
 
 export function businessTimeZone(data) {

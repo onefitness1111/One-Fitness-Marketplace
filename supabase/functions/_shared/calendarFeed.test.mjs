@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CACHE_CONTROL,
   businessTimeZone,
+  calendarFeedScopeColumn,
   calendarSyncAllowed,
   coachLabelForClient,
   eventRevision,
@@ -59,11 +60,27 @@ test("a reschedule gets a later sequence from updated_at", () => {
   assert.equal(eventRevision(null).sequence, 0);
 });
 
-test("the owner has no calendar feed; clients and coaches do", () => {
-  assert.equal(calendarSyncAllowed("owner"), false);
+test("U13: clients, coaches and the owner can sync; nobody else", () => {
+  assert.equal(calendarSyncAllowed("owner"), true);
   assert.equal(calendarSyncAllowed("client"), true);
   assert.equal(calendarSyncAllowed("coach"), true);
   assert.equal(calendarSyncAllowed(null), false);
+  assert.equal(calendarSyncAllowed("anon"), false);
+});
+
+test("U13: the owner's feed is scoped to sessions the owner runs, like a coach", () => {
+  assert.equal(calendarFeedScopeColumn("owner"), "trainer_id");
+  assert.equal(calendarFeedScopeColumn("coach"), "trainer_id");
+  assert.equal(calendarFeedScopeColumn("client"), "client_id");
+});
+
+test("U13: both edge functions use the shared rule and no longer refuse the owner", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const link = await readFile(new URL("../get-calendar-link/index.ts", import.meta.url), "utf8");
+  const feed = await readFile(new URL("../calendar-feed/index.ts", import.meta.url), "utf8");
+  assert.ok(link.includes("calendarSyncAllowed(profile?.role)"));
+  assert.equal(link.includes('profile?.role === "owner"'), false);
+  assert.ok(feed.includes("calendarFeedScopeColumn(profile.role)"));
 });
 
 test("the feed is not cacheable by a shared cache", () => {
