@@ -31,6 +31,7 @@ import "../memberships/manage_products_screen.dart";
 import "../memberships/manage_waivers_screen.dart";
 import "../programs/program_library_page.dart";
 import "../payments/collect_payments_screen.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../reports/reports_hub_screen.dart";
 import "../requests/requests_screen.dart";
 import "../schedule/calendar_sync_page.dart";
@@ -59,6 +60,7 @@ const _staffBottomItem = _NavItem("staff", "Staff", LucideIcons.user);
 
 List<PortalNavEntry> _trainerWideNav({
   required bool isOwner,
+  bool canSeePay = true,
   required List<_NavItem> bottom,
   required int newCoachCount,
 }) {
@@ -95,7 +97,10 @@ List<PortalNavEntry> _trainerWideNav({
     // Badge progress lives on My Profile only (U8), so there is no
     // separate Merit Badges entry.
     add("myprofile", "My Profile", LucideIcons.user);
-    add("mypay", "My Pay", LucideIcons.clipboardCheck);
+    // Every coach gets reports of their own sessions. My Pay is the owner's
+    // "See own revenue" switch for that coach.
+    add("reports", "Reports", LucideIcons.clipboardCheck);
+    if (canSeePay) add("mypay", "My Pay", LucideIcons.clipboardCheck);
     add("calendarsync", "Calendar Sync", LucideIcons.calendar);
   }
   add("support", "Support", LucideIcons.phone);
@@ -284,6 +289,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     final mode = kTrainerModeAliases[rawMode] ?? rawMode;
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
+    final canSeePay = ref.watch(coachCanProvider(CoachPermission.seeOwnRevenue));
     if (mode == "staff" || mode == "mypay" || mode == "reports") {
       unawaited(ensureTrainerPay(ref));
     }
@@ -333,11 +339,11 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
       child: Scaffold(
         key: _scaffoldKey,
         backgroundColor: AppColors.bg,
-        drawer: wide ? null : _TrainerDrawer(mode: mode, isOwner: isOwner, onGo: go),
+        drawer: wide ? null : _TrainerDrawer(mode: mode, isOwner: isOwner, canSeePay: canSeePay, onGo: go),
         body: PortalBody(
           wide: wide,
           sidebar: PortalSidebar(
-            entries: _trainerWideNav(isOwner: isOwner, bottom: bottomItems, newCoachCount: newCoachCount),
+            entries: _trainerWideNav(isOwner: isOwner, canSeePay: canSeePay, bottom: bottomItems, newCoachCount: newCoachCount),
             selected: mode,
             onSelect: go,
             footer: PortalSignOutButton(
@@ -441,8 +447,11 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       // A coach gets the sessions they run; the owner gets
                       // the sessions they run themselves (U13).
                       "calendarsync" => const CalendarSyncPage(),
-                      "mypay" => const MyPayScreen(),
-                      "reports" when isOwner => ReportsHubScreen(
+                      // Hidden unless the owner turned on "See own revenue".
+                      "mypay" when canSeePay => const MyPayScreen(),
+                      // The owner's reports, or a coach's reports scoped to
+                      // their own sessions and clients.
+                      "reports" => ReportsHubScreen(
                         initialReportKey: ref.read(trainerModeProvider.notifier).pendingReportKey,
                       ),
                       "collect" when isOwner => const CollectPaymentsScreen(),
@@ -575,11 +584,13 @@ class _TrainerDrawer extends ConsumerWidget {
   const _TrainerDrawer({
     required this.mode,
     required this.isOwner,
+    this.canSeePay = true,
     required this.onGo,
   });
 
   final String mode;
   final bool isOwner;
+  final bool canSeePay;
   final void Function(String) onGo;
 
   @override
@@ -643,7 +654,8 @@ class _TrainerDrawer extends ConsumerWidget {
             _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
             _DrawerEntry(LucideIcons.trophy, "Challenges", "challenges", true),
             _DrawerEntry(LucideIcons.user, "My Profile", "myprofile", true),
-            _DrawerEntry(LucideIcons.clipboardCheck, "My Pay", "mypay", true),
+            _DrawerEntry(LucideIcons.clipboardCheck, "Reports", "reports", true),
+            _DrawerEntry(LucideIcons.clipboardCheck, "My Pay", "mypay", canSeePay),
             _DrawerEntry(LucideIcons.calendar, "Calendar Sync", "calendarsync", true),
             _DrawerEntry(LucideIcons.phone, "Support", "support", true),
           ];

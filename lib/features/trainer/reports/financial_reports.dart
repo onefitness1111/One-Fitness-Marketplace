@@ -9,6 +9,7 @@ import "../../../data/models/membership_plan.dart";
 import "../../../data/models/report_range.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 
 String _money(num v) => "\$${v.toStringAsFixed(2)}";
 
@@ -20,7 +21,7 @@ class ItemizedSalesReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final charges = revenueCharges(ref.watch(chargesProvider), range);
+    final charges = revenueCharges(ref.watch(reportChargesProvider), range);
     if (charges.isEmpty) return const HintBox(text: "No sales in this range.");
     final total = charges.fold<double>(0, (m, c) => m + (c.amount ?? 0));
     return Column(
@@ -86,7 +87,7 @@ class _RealTimeChargesReportState extends ConsumerState<RealTimeChargesReport> {
 
   @override
   Widget build(BuildContext context) {
-    final charges = revenueCharges(ref.watch(chargesProvider), widget.range);
+    final charges = revenueCharges(ref.watch(reportChargesProvider), widget.range);
     if (charges.isEmpty) return const HintBox(text: "No charges in this range.");
     return Column(
       children: [
@@ -167,7 +168,7 @@ class ProjectedRevenueReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final roster = ref.watch(trainerRosterProvider);
+    final roster = ref.watch(reportRosterProvider);
     final plansNotifier = ref.watch(membershipPlansProvider.notifier);
     final byPlan = <String, int>{};
     for (final c in roster) {

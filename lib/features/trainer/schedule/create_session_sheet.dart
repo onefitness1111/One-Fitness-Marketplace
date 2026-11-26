@@ -12,6 +12,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "coach_search_picker.dart";
 
 
@@ -176,8 +177,14 @@ class _CreateSessionBodyState extends ConsumerState<_CreateSessionBody> {
 
   @override
   Widget build(BuildContext context) {
-    final trainers = ref.watch(trainersProvider);
-    final isOwner = ref.watch(trainerAuthProvider) == "owner";
+    final allTrainers = ref.watch(trainersProvider);
+    final auth = ref.watch(trainerAuthProvider);
+    final isOwner = auth == "owner";
+    // Without "Other coaches' schedules" a coach can only add to their own
+    // calendar. The database enforces the same rule.
+    final ownCalendarOnly = !isOwner && !ref.watch(coachCanProvider(CoachPermission.manageOtherSchedules));
+    final trainers = ownCalendarOnly ? allTrainers.where((t) => t.id == auth).toList() : allTrainers;
+    if (ownCalendarOnly && _trainer == null && trainers.isNotEmpty) _trainer = trainers.first;
     // Customize Platform → Services decides what's offered; a type or
     // discipline switched off there isn't on the menu here.
     final settings = ref.watch(platformSettingsProvider);

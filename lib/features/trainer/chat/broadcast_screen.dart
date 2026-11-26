@@ -9,6 +9,7 @@ import "../../../core/widgets/send_via_chips.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/client_info.dart";
 import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 
 /// One message to many clients. Each app copy goes into that client's own
@@ -212,6 +213,8 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
         const SizedBox(height: 16),
         SendViaChips(
           channels: _channels,
+          // Texts need the owner's "Text clients" switch for this coach.
+          hidden: ref.watch(coachCanProvider(CoachPermission.sendTexts)) ? const {} : const {ChatChannel.sms},
           onChanged: (next) => setState(() => _channels = next),
         ),
         const SizedBox(height: 16),

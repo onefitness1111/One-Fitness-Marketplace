@@ -7,6 +7,7 @@
 // this. Replies still land in app chat through the existing Twilio webhook.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasSmsConsent } from "../_shared/chatRouting.mjs";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import {
   CORS_HEADERS,
   assertStaffMayMessage,
@@ -30,6 +31,8 @@ serve(async (req) => {
     const member = await memberById(admin, profileId);
     if (!member) throw new Error("That recipient isn't a member of ONE Fitness.");
     assertStaffMayMessage(role, member);
+    // Texting a client is the owner's per-coach switch. Texts between staff are not covered.
+    if (member.role === "client") await requireCoachPermission(admin, userId, role, "send_texts");
     if (!member.phone) throw new Error("That member has no phone number on file.");
 
     const { data: gate } = await admin

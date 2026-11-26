@@ -25,6 +25,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { nextSlotHolder } from "../_shared/planEnrollments.ts";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -59,6 +60,11 @@ serve(async (req) => {
     const { data: caller } = await admin.from("profiles").select("role, name").eq("id", user.id).maybeSingle();
     if (!caller || !["owner", "coach"].includes(caller.role)) {
       return json({ error: "Only a coach or the owner can cancel a client's membership." }, 403);
+    }
+    try {
+      await requireCoachPermission(admin, user.id, caller.role, "edit_plans");
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, 403);
     }
 
     const { clientId, mode = "period_end", preview = false } = await req.json().catch(() => ({}));

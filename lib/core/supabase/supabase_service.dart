@@ -1027,6 +1027,55 @@ class SupabaseService {
   static Future<List<Booking>> loadBookings() async =>
       bookingsFromRows(await fetchBookingRows());
 
+  /// A coach's own sessions for their reports, filtered by the server: only
+  /// sessions where they are the coach. The owner gets every session.
+  static Future<List<Booking>> loadCoachReportBookings() async {
+    final rows = await client.rpc("coach_report_bookings", params: {
+      "p_from": "2000-01-01",
+      "p_to": "2100-12-31",
+    });
+    final list = rows is List ? rows : const [];
+    return bookingsFromRows([
+      for (final r in list)
+        if (r is Map) r.cast<String, dynamic>(),
+    ]);
+  }
+
+  /// Clients a coach has booked or served, filtered by the server. The owner
+  /// gets every client. Not assigned clients.
+  static Future<Set<String>> loadCoachReportClientIds() async {
+    final rows = await client.rpc("coach_report_client_ids");
+    final list = rows is List ? rows : const [];
+    return {
+      for (final r in list)
+        if (r is Map && r["client_id"] is String) r["client_id"] as String,
+    };
+  }
+
+  /// Every coach's switches for the owner, or the signed-in coach's own row
+  /// (the database returns only what that person may read).
+  static Future<Map<String, Map<String, dynamic>>> loadCoachPermissionRows() async {
+    final rows = await client.from("coach_permissions").select();
+    return {
+      for (final r in rows)
+        if (r["profile_id"] is String) r["profile_id"] as String: (r as Map).cast<String, dynamic>(),
+    };
+  }
+
+  /// Owner only. Turns one switch on or off for one coach; the database
+  /// refuses anyone else.
+  static Future<void> setCoachPermission({
+    required String coachId,
+    required String permission,
+    required bool allowed,
+  }) async {
+    await client.rpc("set_coach_permission", params: {
+      "p_coach": coachId,
+      "p_perm": permission,
+      "p_allowed": allowed,
+    });
+  }
+
   /// Maps a realtime `bookings` row. Null when the row is unusable.
   static Booking? bookingFromRealtimeRow(Map<String, dynamic> row) {
     try {

@@ -18,6 +18,7 @@ import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
 import "client_search_picker.dart";
 import "single_session_staff.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "coach_search_picker.dart";
 import "override_prompt.dart";
 
@@ -416,9 +417,13 @@ class _AddManualBookingBodyState extends ConsumerState<_AddManualBookingBody> {
   @override
   Widget build(BuildContext context) {
     final roster = ref.watch(trainerRosterProvider);
-    final trainers = ref.watch(trainersProvider);
+    final allTrainers = ref.watch(trainersProvider);
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
+    // Without "Other coaches' schedules" a coach can only book onto their own
+    // calendar. The database enforces the same rule.
+    final ownCalendarOnly = !isOwner && !ref.watch(coachCanProvider(CoachPermission.manageOtherSchedules));
+    final trainers = ownCalendarOnly ? allTrainers.where((t) => t.id == trainerAuth).toList() : allTrainers;
     _trainerId ??= isOwner ? (trainers.isNotEmpty ? trainers.first.id : null) : trainerAuth;
     final isAssessment = _sessionType.startsWith("assessment");
 

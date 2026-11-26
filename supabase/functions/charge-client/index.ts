@@ -11,6 +11,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -50,6 +51,8 @@ serve(async (req) => {
     if (!clientRow) throw new Error("That client was not found.");
     const allowed = role === "owner" || role === "coach";
     if (!allowed) throw new Error("Only a coach or the owner can charge a client.");
+    // Charging a card is the owner's switch per coach. Saving a card ("setup") is billing access.
+    await requireCoachPermission(admin, user.id, role, action === "setup" ? "billing_access" : "charge_fees");
 
     const secret = Deno.env.get("STRIPE_SECRET_KEY");
     if (!secret) throw new Error("Card payments aren't set up yet.");

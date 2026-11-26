@@ -12,6 +12,7 @@ import "../../../core/chat/chat_entry.dart";
 import "../../../core/chat/owner_inbox.dart";
 import "../../../core/widgets/owner_chat_list.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../core/widgets/chat_gate.dart";
 import "../../../core/widgets/message_reactions.dart";
 import "../../../core/utils/coach_names.dart";
@@ -329,7 +330,17 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     }
   }
 
+  /// The channels this person may actually use. A coach without "Text
+  /// clients" can still message in the app, so SMS is dropped and the chat
+  /// stays on In app (and Email, if picked). The server drops it too.
+  Set<ChatChannel> _allowedChannels(Set<ChatChannel> channels) {
+    if (ref.read(coachCanProvider(CoachPermission.sendTexts))) return channels;
+    final next = {...channels}..remove(ChatChannel.sms);
+    return next.isEmpty ? {ChatChannel.inapp} : next;
+  }
+
   Future<void> _confirmSetup(String recipientId, Set<ChatChannel> channels) async {
+    channels = _allowedChannels(channels);
     // A teammate (coach / owner / business) rather than a client.
     if (recipientId.startsWith("staff:")) {
       setState(() => _view = _ChatView.list);
@@ -415,7 +426,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           viewerIsOwner: ref.read(trainerAuthProvider) == "owner",
           staff: _newChatTeammates,
           initialRecipientId: _recipientId,
-          initialChannels: _channels,
+          initialChannels: _allowedChannels(_channels),
+          allowTexts: ref.read(coachCanProvider(CoachPermission.sendTexts)),
           confirmLabel: "Save",
           onCancel: () => Navigator.of(ctx).pop(),
           onConfirm: (recipientId, channels) {
@@ -620,6 +632,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       }
       ref.read(coachChatOpenRequestProvider.notifier).clear();
     });
+    // Rebuild when the owner changes "Text clients" for this coach.
+    ref.watch(coachCanProvider(CoachPermission.sendTexts));
     return ChatEntryGate(child: _buildChat(context));
   }
 
@@ -648,7 +662,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             viewerIsOwner: ref.read(trainerAuthProvider) == "owner",
             staff: _newChatTeammates,
             initialRecipientId: _recipientId,
-            initialChannels: _channels,
+            initialChannels: _allowedChannels(_channels),
+            allowTexts: ref.read(coachCanProvider(CoachPermission.sendTexts)),
             confirmLabel: "Start chat",
             onConfirm: _confirmSetup,
           ),
@@ -797,7 +812,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       children: [
         _ContextBar(
           client: client,
-          channelLabel: chatChannelsLabel(_channels),
+          channelLabel: chatChannelsLabel(_allowedChannels(_channels)),
           withLabel: isOwner ? "with ${_coachLabel(ownerKey)}" : null,
           onChange: () => _openChangeSheet(roster),
         ),
@@ -823,7 +838,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           controller: _msgController,
           recipientName: client.name,
           replyAs: isOwner ? kOwnerReplyLabel : null,
-          onSend: () => _send(client: client, settings: settings, channels: _channels, trainerAuth: trainerAuth),
+          onSend: () => _send(client: client, settings: settings, channels: _allowedChannels(_channels), trainerAuth: trainerAuth),
         ),
       ],
       ),
@@ -915,7 +930,12 @@ class _RecipientSetup extends StatefulWidget {
     required this.onConfirm,
     this.onCancel,
     this.viewerIsOwner = false,
+    this.allowTexts = true,
   });
+
+  /// False for a coach the owner has not allowed to text clients: the SMS
+  /// chip is not offered.
+  final bool allowTexts;
 
   final List<ClientInfo> roster;
 
@@ -1109,6 +1129,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
           const SizedBox(height: 12),
           SendViaChips(
             channels: _channels,
+            hidden: widget.allowTexts ? const {} : const {ChatChannel.sms},
             onChanged: (next) => setState(() => _channels = next),
           ),
           // Clients aren't asked for a number any more, so a coach picking

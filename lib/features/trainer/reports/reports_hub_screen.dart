@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:lucide_flutter/lucide_flutter.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "../../../core/navigation/local_back_stack.dart";
@@ -6,6 +7,8 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/report_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/report_range.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
+import "../../../data/providers/trainer_providers.dart";
 import "attendance_reports.dart";
 import "date_range_filter.dart";
 import "financial_reports.dart";
@@ -40,6 +43,32 @@ class _Category {
 
 /// Real-Time Charges — the Financial ledger (refund and waive).
 const realtimeChargesReportKey = "realtime";
+
+/// Reports that show money. A coach sees these only with "See own revenue"
+/// on, and then only their own figures.
+const revenueReportKeys = {
+  "sales",
+  "items-sold",
+  realtimeChargesReportKey,
+  "projected",
+  "commissions",
+  "payroll",
+  "meritBadges",
+  "profitability",
+};
+
+/// Reports only the owner opens. The activity log covers everyone's edits.
+const ownerOnlyReportKeys = {"activity"};
+
+/// Which reports a person gets. The owner gets all of them. A coach gets the
+/// same reports, scoped to their own sessions and clients; the ones that show
+/// money need "See own revenue", and the owner's oversight log is not theirs.
+bool reportAvailable(String key, {required bool isOwner, required bool canSeeRevenue}) {
+  if (isOwner) return true;
+  if (ownerOnlyReportKeys.contains(key)) return false;
+  if (revenueReportKeys.contains(key)) return canSeeRevenue;
+  return true;
+}
 
 _ReportDef? _reportByKey(String key) {
   for (final cat in _catalog) {
@@ -183,7 +212,7 @@ const _favoritesPrefKey = "onefit:report-favorites";
 /// screen builds its own CSV rows next to its own card layout instead) —
 /// same column layout/order as web's `ReportTable`, handed to the OS share
 /// sheet instead of triggering a browser download.
-class ReportsHubScreen extends StatefulWidget {
+class ReportsHubScreen extends ConsumerStatefulWidget {
   const ReportsHubScreen({super.key, this.initialReportKey});
 
   /// Catalog key to open immediately, such as [realtimeChargesReportKey].
@@ -191,10 +220,10 @@ class ReportsHubScreen extends StatefulWidget {
   final String? initialReportKey;
 
   @override
-  State<ReportsHubScreen> createState() => _ReportsHubScreenState();
+  ConsumerState<ReportsHubScreen> createState() => _ReportsHubScreenState();
 }
 
-class _ReportsHubScreenState extends State<ReportsHubScreen> {
+class _ReportsHubScreenState extends ConsumerState<ReportsHubScreen> {
   _ReportDef? _open;
   ReportRange? _range;
   String _query = "";
@@ -205,7 +234,13 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
     super.initState();
     _loadFavorites();
     final key = widget.initialReportKey;
-    if (key != null) _open = _reportByKey(key);
+    if (key != null) {
+      final auth = ref.read(trainerAuthProvider);
+      final isOwner = auth == null || auth == "owner";
+      if (reportAvailable(key, isOwner: isOwner, canSeeRevenue: ref.read(reportRevenueVisibleProvider))) {
+        _open = _reportByKey(key);
+      }
+    }
   }
 
   Future<void> _loadFavorites() async {
@@ -257,10 +292,20 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
       );
     }
 
+    final auth = ref.watch(trainerAuthProvider);
+    final isOwner = auth == null || auth == "owner";
+    final canSeeRevenue = ref.watch(reportRevenueVisibleProvider);
+    final visibleCatalog = [
+      for (final cat in _catalog)
+        _Category(cat.title, [
+          for (final r in cat.reports)
+            if (reportAvailable(r.key, isOwner: isOwner, canSeeRevenue: canSeeRevenue)) r,
+        ]),
+    ].where((cat) => cat.reports.isNotEmpty).toList();
     final q = _query.trim().toLowerCase();
     final filteredCatalog = q.isEmpty
-        ? _catalog
-        : _catalog
+        ? visibleCatalog
+        : visibleCatalog
               .map(
                 (cat) => _Category(
                   cat.title,
@@ -286,6 +331,15 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
             onChanged: (v) => setState(() => _query = v),
           ),
           const SizedBox(height: 14),
+          if (!isOwner) ...[
+            HintBox(
+              key: const Key("reports-coach-scope"),
+              text: canSeeRevenue
+                  ? "These reports cover only the sessions you ran and the clients you booked or served. Money figures are your own."
+                  : "These reports cover only the sessions you ran and the clients you booked or served. Money figures are hidden.",
+            ),
+            const SizedBox(height: 14),
+          ],
           if (favReports.isNotEmpty) ...[
             const SectionLabel("Favorites"),
             ...favReports.map(

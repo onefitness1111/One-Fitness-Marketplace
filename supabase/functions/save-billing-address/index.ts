@@ -8,6 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +43,7 @@ serve(async (req) => {
     // A coach may enter the first address and may not replace one. The
     // answer stays a yes/no. The street is not sent back.
     if (role === "coach" && user.id !== clientId) {
+      await requireCoachPermission(admin, user.id, role, "billing_access");
       const { data: existing } = await admin.from("clients").select("billing_address").eq("profile_id", clientId).maybeSingle();
       const current = existing?.billing_address as { line1?: string } | null;
       if (String(current?.line1 ?? "").trim() !== "") {

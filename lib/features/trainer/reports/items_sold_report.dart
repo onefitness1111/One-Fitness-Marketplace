@@ -7,8 +7,8 @@ import "../../../core/utils/items_sold.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/order.dart";
 import "../../../data/providers/client_providers.dart";
-import "../../../data/providers/trainer_providers.dart";
 import "../../../data/models/report_range.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 
 /// Orders aren't part of the startup load — nothing outside the shop and
 /// this report needs them — so they're fetched when the report opens. RLS
@@ -31,7 +31,7 @@ class ItemsSoldReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final charges = ref.watch(chargesProvider);
+    final charges = ref.watch(reportChargesProvider);
     final catalogue = ref.watch(membershipPlansProvider);
     final ordersAsync = ref.watch(reportOrdersProvider);
 

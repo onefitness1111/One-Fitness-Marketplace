@@ -6,6 +6,7 @@
 // Proposed. Not deployed until you deploy this function.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import { collectSessionFee } from "../_shared/sessionFee.ts";
 
 const CORS_HEADERS = {
@@ -32,6 +33,7 @@ serve(async (req) => {
     if (me?.role !== "owner" && me?.role !== "coach") {
       throw new Error("Only a coach or the owner can mark attendance.");
     }
+    await requireCoachPermission(admin, user.id, String(me.role), "charge_fees");
 
     const result = await collectSessionFee(admin, bookingId, "attendance", body.skipNotice === true);
     return new Response(JSON.stringify(result), {

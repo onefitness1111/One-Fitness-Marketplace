@@ -4,9 +4,8 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/scheduling_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/report_range.dart";
-import "../../../data/providers/client_providers.dart";
-import "../../../data/providers/trainer_providers.dart";
 import "../../../core/utils/booking_utils.dart" show kAttendanceOptions;
+import "../../../data/providers/coach_permissions_provider.dart";
 
 /// Mirrors AttendanceReports.jsx's AttendanceSummaryReport — count of
 /// bookings per attendance status (+ an "unmarked" bucket) in range.
@@ -16,7 +15,7 @@ class AttendanceSummaryReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bookings = ref.watch(allBookingsProvider).where((b) => range.includes(b.date)).toList();
+    final bookings = ref.watch(reportBookingsProvider).where((b) => range.includes(b.date)).toList();
     final rows = <(String, int)>[
       for (final opt in kAttendanceOptions) (opt.label, bookings.where((b) => b.attendanceStatus == opt.key).length),
       ("Unmarked", bookings.where((b) => b.attendanceStatus == null).length),
@@ -70,8 +69,8 @@ class SessionUtilizationReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final trainers = ref.watch(trainersProvider);
-    final bookings = ref.watch(allBookingsProvider);
+    final trainers = ref.watch(reportTrainersProvider);
+    final bookings = ref.watch(reportBookingsProvider);
     final start = DateTime.parse(range.start);
     final end = DateTime.parse(range.end);
 

@@ -1,4 +1,6 @@
 import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -29,6 +31,11 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
   required int? priceCents, // null = single sessions are off for this type
   required bool isOwner,
 }) async {
+  // Taking the card payment is the owner's "Charge fees" switch for a coach.
+  var mayCharge = true;
+  try {
+    mayCharge = ProviderScope.containerOf(context, listen: false).read(coachCanProvider(CoachPermission.chargeFees));
+  } catch (_) {}
   var account = 0;
   try {
     account = await SupabaseService.loadBalanceCents(clientId);
@@ -62,7 +69,7 @@ Future<SingleSessionOutcome?> bookClientWithoutPlan({
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
         TextButton(onPressed: () => Navigator.pop(ctx, "free"), child: Text(needsApproval ? "Ask the owner" : "Book free")),
-        if (priceCents != null)
+        if (priceCents != null && mayCharge)
           TextButton(
             onPressed: () => Navigator.pop(ctx, "charge"),
             child: Text(

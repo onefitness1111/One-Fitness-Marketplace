@@ -1,4 +1,6 @@
 import "package:flutter/material.dart";
+import "package:flutter_riverpod/flutter_riverpod.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../core/payments/outstanding_balance.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
@@ -23,11 +25,17 @@ Future<bool> confirmStaffBalanceAdd(
   );
   if (!check.owes) return true;
   if (!context.mounted) return false;
+  // Charging the card is the owner's "Charge fees" switch for this coach.
+  var canCharge = true;
+  try {
+    canCharge = ProviderScope.containerOf(context, listen: false).read(coachCanProvider(CoachPermission.chargeFees));
+  } catch (_) {}
   final go = await showDialog<bool>(
     context: context,
     builder: (ctx) => StaffBalanceDialog(
       warning: check.message ?? staffBalanceWarning(check.balanceCents),
       bookAnywayEnabled: check.allowed,
+      canCharge: canCharge,
       blockedNote: check.allowed ? null : kCoachGraceUsedNote,
       onCharge: () => (chargeBalance ?? SupabaseService.chargeOutstandingOnFile)(clientId),
     ),
@@ -44,7 +52,11 @@ class StaffBalanceDialog extends StatefulWidget {
     required this.bookAnywayEnabled,
     required this.onCharge,
     this.blockedNote,
+    this.canCharge = true,
   });
+
+  /// False for a coach without "Charge fees": the charge button is not shown.
+  final bool canCharge;
 
   final String warning;
   final bool bookAnywayEnabled;
@@ -106,14 +118,16 @@ class _StaffBalanceDialogState extends State<StaffBalanceDialog> {
             ),
           ],
           const SizedBox(height: 18),
-          _BalanceButton(
-            key: const Key("charge-balance-book"),
-            label: "Charge balance & book",
-            filled: true,
-            busy: _busy,
-            onPressed: _busy ? null : _charge,
-          ),
-          const SizedBox(height: 10),
+          if (widget.canCharge) ...[
+            _BalanceButton(
+              key: const Key("charge-balance-book"),
+              label: "Charge balance & book",
+              filled: true,
+              busy: _busy,
+              onPressed: _busy ? null : _charge,
+            ),
+            const SizedBox(height: 10),
+          ],
           _BalanceButton(
             key: const Key("book-anyway"),
             label: "Book session anyway",

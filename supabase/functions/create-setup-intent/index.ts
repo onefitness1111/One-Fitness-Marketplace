@@ -10,6 +10,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +50,7 @@ serve(async (req) => {
       const role = me?.role ?? "";
       const allowed = role === "owner" || role === "coach";
       if (!allowed) throw new Error("Not allowed to add a payment method for that client.");
+      await requireCoachPermission(admin, user.id, role, "billing_access");
     }
 
     let customerId = clientRow?.stripe_customer_id as string | null;

@@ -8,6 +8,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import { replayLedger, planRedemption, pointsToDiscountCents, REWARD_MAX_REDEEM_POINTS, REWARD_MIN_REDEEM_POINTS } from "../_shared/pointsLedger.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
@@ -57,6 +58,7 @@ serve(async (req) => {
       if (callerProfile?.role !== "owner" && callerProfile?.role !== "coach") {
         throw new Error("Only a coach or owner can purchase a plan on behalf of a client.");
       }
+      await requireCoachPermission(admin, user.id, callerProfile.role, "edit_plans");
       const { data: targetProfile } = await admin.from("profiles").select("email").eq("id", targetClientId).maybeSingle();
       if (!targetProfile) throw new Error("Client not found.");
       beneficiaryId = targetClientId;
