@@ -77,7 +77,7 @@ serve(async (req) => {
       await sendPush((rows || []).map((r) => r.token as string), title, body);
     }
 
-    const { data: clients } = await admin.from("clients").select("profile_id, primary_trainer_id, stripe_customer_id, sms_opt_in");
+    const { data: clients } = await admin.from("clients").select("profile_id, stripe_customer_id, sms_opt_in");
     const { data: profiles } = await admin.from("profiles").select("id, name, email, phone");
     const profileById = new Map((profiles || []).map((p) => [p.id, p]));
     const smsOptedIn = new Set((clients || []).filter((c) => c.sms_opt_in === true).map((c) => c.profile_id));
@@ -177,7 +177,8 @@ serve(async (req) => {
           }
         }
 
-        // ---- Monthly progress review reminder (client + their coach) ----
+        // ---- Monthly progress review reminder (client only: clients are not
+        // assigned to one coach, so there is no "their coach" to email) ----
         if (profile.email) {
           await sendEmail(
             profile.email,
@@ -186,16 +187,6 @@ serve(async (req) => {
           );
           await textClient(c.profile_id, "It's a new month, a great time to check in with your coach on your progress.");
           sent.monthlyReview++;
-        }
-        if (c.primary_trainer_id) {
-          const coach = profileById.get(c.primary_trainer_id);
-          if (coach?.email) {
-            await sendEmail(
-              coach.email,
-              `Monthly review reminder — ${profile.name || "your client"}`,
-              `Hi ${coach.name || "there"},\n\nIt's a new month — a good time to schedule a progress review with ${profile.name || "your client"}.\n\n— ONE Fitness`,
-            );
-          }
         }
       }
     }

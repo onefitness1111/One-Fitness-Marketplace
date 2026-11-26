@@ -9,7 +9,6 @@
 // the client, and writes one immutable row to `waiver_signatures` (see
 // migration/03_waiver_signatures.sql — nothing but this function can
 // insert there, and no one can edit a row afterwards).
-import { coachDisplayName } from "../_shared/coachName.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
@@ -153,7 +152,7 @@ serve(async (req) => {
 
     const [{ data: profile }, { data: clientRow }, { data: recordRow }] = await Promise.all([
       admin.from("profiles").select("name, first_name, last_name, email").eq("id", clientId).maybeSingle(),
-      admin.from("clients").select("birthday, primary_trainer_id, emergency_contact_name, emergency_contact_phone").eq("profile_id", clientId).maybeSingle(),
+      admin.from("clients").select("birthday, emergency_contact_name, emergency_contact_phone").eq("profile_id", clientId).maybeSingle(),
       admin.from("client_records").select("data").eq("profile_id", clientId).maybeSingle(),
     ]);
     if (!profile) throw new Error("Your account couldn't be found.");
@@ -176,14 +175,9 @@ serve(async (req) => {
     const ecPhone = String(emergencyContactPhone || clientRow?.emergency_contact_phone || intake.ecPhone || "").trim();
     if (!ecName || !ecPhone) throw new Error("An emergency contact name and phone number are required.");
 
-    let coachName = "";
-    if (clientRow?.primary_trainer_id) {
-      const [{ data: coachProfile }, { data: coachRow }] = await Promise.all([
-        admin.from("profiles").select("name").eq("id", clientRow.primary_trainer_id).maybeSingle(),
-        admin.from("trainers").select("title").eq("profile_id", clientRow.primary_trainer_id).maybeSingle(),
-      ]);
-      coachName = coachDisplayName(String(coachProfile?.name || ""));
-    }
+    // Clients are not assigned to a coach (no primary_trainer_id), so the
+    // waiver names the business rather than one coach.
+    const coachName = "ONE Fitness";
 
     const fullName = String(profile.name || "").trim();
     const parts = fullName.split(/\s+/);
