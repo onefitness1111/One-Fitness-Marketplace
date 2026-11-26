@@ -13,6 +13,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { customerIsUsable } from "../_shared/stripeCustomer.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import { replayLedger, planRedemption, pointsToDiscountCents, REWARD_MAX_REDEEM_POINTS, REWARD_MIN_REDEEM_POINTS } from "../_shared/pointsLedger.ts";
 import { ensureProduct } from "../_shared/stripeProduct.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
@@ -78,6 +79,8 @@ serve(async (req) => {
       const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
       callerRole = me?.role ?? "";
       callerIsStaff = callerRole === "owner" || callerRole === "coach";
+      // Buying for a client or using staff powers is editing plans.
+      if (callerIsStaff) await requireCoachPermission(admin, user.id, callerRole, "edit_plans");
     }
 
     if (targetClientId && targetClientId !== user.id) {

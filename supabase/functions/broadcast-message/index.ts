@@ -13,6 +13,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { sendEmailOrThrow } from "../_shared/sendEmail.ts";
 import { sendPush } from "../_shared/sendPush.ts";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import {
   CORS_HEADERS,
   clip,
@@ -41,6 +42,8 @@ serve(async (req) => {
     if (!all && requested.length === 0) throw new Error("Choose who should get this.");
 
     const { admin, userId, role } = await requireStaff(req);
+    // In-app, push and email broadcasts are open to every coach. Texts need the switch.
+    if (ways.sms) await requireCoachPermission(admin, userId, role, "send_texts");
     const { data: allowedRows, error: allowedErr } = await admin.rpc("broadcast_allowed_clients", { p_sender: userId });
     if (allowedErr) throw new Error("Couldn't check who you can message.");
     const allowed = new Set((allowedRows ?? []).map((row: { client_id: string }) => row.client_id));

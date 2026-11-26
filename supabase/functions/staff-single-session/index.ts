@@ -13,6 +13,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import { bookCredit, notifyFilledRefund, recordPurchase, sessionTypeLabel, settleIncludedBalance, singleSessionConfig } from "../_shared/singleSession.ts";
 import {
   FREE_ADD_LIMIT_MESSAGE,
@@ -49,6 +50,9 @@ serve(async (req) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     const { data: caller } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
     if (caller?.role !== "owner" && caller?.role !== "coach") throw new Error("Only a coach or the owner can do this.");
+    // Putting a session on another coach's calendar is one switch; charging the card for it is another.
+    if (String(trainerId) !== user.id) await requireCoachPermission(admin, user.id, caller.role, "manage_other_schedules");
+    if (mode === "charge") await requireCoachPermission(admin, user.id, caller.role, "charge_fees");
 
     // Amount and customer id only. Phone and billing address are not read.
     const { data: clientRow } = await admin.from("clients").select("stripe_customer_id, balance_cents").eq("profile_id", clientId).maybeSingle();

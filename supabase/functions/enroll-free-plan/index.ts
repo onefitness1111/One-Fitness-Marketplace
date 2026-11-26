@@ -6,6 +6,7 @@
 // enroll themselves in a free plan.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireCoachPermission } from "../_shared/coachPermissions.ts";
 import { assertPlanContractSigned } from "../_shared/planContract.ts";
 import { assertPlanOnSale } from "../_shared/planSalesWindow.ts";
 import { assertPlanPurchasable } from "../_shared/planVisibility.mjs";
@@ -50,6 +51,10 @@ serve(async (req) => {
     }
     if (accessExpiresAt != null && !callerIsStaff) {
       throw new Error("Only a coach or owner can set an expiry date.");
+    }
+    // Enrolling someone else, or setting an expiry, is editing plans.
+    if (callerIsStaff && (targetId !== user.id || accessExpiresAt != null)) {
+      await requireCoachPermission(admin, user.id, callerRole, "edit_plans");
     }
 
     const { data: planRow } = await admin.from("membership_plans").select("data").eq("id", planId).maybeSingle();

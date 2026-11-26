@@ -4,7 +4,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/rewards_domain.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/report_range.dart";
-import "../../../data/providers/client_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 
 /// Mirrors RewardsReport.jsx — the owner's view of the Rewards & Points
 /// ledger: issued/redeemed/expired/voided totals, a by-source breakdown,
@@ -19,8 +19,8 @@ class RewardsPointsReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final ledger = ref.watch(pointsLedgerProvider);
-    final trainers = ref.watch(trainersProvider);
+    final ledger = ref.watch(reportLedgerProvider);
+    final trainers = ref.watch(reportTrainersProvider);
     final inWindow = ledger.where((r) => range.includes(r.createdAt.substring(0, 10))).toList();
 
     final issued = inWindow.where((r) => r.amount > 0).fold<int>(0, (s, r) => s + r.amount);

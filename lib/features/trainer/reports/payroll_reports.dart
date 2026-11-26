@@ -12,6 +12,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 
 String _money(num v) => "\$${v.toStringAsFixed(2)}";
 
@@ -35,8 +36,8 @@ class StaffHoursReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trainers = _trainers(ref, onlyTrainerId);
-    final bookings = ref.watch(allBookingsProvider);
-    final roster = ref.watch(trainerRosterProvider);
+    final bookings = ref.watch(reportBookingsProvider);
+    final roster = ref.watch(reportRosterProvider);
     final plans = ref.watch(membershipPlansProvider);
     final stats = perTrainerInRange(trainers, bookings, roster, plans, range)..sort((a, b) => b.sessionCount.compareTo(a.sessionCount));
     return _StatsTable(filename: "staff-session-hours-summary.csv", stats: stats, valueLabel: "Hours", valueOf: (s) => s.hours.toStringAsFixed(1));
@@ -54,8 +55,8 @@ class ServiceCommissionsReport extends ConsumerWidget {
       return const HintBox(text: "Loading pay…");
     }
     final trainers = _trainers(ref, onlyTrainerId);
-    final bookings = ref.watch(allBookingsProvider);
-    final roster = ref.watch(trainerRosterProvider);
+    final bookings = ref.watch(reportBookingsProvider);
+    final roster = ref.watch(reportRosterProvider);
     final plans = ref.watch(membershipPlansProvider);
     final stats = perTrainerInRange(trainers, bookings, roster, plans, range)..sort((a, b) => b.commission.compareTo(a.commission));
     return _StatsTable(filename: "service-commissions.csv", stats: stats, valueLabel: "Pay", valueOf: (s) => _money(s.commission), extraLabel: "Rate", extraOf: (s) => _payoutRateLabel(s.trainer));
@@ -73,11 +74,11 @@ class PayrollSummaryReport extends ConsumerWidget {
       return const HintBox(text: "Loading pay…");
     }
     final trainers = _trainers(ref, onlyTrainerId);
-    final bookings = ref.watch(allBookingsProvider);
-    final roster = ref.watch(trainerRosterProvider);
+    final bookings = ref.watch(reportBookingsProvider);
+    final roster = ref.watch(reportRosterProvider);
     final plans = ref.watch(membershipPlansProvider);
-    final charges = ref.watch(chargesProvider);
-    final coachBadges = ref.watch(coachMeritBadgesProvider);
+    final charges = ref.watch(reportChargesProvider);
+    final coachBadges = ref.watch(reportCoachBadgesProvider);
     double totalPay(TrainerRangeStats s) => s.commission + referralCommissionInRange(charges, s.trainer.id, range) + meritBadgeEarningsInRange(coachBadges, s.trainer.id, range);
     final stats = perTrainerInRange(trainers, bookings, roster, plans, range).where((s) => s.sessionCount > 0 || totalPay(s) > 0).toList()
       ..sort((a, b) => totalPay(b).compareTo(totalPay(a)));
@@ -127,7 +128,7 @@ class MeritBadgeEarningsReport extends ConsumerWidget {
       months.add("${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}");
       d = DateTime(d.year, d.month + 1, 1);
     }
-    final rows = ref.watch(coachMeritBadgesProvider).where((b) => trainerIds.contains(b.trainerId) && months.contains(b.periodMonth)).toList()
+    final rows = ref.watch(reportCoachBadgesProvider).where((b) => trainerIds.contains(b.trainerId) && months.contains(b.periodMonth)).toList()
       ..sort((a, b) => b.periodMonth.compareTo(a.periodMonth));
     if (rows.isEmpty) return const HintBox(text: "No merit badges finalized in this range.");
     final total = rows.fold(0.0, (sum, b) => sum + b.rewardCents / 100);
@@ -206,7 +207,7 @@ class MeritBadgeEarningsReport extends ConsumerWidget {
 }
 
 List<Trainer> _trainers(WidgetRef ref, String? onlyTrainerId) {
-  final all = ref.watch(trainersProvider);
+  final all = ref.watch(reportTrainersProvider);
   return onlyTrainerId == null ? all : all.where((t) => t.id == onlyTrainerId).toList();
 }
 
@@ -314,7 +315,9 @@ class _CoachMeritBadgeAutoFinalizeState extends ConsumerState<CoachMeritBadgeAut
   @override
   void initState() {
     super.initState();
-    if (!_checkedThisSession) {
+    // Only the owner finalizes the month. A coach opening this report must
+    // never write badge rows.
+    if (!_checkedThisSession && ref.read(trainerAuthProvider) == "owner") {
       _checkedThisSession = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybeFinalize());
     }

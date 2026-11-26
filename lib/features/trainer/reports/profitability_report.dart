@@ -5,7 +5,7 @@ import "../../../core/utils/report_utils.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/report_range.dart";
 import "../../../data/providers/client_providers.dart";
-import "../../../data/providers/trainer_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 
 String _money(num v) => "\$${v.toStringAsFixed(2)}";
 
@@ -16,11 +16,11 @@ class RevenueVsPayrollReport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final charges = revenueCharges(ref.watch(chargesProvider), range);
+    final charges = revenueCharges(ref.watch(reportChargesProvider), range);
     final revenue = charges.fold<double>(0, (m, c) => m + (c.amount ?? 0));
-    final trainers = ref.watch(trainersProvider);
-    final bookings = ref.watch(allBookingsProvider);
-    final roster = ref.watch(trainerRosterProvider);
+    final trainers = ref.watch(reportTrainersProvider);
+    final bookings = ref.watch(reportBookingsProvider);
+    final roster = ref.watch(reportRosterProvider);
     final plans = ref.watch(membershipPlansProvider);
     final payroll = perTrainerInRange(trainers, bookings, roster, plans, range).fold<double>(0, (m, s) => m + s.commission);
     final net = revenue - payroll;

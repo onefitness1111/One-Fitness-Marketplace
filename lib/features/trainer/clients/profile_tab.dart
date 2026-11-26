@@ -22,6 +22,7 @@ import "../../../data/models/intake_schema.dart";
 import "../../../data/models/membership_plan.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "../../../data/providers/coach_permissions_provider.dart";
 import "../../client/drawer_screens/payment_details_section.dart";
 import "billing_anchor_section.dart";
 import "plan_allowance_section.dart";
@@ -629,7 +630,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                   // about when access stops. Separate from freeze, and
                   // deliberately the last action in this block. Hidden once
                   // a cancellation is already in place.
-                  if (info.membershipCancelsAt == null) ...[
+                  if (info.membershipCancelsAt == null && ref.watch(coachCanProvider(CoachPermission.editPlans))) ...[
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
@@ -666,7 +667,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                       onChanged: (plans) => update((c) => c.copyWith(plans: plans)),
                     ),
                   ),
-                if (plan != null && plan.kind == PlanKind.package) ...[
+                if (plan != null && plan.kind == PlanKind.package && ref.watch(coachCanProvider(CoachPermission.editPlans))) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 14),
                     child: Container(
@@ -704,12 +705,13 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                     ),
                   ),
                 ],
-                PlanAllowances(
-                  info: info,
-                  plans: ref.watch(membershipPlansProvider),
-                  bookings: bookings,
-                  onChanged: (next) => update((_) => next),
-                ),
+                if (ref.watch(coachCanProvider(CoachPermission.editPlans)))
+                  PlanAllowances(
+                    info: info,
+                    plans: ref.watch(membershipPlansProvider),
+                    bookings: bookings,
+                    onChanged: (next) => update((_) => next),
+                  ),
               ],
             ),
           ),
@@ -835,18 +837,22 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
             ],
           ),
           const SizedBox(height: 8),
-          BalanceCard(
-            key: ValueKey("balance-${info.id}"),
-            clientId: info.id,
-            editable: ref.watch(trainerAuthProvider) == "owner",
-            canPay: false,
-          ),
-          BtnGold(
-            full: true,
-            onPressed: () => setState(() => _cardCharge = true),
-            child: const Text("Charge their card"),
-          ),
-          const SizedBox(height: 8),
+          if (ref.watch(coachCanProvider(CoachPermission.billingAccess)))
+            BalanceCard(
+              key: ValueKey("balance-${info.id}"),
+              clientId: info.id,
+              editable: ref.watch(trainerAuthProvider) == "owner",
+              canPay: false,
+            ),
+          if (ref.watch(coachCanProvider(CoachPermission.chargeFees))) ...[
+            BtnGold(
+              key: const Key("profile-charge-card"),
+              full: true,
+              onPressed: () => setState(() => _cardCharge = true),
+              child: const Text("Charge their card"),
+            ),
+            const SizedBox(height: 8),
+          ],
           if (ref.watch(trainerAuthProvider) != "owner") ...[
             const SizedBox(height: 8),
             _CoachAskRow(
@@ -858,25 +864,30 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
               onDelete: () => _ask(info, "delete_client", "Ask to delete ${info.name}", "Why should this account be deleted?"),
             ),
           ],
-          BtnGold(
-            full: true,
-            onPressed: () => setState(() => _purchasing = true),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(LucideIcons.shoppingCart, size: 14),
-                SizedBox(width: 6),
-                Text("Purchase for client"),
-              ],
+          if (ref.watch(coachCanProvider(CoachPermission.editPlans))) ...[
+            BtnGold(
+              key: const Key("profile-purchase-for-client"),
+              full: true,
+              onPressed: () => setState(() => _purchasing = true),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.shoppingCart, size: 14),
+                  SizedBox(width: 6),
+                  Text("Purchase for client"),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => setState(() => _paymentDetails = true),
-            icon: const Icon(LucideIcons.creditCard, size: 14),
-            label: const Text("Payment details (add or remove card)"),
-          ),
+            const SizedBox(height: 8),
+          ],
+          if (ref.watch(coachCanProvider(CoachPermission.billingAccess)))
+            OutlinedButton.icon(
+              key: const Key("profile-payment-details"),
+              onPressed: () => setState(() => _paymentDetails = true),
+              icon: const Icon(LucideIcons.creditCard, size: 14),
+              label: const Text("Payment details (add or remove card)"),
+            ),
           if (ref.watch(trainerAuthProvider) == "owner") ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -1905,7 +1916,11 @@ class _EditSectionState extends State<_EditSection> {
             const SizedBox(height: 14),
             CoachPrivatePhone(clientId: widget.info.id),
             const SizedBox(height: 10),
-            CoachPrivateAddress(clientId: widget.info.id, clientName: widget.info.name),
+            Consumer(
+              builder: (context, ref, _) => ref.watch(coachCanProvider(CoachPermission.billingAccess))
+                  ? CoachPrivateAddress(clientId: widget.info.id, clientName: widget.info.name)
+                  : const SizedBox.shrink(),
+            ),
           ],
           if (_err != null)
             Padding(

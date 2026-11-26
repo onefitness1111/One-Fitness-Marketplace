@@ -22,6 +22,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "coach_permission_switches.dart";
 import "staff_card_details.dart";
 
 /// Mirrors CoachesOverview.jsx (owner-only) — a real coach-approval-code
@@ -453,6 +454,7 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
                       email: t.email ?? "",
                       name: t.displayTitle,
                     ),
+                    CoachPermissionSwitches(coachId: t.id, coachName: t.displayTitle),
                     if (t.signupAt != null) ...[
                       const SizedBox(height: 4),
                       Text("Signed up: ${niceDate(t.signupAt!)}", style: TextStyle(fontSize: 12, color: AppColors.mute)),

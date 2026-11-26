@@ -34,6 +34,7 @@ import "role_provider.dart";
 import "beep_providers.dart";
 import "../../features/trainer/shell/trainer_shell_state.dart";
 import "trainer_providers.dart";
+import "coach_permissions_provider.dart";
 
 /// Runs once at app startup: restores the Supabase Auth session (if any),
 /// then defers to [loadAndSeedCoreData] for the actual fetch+seed+restore
@@ -1240,6 +1241,17 @@ void _startDeferred(_Hold hold, int generation, String? ownClientId) {
     }));
   }
 
+  // The owner's per-coach switches. The owner gets every coach's row, a coach
+  // gets their own. Until this answers the app hides nothing; the server
+  // enforces every switch regardless.
+  hold.permissions.clear();
+  if (ownClientId == null) {
+    later(SupabaseService.loadCoachPermissionRows(), "coach permissions", (rows) {
+      hold.permissions.setAll({
+        for (final e in rows.entries) e.key: CoachPermissions.fromRow(e.value),
+      });
+    });
+  }
   later(SupabaseService.loadPointsLedgerAll(), "points", hold.points.setAll);
   later(SupabaseService.loadMeritBadgesAll(), "badges", hold.badges.setAll);
   later(SupabaseService.loadChallenges(), "challenges", hold.challenges.setAll);
@@ -1665,6 +1677,7 @@ class _Hold {
         challenges = ref.read(challengesProvider.notifier),
         templates = ref.read(challengeTemplatesProvider.notifier),
         charges = ref.read(chargesProvider.notifier),
+        permissions = ref.read(coachPermissionsProvider.notifier),
         blocked = ref.read(blockedTimesProvider.notifier),
         products = ref.read(productsProvider.notifier),
         coupons = ref.read(couponsProvider.notifier),
@@ -1694,6 +1707,7 @@ class _Hold {
   final TrainerClientRecordsNotifier records;
   final RoleNotifier role;
   final TrainerAuthNotifier auth;
+  final CoachPermissionsNotifier permissions;
   final ClientInfoNotifier info;
   final ClientRecordNotifier ownRecord;
   final ClientBookingsNotifier clientBookings;
