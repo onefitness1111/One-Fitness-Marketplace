@@ -14,6 +14,7 @@ import {
   json,
   parseModelJson,
   requireClientOrOwner,
+  safeError,
   scrub,
 } from "../_shared/estimateAuth.ts";
 
@@ -117,6 +118,6 @@ serve(async (req) => {
     return json(await estimateNamedFood(body));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Couldn't make an estimate. Try again.";
-    return json({ ok: false, error: scrub(message, 180) || "Couldn't make an estimate. Try again." }, 400);
+    return json({ ok: false, error: safeError(message, "Couldn't make an estimate. Try again.") }, 400);
   }
 });

@@ -2,6 +2,7 @@
 // Coaches are refused. The signed-in client is allowed, and so is the owner.
 // Nothing returned to the phone uses the word AI.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { clientSafeMessage, stripAiWords } from "./aiWords.mjs";
 
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -37,11 +38,13 @@ export async function requireClientOrOwner(req: Request): Promise<{ id: string; 
 }
 
 export function scrub(value: unknown, max = 80): string {
-  return String(value ?? "")
-    .replace(/\bAI\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim()
-    .slice(0, max);
+  return stripAiWords(value).slice(0, max);
+}
+
+/// An error message for the phone. Anything that mentions AI (or a model
+/// or AI company) becomes [fallback], so a client never sees the word.
+export function safeError(message: unknown, fallback: string): string {
+  return clientSafeMessage(String(message ?? "").slice(0, 180), fallback);
 }
 
 export function clamp(value: unknown, max: number): number {
