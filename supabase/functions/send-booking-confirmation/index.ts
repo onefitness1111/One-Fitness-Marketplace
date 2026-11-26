@@ -12,7 +12,7 @@
 //
 // Sent from the ONE Fitness mailbox (info@onefitnessworkout.com, via the shared
 // Microsoft Graph sender) using the template below.
-import { coachDisplayName } from "../_shared/coachName.ts";
+import { publicCoachName } from "../_shared/coachName.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendHtmlEmailOrThrow } from "../_shared/sendEmail.ts";
@@ -98,8 +98,12 @@ serve(async (req) => {
     if (!client?.email) throw new Error("This client has no email address on file.");
 
     const trainerIds = [...new Set(won.map((w) => w.trainer_id as string))];
-    const { data: coaches } = await admin.from("profiles").select("id, name").in("id", trainerIds);
-    const coachName = (id: string) => coachDisplayName((coaches ?? []).find((c) => c.id === id)?.name);
+    // The coach's chosen public name (coach_public_name / trainers.coach_name),
+    // the same one the app shows clients. The repo's coachName helper takes
+    // that chosen name, not a full profile name.
+    const coachNames = new Map<string, string>();
+    for (const id of trainerIds) coachNames.set(id, await publicCoachName(admin, id));
+    const coachName = (id: string) => coachNames.get(id) ?? "your coach";
 
     const sessions = [...won]
       .sort((a, b) => `${a.date}${String(a.slot_min).padStart(5, "0")}`.localeCompare(`${b.date}${String(b.slot_min).padStart(5, "0")}`))
