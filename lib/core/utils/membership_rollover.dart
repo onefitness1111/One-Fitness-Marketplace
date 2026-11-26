@@ -172,6 +172,28 @@ int overrideBaseForRemaining({
   return base < 0 ? 0 : base;
 }
 
+/// True when any day of [month] ("YYYY-MM") was frozen, or covered by
+/// sessions held from a freeze. Mirrors monthTouchedByFreeze in
+/// supabase/functions/_shared/membershipFreeze.mjs.
+bool monthTouchedByFreeze(String month, ClientPlanEnrollment? enrollment, ClientInfo info) {
+  final parts = month.split("-");
+  final y = int.parse(parts[0]);
+  final m = int.parse(parts[1]);
+  final first = "$month-01";
+  final next = DateTime.utc(y, m + 1, 1);
+  final after = "${next.year}-${next.month.toString().padLeft(2, "0")}-01";
+  bool overlaps(String? from, String? until) {
+    if (from == null || from.isEmpty) return false;
+    final end = (until == null || until.isEmpty) ? "9999-12-31" : until;
+    return from.compareTo(after) < 0 && end.compareTo(first) > 0;
+  }
+
+  if (enrollment != null && overlaps(enrollment.frozenFrom, enrollment.heldUntil ?? enrollment.heldFrom)) return true;
+  final from = info.membershipPausedAt;
+  if (info.membershipPaused && (from == null || from.isEmpty)) return true;
+  return overlaps(from, info.membershipFreezeEndsAt);
+}
+
 /// One membership's rollover into [newMonth]. Null when this entry should
 /// be left alone (not a membership, not active yet, already rolled, or the
 /// plan had ended).
@@ -183,6 +205,7 @@ ClientPlanEnrollment? rollMembershipMonth({
   int? legacyOverride,
   String? legacyMonth,
   bool legacyApplies = false,
+  bool frozen = false,
 }) {
   if (plan.kind != PlanKind.membership) return null;
   if (enrollment.status != "active") return null;
@@ -192,6 +215,9 @@ ClientPlanEnrollment? rollMembershipMonth({
   if (start.isNotEmpty && start.compareTo(prev) > 0) return null;
   final ends = enrollment.endsAt;
   if (ends != null && ends.isNotEmpty && ends.compareTo("$newMonth-01") < 0) return null;
+  // A month frozen for any part, or covered by sessions held from a
+  // freeze, rolls nothing (see [monthTouchedByFreeze]).
+  if (frozen) return enrollment.copyWith(rolloverSessions: 0, rolloverMonth: newMonth);
   // Unused of this month's own allowance only. Sessions already rolled
   // into [prev] expire with that month and are not carried again.
   final allowance = baseSessionAllowance(
