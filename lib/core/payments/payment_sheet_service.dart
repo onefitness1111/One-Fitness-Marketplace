@@ -9,8 +9,6 @@ import "../supabase/supabase_service.dart";
 /// [error] on purpose: backing out of the sheet is a normal thing to do and
 /// must not be reported as a failure.
 class PaymentResult {
-  const PaymentResult._({this.cancelled = false, this.error, this.noPaymentNeeded = false, this.receipt});
-
   const PaymentResult.success({this.receipt}) : cancelled = false, error = null, noPaymentNeeded = false;
   const PaymentResult.cancelled() : cancelled = true, error = null, noPaymentNeeded = false, receipt = null;
   const PaymentResult.failed(String message) : cancelled = false, error = message, noPaymentNeeded = false, receipt = null;

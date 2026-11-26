@@ -197,8 +197,3 @@ class AppColors {
   static Color get selectedOverlay =>
       _active.isDark ? const Color(0x33FFFFFF) : const Color(0x29111113);
 }
-
-/// The web app's single-column layout is centered and capped at this width
-/// everywhere (top bars, content, fixed bottom bars). On phone widths this
-/// has no effect; it only matters on tablet/desktop.
-const double kPageMaxWidth = 1440;

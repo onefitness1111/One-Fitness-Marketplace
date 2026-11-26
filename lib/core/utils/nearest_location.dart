@@ -161,12 +161,6 @@ List<LocationDistance> distancesFrom(double lat, double lng, List<GymLocation> l
   return out;
 }
 
-/// The nearest street address to a point, for showing back what was picked
-/// on the map. Null when the platform geocoder can't name it.
-Future<String?> addressFor(double lat, double lng) async {
-  return (await placeFor(lat, lng))?.compose();
-}
-
 /// The street, city, state and ZIP at a point, for filling in the address
 /// fields after a map pick. Null when the platform geocoder can't name it.
 Future<AddressParts?> placeFor(double lat, double lng) async {

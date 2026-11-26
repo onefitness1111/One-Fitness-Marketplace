@@ -54,13 +54,5 @@ NotifyAudience audienceFor({
   );
 }
 
-String _norm(String? value) => (value ?? "").trim().toLowerCase();
-
 /// Messages use the coach's public name, never a legal name.
 String coachLabel(CoachAudience coach) => coachPublicName(coachName: coach.publicName);
-
-bool sameLocation(String? a, String? b) {
-  final left = _norm(a);
-  final right = _norm(b);
-  return left.isNotEmpty && left == right;
-}

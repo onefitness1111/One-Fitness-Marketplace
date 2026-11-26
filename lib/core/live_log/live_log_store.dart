@@ -188,9 +188,6 @@ class LiveLogStore {
   }
 }
 
-/// The full number that was typed. 20 stays 20. A blank field stays blank.
-String liveLogNumberText(String raw) => raw;
-
 /// Parses a finished entry for colours and history. Partial text such as
 /// "2" while "20" is still being typed is not written back over the field.
 double? liveLogWeight(String? raw) {

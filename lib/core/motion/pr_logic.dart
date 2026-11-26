@@ -21,15 +21,3 @@ bool shouldCelebratePr({
   if (lastCelebrated != null && lastCelebrated == weight) return false;
   return true;
 }
-
-/// Heaviest completed weight in earlier logs for [exerciseName].
-double? bestLoggedWeight(Iterable<({String name, Iterable<double?> weights})> exercises) {
-  double? best;
-  for (final exercise in exercises) {
-    for (final weight in exercise.weights) {
-      if (weight == null || weight <= 0) continue;
-      if (best == null || weight > best) best = weight;
-    }
-  }
-  return best;
-}

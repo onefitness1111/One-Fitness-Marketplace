@@ -71,8 +71,6 @@ const kClientDietFilters = <(String, String)>[
   ("gluten-free", "Gluten-free"),
 ];
 
-String dietTagLabel(String key) => kDietTags.firstWhere((t) => t.$1 == key, orElse: () => (key, key)).$2;
-
 /// Mirrors mealDatabase.js `INGREDIENT_CATEGORIES` — grocery-list bucketing
 /// order/labels.
 const kIngredientCategories = <(String, String)>[

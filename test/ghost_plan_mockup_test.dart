@@ -8,7 +8,6 @@ import "package:flutter_riverpod/flutter_riverpod.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:onefitness/core/theme/app_colors.dart";
 import "package:onefitness/core/theme/app_theme.dart";
-import "package:onefitness/core/widgets/widgets.dart";
 import "package:onefitness/data/models/client_info.dart";
 import "package:onefitness/data/models/membership_plan.dart";
 import "package:onefitness/data/providers/client_providers.dart";

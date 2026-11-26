@@ -8,10 +8,6 @@
 /// must pass the live value instead of relying on the default here.
 library;
 
-const String kBusinessName = "ONE Fitness";
-const bool kClientsCanMessageAnyCoach = false;
-const String kMessageIdentity = "self"; // "self" | "business"
-
 // scheduling defaults (DEFAULT_PLATFORM_SETTINGS.scheduling)
 const int kLateCancellationHours = 12;
 const bool kBlockRescheduleInWindow = true;
