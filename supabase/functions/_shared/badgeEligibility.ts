@@ -59,7 +59,7 @@ function cache(): Cache {
 async function clientRow(admin: any, clientId: string, c: Cache) {
   if (!c.client) {
     const { data } = await admin.from("clients")
-      .select("profile_id, membership_plan_id, session_count_override, session_count_override_month, plans, primary_trainer_id")
+      .select("profile_id, membership_plan_id, session_count_override, session_count_override_month, plans")
       .eq("profile_id", clientId).maybeSingle();
     c.client = data || {};
   }

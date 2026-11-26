@@ -4,9 +4,17 @@
 // The owner can still freeze immediately. A coach cannot: they send a
 // request, the owner approves it, and it starts after 48 hours
 // (see apply-due-requests).
+//
+// A start day after today is scheduled, not applied now: booking stays
+// open and nothing is paused until that day (apply-due-requests starts it).
+// Starting pauses every subscription the client has, resumes billing one
+// hour before midnight Pacific on the end day, and holds this month's
+// unused sessions for after the freeze (see _shared/membershipFreeze.mjs).
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { loadFreezeClient, scheduleFreeze, startFreeze } from "../_shared/freezeOps.ts";
+import { freezeStartsLater, pacificToday } from "../_shared/membershipFreeze.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,24 +49,29 @@ serve(async (req) => {
       throw new Error("A freeze has to be approved by the owner. Send it from Requests, with the from date, to date, and a reason.");
     }
 
-    const { data: clientRow, error: clientErr } = await admin.from("clients").select("stripe_subscription_id").eq("profile_id", clientId).maybeSingle();
-    if (clientErr) throw clientErr;
+    const isoDay = /^\d{4}-\d{2}-\d{2}$/;
+    if (!isoDay.test(String(startDate)) || !isoDay.test(String(endDate))) {
+      throw new Error("Dates must be YYYY-MM-DD.");
+    }
 
-    if (clientRow?.stripe_subscription_id) {
-      const resumesAt = Math.floor(new Date(endDate + "T12:00:00Z").getTime() / 1000);
-      await stripe.subscriptions.update(clientRow.stripe_subscription_id, {
-        pause_collection: { behavior: "void", resumes_at: resumesAt },
+    const clientRow = await loadFreezeClient(admin, clientId);
+    if (!clientRow) throw new Error("Couldn't find this client.");
+    if (clientRow.membership_paused) throw new Error("This membership is already frozen. Unfreeze it first to change the dates.");
+
+    const today = pacificToday();
+    if (endDate <= today) throw new Error("The end date has to be after today.");
+
+    if (freezeStartsLater(startDate, today)) {
+      await scheduleFreeze(admin, clientRow, startDate, endDate);
+      return new Response(JSON.stringify({ ok: true, scheduled: true, startDate, endDate }), {
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       });
     }
 
-    const { error: updateErr } = await admin.from("clients").update({
-      membership_paused: true,
-      membership_paused_at: startDate,
-      membership_freeze_ends_at: endDate,
-    }).eq("profile_id", clientId);
-    if (updateErr) throw updateErr;
+    await startFreeze(admin, stripe, clientRow, startDate, endDate);
+    const { data: after } = await admin.from("clients").select("plans").eq("profile_id", clientId).maybeSingle();
 
-    return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, scheduled: false, startDate, endDate, plans: after?.plans ?? null }), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("freeze-membership failed:", message);

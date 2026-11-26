@@ -14,7 +14,7 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 
 /// Mirrors ManageWaitlist.jsx (owner-only) — pending-approval requests from
-/// the client-side recurring "Advanced Booking" flow, grouped by client.
+/// the client-side Recurring Booking flow, grouped by client.
 /// A separate status ("waiting", single-slot join-a-full-session requests)
 /// lives in the same table but never needs approval, so it never appears
 /// here.

@@ -56,20 +56,17 @@ bool showSmsOptInPrompt({
   return true;
 }
 
-/// One person the owner might notify. [primaryTrainerId] is accepted so a
-/// caller can pass the roster field through, and then ignored.
+/// One person the owner might notify.
 class SmsPromptPerson {
   const SmsPromptPerson({
     required this.id,
     required this.smsOptIn,
     required this.smsOptedOut,
-    this.primaryTrainerId,
   });
 
   final String id;
   final bool? smsOptIn;
   final bool smsOptedOut;
-  final String? primaryTrainerId;
 }
 
 List<String> smsOptInPromptRecipientIds(List<SmsPromptPerson> people) {

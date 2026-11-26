@@ -287,12 +287,10 @@ class SupabaseService {
       if (city != null) "city": city,
       if (state != null) "state": state,
       if (birthday != null) "birthday": birthday,
-      // A referred client becomes that coach's client — this is what
-      // makes the coach's roster-scoped Needs Attention alert (and their
-      // Clients tab) actually show this signup.
+      // The referring coach is recorded for the one-time Coach Code
+      // alert. It does not assign the client to that coach.
       if (referringTrainerId != null)
         "referred_by_trainer_id": referringTrainerId,
-      if (referringTrainerId != null) "primary_trainer_id": referringTrainerId,
     }, onConflict: "profile_id");
     // Same shape for the same reason — a retry after a failure part-way
     // through must not trip over its own earlier half-success.
@@ -565,7 +563,7 @@ class SupabaseService {
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
-      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason, booking_location";
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason, booking_location";
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =
@@ -2323,11 +2321,41 @@ class SupabaseService {
       await client.from("clients").update(clientFields).eq("profile_id", id);
   }
 
+  /// One entry of `clients.plans`.
+  static ClientPlanEnrollment enrollmentFromJson(Map p) => ClientPlanEnrollment(
+      planId: p["planId"] as String? ?? "",
+      status: p["status"] as String? ?? "active",
+      startDate: p["startDate"] as String? ?? "",
+      termMonths: _asInt(p["termMonths"]),
+      subscriptionId: p["subscriptionId"] as String?,
+      cancelsAt: p["cancelsAt"] as String?,
+      rolloverSessions: _asInt(p["rolloverSessions"]) ?? 0,
+      rolloverMonth: p["rolloverMonth"] as String?,
+      endsAt: p["endsAt"] as String?,
+      priceCents: _asInt(p["priceCents"]),
+      maxSessionsOverride: _asInt(p["maxSessionsOverride"]),
+      maxSessionsOverrideMonth: p["maxSessionsOverrideMonth"] as String?,
+      rolloverMaxOverride: _asInt(p["rolloverMaxOverride"]),
+      heldSessions: _asInt(p["heldSessions"]),
+      frozenFrom: p["frozenFrom"] as String?,
+      heldFrom: p["heldFrom"] as String?,
+      heldUntil: p["heldUntil"] as String?,
+    );
+
+  /// Every entry of a `clients.plans` value, skipping anything malformed.
+  static List<ClientPlanEnrollment> enrollmentsFromJson(Object? raw) =>
+      raw is List ? _safeMap(raw.whereType<Map>(), enrollmentFromJson) : const [];
+
   /// Owner/coach freezing a client's membership — mirrors freezeMembership
   /// in supabaseData.js. Pauses real Stripe billing (resumes automatically
-  /// on `endDate`, server-side, no cron needed) and sets the local
+  /// one hour before midnight Pacific on `endDate`) and sets the local
   /// membership_paused* fields the app reads for display/booking access.
-  static Future<void> freezeMembership(
+  ///
+  /// A start day after today is only scheduled: the result has
+  /// `scheduled: true` and nothing is paused until that day. Otherwise the
+  /// result carries the client's `plans` with the sessions held for after
+  /// the freeze.
+  static Future<Map<String, dynamic>> freezeMembership(
     String clientId,
     String startDate,
     String endDate,
@@ -2340,7 +2368,10 @@ class SupabaseService {
   /// Ends a freeze early — mirrors unfreezeMembership in supabaseData.js.
   /// Resumes real Stripe billing immediately rather than waiting for the
   /// originally-scheduled end date.
-  static Future<void> unfreezeMembership(String clientId) =>
+  /// The result carries the client's `plans`, with the held sessions now
+  /// starting today, and `cancelledScheduled` when the freeze had not
+  /// started yet.
+  static Future<Map<String, dynamic>> unfreezeMembership(String clientId) =>
       _invokeFunction("unfreeze-membership", {"clientId": clientId});
 
   /// How many free session-adds the signed-in coach has used this week.
@@ -3569,180 +3600,35 @@ class SupabaseService {
       ...entry,
       "attachments": [for (final a in attachments) a.toJson()],
     };
-    try {
-      await client.rpc("patch_client_intake", params: {
-        "p_client": profileId,
-        "p_assessment": assessmentKey,
-        "p_entry": nextEntry,
-      });
-    } catch (_) {
-      await client.from("client_records").upsert({
-        "profile_id": profileId,
-        "data": {
-          ...current,
-          "intake": {
-            ...currentIntake,
-            assessmentKey: nextEntry,
-          },
-        },
-      });
-    }
+    // No whole-record fallback (L5): if this fails, the caller says so and
+    // nothing else on the record is touched.
+    await client.rpc("patch_client_intake", params: {
+      "p_client": profileId,
+      "p_assessment": assessmentKey,
+      "p_entry": nextEntry,
+    });
   }
 
-  /// Saves one intake form.
+  /// Saves one intake filing, all or nothing (L3, L5).
   ///
-  /// [keepPrevious] archives whatever completed submission is already on the
-  /// row before writing this one, so the earlier answers stay readable — pass
-  /// it when a questionnaire is being submitted. It is off by default because
-  /// the physical assessment re-saves itself with `completed: true` every
-  /// time a coach touches a note, and each of those is the same submission
-  /// being edited, not a new one; archiving them would bury the real
-  /// re-intakes under a pile of near-identical copies.
-  static Future<void> updateClientIntake(
+  /// One call to submit_client_intake, which locks the record, moves any
+  /// completed filing already on record into `history` (no cap), writes this
+  /// one as current, and mirrors both into intake_submissions, in a single
+  /// transaction. There is no fallback write: if the call fails, nothing has
+  /// changed and the caller shows an error to try again. Returns the entry as
+  /// the server saved it, history included.
+  static Future<IntakeRecord> updateClientIntake(
     String profileId,
     String assessmentKey,
-    IntakeRecord record, {
-    bool keepPrevious = false,
-  }) async {
-    final row = await client
-        .from("client_records")
-        .select("data")
-        .eq("profile_id", profileId)
-        .maybeSingle();
-    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
-    // Some rows carry `intake` as a stale `[]` instead of `{}` (see the same
-    // check in _clientRecordFromJson) — `as Map?` throws on those, so every
-    // save for that client failed silently as "couldn't save".
-    final intakeField = current["intake"];
-    final currentIntake =
-        intakeField is Map ? intakeField.cast<String, dynamic>() : const <String, dynamic>{};
-    // What's on the row right now, which is what gets archived — not
-    // `record.history`. The caller's copy came from a roster load that may be
-    // minutes old; this one was read a line ago, same fetch-then-merge
-    // reasoning as the rest of this method.
-    final priorRaw = currentIntake[assessmentKey];
-    final prior = priorRaw is Map ? priorRaw.cast<String, dynamic>() : null;
-    final priorHistory =
-        ((prior?["history"] as List?) ?? const []).whereType<Map>().toList();
-    final nextHistory = keepPrevious && prior?["completed"] == true
-        ? [
-            {
-              "answers": prior?["answers"] ?? const <String, dynamic>{},
-              "at": prior?["at"],
-              "by": prior?["by"],
-              "attachments": prior?["attachments"] ?? const [],
-              "archivedAt": record.at,
-              "extra": {
-                for (final entry in prior!.entries)
-                  if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
-              },
-            },
-            ...priorHistory,
-          ].take(kMaxIntakeHistory).toList()
-        : priorHistory;
-
-    final nextIntake = {
-      ...currentIntake,
-      assessmentKey: {
-        // Spread first so the modelled fields below always win — `extra` is
-        // only ever the keys this app doesn't model.
-        ...record.extra,
-        "answers": record.answers,
-        "completed": record.completed,
-        "at": record.at,
-        "by": record.by,
-        "attachments": [for (final a in record.attachments) a.toJson()],
-        if (nextHistory.isNotEmpty) "history": nextHistory,
-      },
-    };
-    try {
-      await client.rpc("patch_client_intake", params: {
-        "p_client": profileId,
-        "p_assessment": assessmentKey,
-        "p_entry": nextIntake[assessmentKey],
-      });
-    } catch (_) {
-      await client.from("client_records").upsert({
-        "profile_id": profileId,
-        "data": {...current, "intake": nextIntake},
-      });
-    }
-    await _syncIntakeSubmissions(
-      profileId: profileId,
-      assessmentKey: assessmentKey,
-      prior: prior,
-      record: record,
-      keepPrevious: keepPrevious && prior?["completed"] == true,
-    );
-  }
-
-  /// Best-effort copy into intake_submissions. The JSON on client_records
-  /// remains the current filing, so a build that predates this table still
-  /// reads the latest answers. A missing table is ignored.
-  static Future<void> _syncIntakeSubmissions({
-    required String profileId,
-    required String assessmentKey,
-    required Map<String, dynamic>? prior,
-    required IntakeRecord record,
-    required bool keepPrevious,
-  }) async {
-    try {
-      final closed = await client
-          .from("intake_submissions")
-          .update({
-            "archived_at": DateTime.now().toUtc().toIso8601String(),
-            "archived_by": currentUser?.id,
-          })
-          .eq("client_id", profileId)
-          .eq("assessment_key", assessmentKey)
-          .isFilter("archived_at", null)
-          .select("id");
-      final closedCount = closed.length;
-      if (keepPrevious && closedCount == 0 && prior != null) {
-        final answers = prior["answers"];
-        final extra = {
-          for (final entry in prior.entries)
-            if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
-        };
-        await client.from("intake_submissions").insert({
-          "client_id": profileId,
-          "assessment_key": assessmentKey,
-          "answers": answers is Map ? answers : const {},
-          "completed": true,
-          "completed_at": prior["at"],
-          "completed_by": prior["by"],
-          "archived_at": DateTime.now().toUtc().toIso8601String(),
-          "archived_by": currentUser?.id,
-          "attachments": prior["attachments"] ?? const [],
-          "extra": extra,
-        });
-      }
-      await _insertCurrentIntakeSubmission(
-        profileId: profileId,
-        assessmentKey: assessmentKey,
-        record: record,
-      );
-    } catch (_) {}
-  }
-
-  static Future<void> _insertCurrentIntakeSubmission({
-    required String profileId,
-    required String assessmentKey,
-    required IntakeRecord record,
-  }) async {
-    try {
-      await client.from("intake_submissions").insert({
-        "client_id": profileId,
-        "assessment_key": assessmentKey,
-        "answers": record.answers,
-        "completed": record.completed,
-        "completed_at": record.at,
-        "completed_by": record.by,
-        "attachments": [for (final a in record.attachments) a.toJson()],
-        "template_version": record.templateVersion,
-        "extra": record.extra,
-      });
-    } catch (_) {}
+    IntakeRecord record,
+  ) async {
+    final saved = await client.rpc("submit_client_intake", params: {
+      "p_client": profileId,
+      "p_assessment": assessmentKey,
+      "p_entry": record.toEntry(),
+    });
+    if (saved is Map) return IntakeRecord.fromEntry(saved.cast<String, dynamic>());
+    return record;
   }
 
   static Future<void> flagProgramRefresh(String profileId, String kind) async {
@@ -5151,7 +5037,6 @@ class SupabaseService {
     String? password,
     String? photo,
     String? coachCode,
-    String? primaryTrainerId,
   }) =>
       _invokeFunction("create-client-account", {
         "name": name,
@@ -5165,7 +5050,6 @@ class SupabaseService {
         if (city != null && city.trim().isNotEmpty) "city": city.trim(),
         if (state != null && state.trim().isNotEmpty) "state": state.trim(),
         if (birthday != null && birthday.trim().isNotEmpty) "birthday": birthday.trim(),
-        if (primaryTrainerId != null) "primaryTrainerId": primaryTrainerId,
       });
 
   /// Merchandise orders. RLS scopes the result by itself — a client gets
@@ -6413,30 +6297,12 @@ class SupabaseService {
       homeLng: (c["home_lng"] as num?)?.toDouble(),
       birthday: c["birthday"] as String?,
       membershipPlanId: c["membership_plan_id"] as String?,
-      plans: _safeMap(
-        plansRaw.whereType<Map>(),
-        (p) => ClientPlanEnrollment(
-          planId: p["planId"] as String? ?? "",
-          status: p["status"] as String? ?? "active",
-          startDate: p["startDate"] as String? ?? "",
-          termMonths: _asInt(p["termMonths"]),
-          subscriptionId: p["subscriptionId"] as String?,
-          cancelsAt: p["cancelsAt"] as String?,
-          rolloverSessions: _asInt(p["rolloverSessions"]) ?? 0,
-          rolloverMonth: p["rolloverMonth"] as String?,
-          endsAt: p["endsAt"] as String?,
-          priceCents: _asInt(p["priceCents"]),
-          maxSessionsOverride: _asInt(p["maxSessionsOverride"]),
-          maxSessionsOverrideMonth: p["maxSessionsOverrideMonth"] as String?,
-          rolloverMaxOverride: _asInt(p["rolloverMaxOverride"]),
-        ),
-      ),
+      plans: _safeMap(plansRaw.whereType<Map>(), enrollmentFromJson),
       membershipPaused: c["membership_paused"] as bool? ?? false,
       membershipPausedAt: c["membership_paused_at"] as String?,
       membershipFreezeEndsAt: c["membership_freeze_ends_at"] as String?,
       sessionCountOverride: _asInt(c["session_count_override"]),
       sessionCountOverrideMonth: c["session_count_override_month"] as String?,
-      primaryTrainerId: c["primary_trainer_id"] as String?,
       hasOutstandingBalance: c["has_outstanding_balance"] as bool? ?? false,
       stripeSubscriptionId: c["stripe_subscription_id"] as String?,
       pendingPlanId: c["pending_plan_id"] as String?,
@@ -6916,36 +6782,9 @@ class SupabaseService {
       intake: Map.fromEntries(
         intakeRaw.entries.where((e) => e.value is Map).map((e) {
           final m = (e.value as Map).cast<String, dynamic>();
-          final answersField = m["answers"];
           return MapEntry(
             e.key,
-            IntakeRecord(
-              answers: answersField is Map
-                  ? answersField.cast<String, dynamic>()
-                  : const <String, dynamic>{},
-              completed: m["completed"] as bool? ?? false,
-              at: m["at"] as String?,
-              by: m["by"] as String?,
-              attachments: ((m["attachments"] as List?) ?? const [])
-                  .whereType<Map>()
-                  .map((a) => IntakeAttachment.fromJson(a.cast<String, dynamic>()))
-                  .whereType<IntakeAttachment>()
-                  .toList(),
-              // Submissions this one replaced. Absent on every record written
-              // before re-filling kept history, and on anything the web app
-              // writes — an empty list is the right reading of both.
-              history: ((m["history"] as List?) ?? const [])
-                  .whereType<Map>()
-                  .map((h) => IntakeSubmission.fromJson(h.cast<String, dynamic>()))
-                  .toList(),
-              // The physical assessment's own fields, and anything else the
-              // web app writes here — kept so a save from this app can put
-              // them back instead of dropping them.
-              extra: {
-                for (final e in m.entries)
-                  if (!IntakeRecord.knownKeys.contains(e.key)) e.key: e.value,
-              },
-            ),
+            IntakeRecord.fromEntry(m),
           );
         }),
       ),

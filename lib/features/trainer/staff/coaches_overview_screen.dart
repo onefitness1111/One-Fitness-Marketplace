@@ -22,14 +22,35 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "staff_card_details.dart";
 
 /// Mirrors CoachesOverview.jsx (owner-only) — a real coach-approval-code
 /// generator backed by the `coach_approval_code` table (same singleton row
 /// and mark_coach_code_used() RPC that CoachSignupScreen already checks
 /// against) and a per-coach oversight list showing client counts and
 /// outstanding flags.
+///
+/// U7: this is the body of the owner's one Staff page. [StaffScreen] passes
+/// [onAddTrainer] and [onEditTrainer] so adding a trainer and the full
+/// profile / availability / pay editor sit on the same page as the
+/// approval code and the coach list.
 class CoachesOverviewScreen extends ConsumerStatefulWidget {
-  const CoachesOverviewScreen({super.key});
+  const CoachesOverviewScreen({
+    super.key,
+    this.onAddTrainer,
+    this.onEditTrainer,
+    this.editEnabled = true,
+  });
+
+  /// "+ Trainer": create a coach account on their behalf.
+  final VoidCallback? onAddTrainer;
+
+  /// Opens the full trainer editor (profile, availability, time off, pay,
+  /// commission, delete).
+  final ValueChanged<Trainer>? onEditTrainer;
+
+  /// False until pay data has loaded, so the editor never saves blank pay.
+  final bool editEnabled;
 
   @override
   ConsumerState<CoachesOverviewScreen> createState() => _CoachesOverviewScreenState();
@@ -286,7 +307,7 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
           const SizedBox(height: 20),
           Row(
             children: [
-              const SectionLabel("All Coaches"),
+              SectionLabel("All Coaches (${trainers.length})"),
               if (newCount > 0) ...[
                 const SizedBox(width: 8),
                 Container(
@@ -295,6 +316,17 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
                   child: Text("$newCount new", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.danger)),
                 ),
               ],
+              const Spacer(),
+              if (widget.onAddTrainer != null)
+                TextButton.icon(
+                  key: const Key("staff-add-trainer"),
+                  onPressed: widget.onAddTrainer,
+                  icon: Icon(LucideIcons.plus, size: 14, color: AppColors.gold),
+                  label: Text(
+                    "Trainer",
+                    style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, fontSize: 12),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 10),
@@ -303,12 +335,12 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
             final coachedIds = bookings.where((b) => b.trainerId == t.id).map((b) => b.clientId).toSet();
             final myRoster = roster.where((c) => coachedIds.contains(c.id)).toList();
             final theirBookings = bookings.where((b) => b.trainerId == t.id).toList();
-            // Program gaps and quiet-client alerts match what this coach
-            // sees: clients booked with them in the next 7 days.
+            // Program gaps, unlogged attendance and quiet-client alerts match
+            // what this coach sees: clients booked with them in the next 7 days.
             final programRoster = needsProgramRoster(roster: myRoster, bookings: theirBookings, isOwner: false, coachId: t.id);
             final flags = [
               ...computeNeedsAttention(programRoster, records),
-              ...computeUnloggedAttendance(myRoster, theirBookings),
+              ...computeUnloggedAttendance(programRoster, theirBookings),
               ...quietClientAttention(
                 nudges: nudges,
                 records: records,
@@ -383,9 +415,39 @@ class _CoachesOverviewScreenState extends ConsumerState<CoachesOverviewScreen> {
                     const SizedBox(height: 12),
                     Divider(height: 1, color: AppColors.line),
                     const SizedBox(height: 12),
+                    if (widget.onEditTrainer != null) ...[
+                      BtnGhost(
+                        key: Key("staff-edit-${t.id}"),
+                        full: true,
+                        onPressed: widget.editEnabled ? () => widget.onEditTrainer!(t) : null,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.edit3, size: 14),
+                            const SizedBox(width: 8),
+                            Text(widget.editEnabled ? "Edit profile, availability & pay" : "Loading pay…"),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     Text("Email: ${t.email ?? '—'}", style: TextStyle(fontSize: 12, color: AppColors.mute)),
                     const SizedBox(height: 4),
                     Text("Phone: ${t.phone ?? '—'}", style: TextStyle(fontSize: 12, color: AppColors.mute)),
+                    // Carried over from the old Staff tab's roster card.
+                    if (t.locationName != null)
+                      StaffIconLine(icon: LucideIcons.mapPin, text: t.locationName!)
+                    else if (settings.locationName.trim().isNotEmpty)
+                      StaffIconLine(icon: LucideIcons.mapPin, text: "${settings.locationName} (gym default)"),
+                    StaffIconLine(
+                      icon: LucideIcons.dollarSign,
+                      text: widget.editEnabled ? staffPayoutSummary(t) : "Loading pay…",
+                    ),
+                    if (t.coachCode != null && t.coachCode!.isNotEmpty)
+                      StaffIconLine(icon: LucideIcons.badgePercent, text: "Coach Code: ${t.coachCode}"),
+                    const SizedBox(height: 8),
+                    StaffAvailSummary(availability: t.offeredAvailability),
                     PasswordActions(
                       profileId: t.id,
                       email: t.email ?? "",

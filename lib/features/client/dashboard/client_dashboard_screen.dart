@@ -39,7 +39,7 @@ class ClientDashboardScreen extends ConsumerStatefulWidget {
     required this.onPickDate,
     required this.onGoHabits,
     required this.earnedBadges,
-    required this.onGoBadges,
+    this.onGoHistory,
     required this.onGoToForm,
     required this.onGoMemberships,
   });
@@ -53,7 +53,9 @@ class ClientDashboardScreen extends ConsumerStatefulWidget {
   final ValueChanged<String> onPickDate;
   final VoidCallback onGoHabits;
   final List<EarnedBadge> earnedBadges;
-  final VoidCallback onGoBadges;
+  /// Opens History, the one full past-sessions list (U6). The Workout
+  /// Calendar links there rather than repeating the list.
+  final VoidCallback? onGoHistory;
 
   /// Opens the Access Hub. Where every intake button leads for a client
   /// who hasn't bought anything yet.
@@ -184,14 +186,9 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
             stag(MeritBadgeRow(clientId: info.id, earnedBadges: widget.earnedBadges)),
             const SizedBox(height: 2),
           ],
-          stag(TextButton(
-            onPressed: gateLoginTap(widget.onGoBadges),
-            style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero, alignment: Alignment.centerLeft),
-            child: const Padding(
-              padding: EdgeInsets.only(bottom: 14),
-              child: Text("See all Merit Badges →", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-            ),
-          )),
+          // U5: no "See all Merit Badges" link here; the gallery opens from
+          // Profile Settings only.
+          const SizedBox(height: 12),
 
           if (!detailsReady)
             const Padding(
@@ -258,6 +255,21 @@ class _ClientDashboardScreenState extends ConsumerState<ClientDashboardScreen> {
 
           if (detailsReady)
             stag(_Span(child: WorkoutCalendar(client: client, info: info, bookings: bookings, onPickDate: widget.onPickDate))),
+          if (detailsReady && widget.onGoHistory != null)
+              stag(_Span(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key("dashboard-open-history"),
+                    onPressed: gateLoginTap(widget.onGoHistory!),
+                    style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero, minimumSize: Size.zero),
+                    child: const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text("See past sessions in History →", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ),
+              )),
 
           const SizedBox(height: 4),
           stag(AppCard(

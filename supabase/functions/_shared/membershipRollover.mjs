@@ -119,7 +119,11 @@ export function consumedSessions(bookings, planId, month) {
   return n;
 }
 
-export function applyMonthEndEnrollment(plan, enrollment, bookings, newMonth, legacy) {
+/// [frozen] is true when the month being closed was frozen, or covered by
+/// sessions held from a freeze (see membershipFreeze.mjs
+/// monthTouchedByFreeze). Nothing rolls from such a month, but the entry is
+/// still stamped so a second run does not roll it either (L6).
+export function applyMonthEndEnrollment(plan, enrollment, bookings, newMonth, legacy, frozen = false) {
   if (!enrollment || planKind(plan) !== "membership") return { enrollment, changed: false };
   if (enrollment.status !== "active") return { enrollment, changed: false };
   if (enrollment.rolloverMonth === newMonth) return { enrollment, changed: false };
@@ -128,6 +132,12 @@ export function applyMonthEndEnrollment(plan, enrollment, bookings, newMonth, le
   if (start && start > prev) return { enrollment, changed: false };
   const ends = enrollment.endsAt ? String(enrollment.endsAt).slice(0, 10) : "";
   if (ends && ends < `${newMonth}-01`) return { enrollment, changed: false };
+  if (frozen) {
+    return {
+      enrollment: { ...enrollment, rolloverSessions: 0, rolloverMonth: newMonth },
+      changed: true,
+    };
+  }
   // Unused of this month's own allowance only. Sessions already rolled
   // into prev expire with that month and are not carried again.
   const allowance = baseSessionAllowance(plan, enrollment, prev, legacy);
@@ -140,14 +150,15 @@ export function applyMonthEndEnrollment(plan, enrollment, bookings, newMonth, le
   };
 }
 
-export function applyMonthEndPlans(plans, planById, bookings, newMonth, legacyFor) {
+export function applyMonthEndPlans(plans, planById, bookings, newMonth, legacyFor, frozenFor) {
   let changed = false;
   const next = (plans || []).map((entry) => {
     if (!entry?.planId) return entry;
     const plan = planById.get(entry.planId) || planById.get(String(entry.planId));
     if (!plan) return entry;
     const legacy = legacyFor ? legacyFor(entry.planId) : null;
-    const result = applyMonthEndEnrollment(plan, entry, bookings, newMonth, legacy);
+    const frozen = frozenFor ? frozenFor(entry) === true : false;
+    const result = applyMonthEndEnrollment(plan, entry, bookings, newMonth, legacy, frozen);
     if (result.changed) changed = true;
     return result.enrollment;
   });

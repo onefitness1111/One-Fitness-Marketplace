@@ -11,9 +11,9 @@ import {
 } from "./broadcastRules.mjs";
 
 const clients = [
-  { id: "a", primaryTrainerId: "chris", phone: "5551112222", email: "a@gym.test", smsOptIn: true },
-  { id: "b", primaryTrainerId: "chris", phone: "", email: "b@gym.test", smsOptIn: false },
-  { id: "c", primaryTrainerId: "pat", phone: "5553334444", email: "c@gym.test", smsOptIn: true },
+  { id: "a", phone: "5551112222", email: "a@gym.test", smsOptIn: true },
+  { id: "b", phone: "", email: "b@gym.test", smsOptIn: false },
+  { id: "c", phone: "5553334444", email: "c@gym.test", smsOptIn: true },
 ];
 
 test("any mix of in app, text, and email is allowed, and empty is not", () => {
@@ -70,7 +70,7 @@ test("quiet hours are before 8am and from 9pm Pacific", () => {
 test("the preview skips a missing phone, an opt-out, and a missing email", () => {
   const text = previewBroadcast({
     ways: { app: true, sms: true },
-    recipients: clients.filter((c) => c.primaryTrainerId === "chris"),
+    recipients: clients.filter((c) => c.id === "a" || c.id === "b"),
     now: new Date("2026-01-15T18:00:00Z"),
   });
   assert.equal(text.app, 2);

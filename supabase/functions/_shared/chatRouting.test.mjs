@@ -446,7 +446,6 @@ test("a client who never answered gets one invite, not the coach's message", () 
   const book = gym();
   book.inviteEnabled = true;
   book.person("sam").hasConsent = false;
-  book.person("sam").primaryTrainerId = null;
   const sent = book.sendApp({ fromId: "chris", toId: "sam", text: "See you", now: T0 });
   assert.equal(sent.message.body, "Coach Chris: See you");
   assert.equal(sent.message.smsPending, true);
@@ -624,7 +623,6 @@ test("staff to client still follows the channel picker and client consent", () =
       optedOut: false,
       hasConsent: false,
       inviteSentAt: "2026-11-21T00:00:00Z",
-      primaryTrainerId: "someone-else",
     },
     body: "Coach Chris: On my way",
     originChannel: "app",

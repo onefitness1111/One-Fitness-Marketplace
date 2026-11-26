@@ -10,9 +10,12 @@ import "../../../data/models/order.dart";
 /// RLS scopes this to the signed-in user, so it calls the same loadOrders()
 /// the staff screen does — there's no client-specific query to keep in step.
 class MyOrdersSection extends ConsumerStatefulWidget {
-  const MyOrdersSection({super.key, required this.onBack});
+  const MyOrdersSection({super.key, required this.onBack, this.backTitle = "Profile Settings"});
 
   final VoidCallback onBack;
+
+  /// Where Back returns to: Profile Settings, or the Shop (U11).
+  final String backTitle;
 
   @override
   ConsumerState<MyOrdersSection> createState() => _MyOrdersSectionState();
@@ -28,7 +31,7 @@ class _MyOrdersSectionState extends ConsumerState<MyOrdersSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          BackBar(onBack: widget.onBack, title: "Profile Settings"),
+          BackBar(onBack: widget.onBack, title: widget.backTitle),
           const SizedBox(height: 10),
           const SectionLabel("My Orders"),
           const SizedBox(height: 10),

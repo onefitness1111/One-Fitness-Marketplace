@@ -30,11 +30,18 @@ class SwipeableTabView extends StatefulWidget {
     required this.labels,
     required this.children,
     this.onIndexChanged,
+    this.focusIndex,
+    this.focusRequest = 0,
   });
 
   final List<String> labels;
   final List<Widget> children;
   final ValueChanged<int>? onIndexChanged;
+
+  /// Moves to [focusIndex] each time [focusRequest] changes, e.g. Plans
+  /// jumping to Workout when a coach starts a session (L2).
+  final int? focusIndex;
+  final int focusRequest;
 
   /// True while any of these tab rows is on screen. Shells use it so a
   /// sideways drag changes tabs instead of leaving the screen. Plans is
@@ -64,6 +71,15 @@ class _SwipeableTabViewState extends State<SwipeableTabView> {
   void initState() {
     super.initState();
     SwipeableTabView._owners++;
+  }
+
+  @override
+  void didUpdateWidget(covariant SwipeableTabView old) {
+    super.didUpdateWidget(old);
+    final target = widget.focusIndex;
+    if (target != null && widget.focusRequest != old.focusRequest && target >= 0 && target < widget.children.length) {
+      _goTo(target);
+    }
   }
 
   void _animate(int i) {

@@ -14,6 +14,8 @@ import { replayLedger } from "../_shared/pointsLedger.ts";
 import { syncMeritBadgePoints } from "../_shared/meritBadgePoints.ts";
 import { sendEmail } from "../_shared/sendEmail.ts";
 import { swapMembershipEnrollment, clientBySubscription, nextSlotHolder } from "../_shared/planEnrollments.ts";
+import { endFreeze, loadFreezeClient } from "../_shared/freezeOps.ts";
+import { pacificToday } from "../_shared/membershipFreeze.mjs";
 import { sendSms } from "../_shared/sendSms.ts";
 import { sendPush } from "../_shared/sendPush.ts";
 import {
@@ -715,25 +717,24 @@ serve(async (req) => {
       }
 
       // Case 2 — a freeze's pause_collection.resumes_at just passed and
-      // Stripe auto-resumed billing on its own. If our side still thinks
-      // this client is frozen, catch up: bank the elapsed days (same math
-      // as unfreeze-membership) and clear the freeze fields.
-      if (!subscription.pause_collection) {
-        const { data: stillFrozen } = await admin.from("clients")
-          .select("profile_id, membership_paused, membership_paused_at, membership_paused_days")
-          .eq("stripe_subscription_id", subscription.id)
-          .eq("membership_paused", true)
-          .maybeSingle();
-        if (stillFrozen) {
-          const bankedSoFar = stillFrozen.membership_paused_days || 0;
-          const elapsedDays = stillFrozen.membership_paused_at
-            ? Math.max(0, Math.round((Date.now() - new Date(stillFrozen.membership_paused_at + "T00:00:00Z").getTime()) / 86400000))
-            : 0;
-          const { error } = await admin.from("clients").update({
-            membership_paused: false, membership_paused_at: null, membership_freeze_ends_at: null,
-            membership_paused_days: bankedSoFar + elapsedDays,
-          }).eq("profile_id", stillFrozen.profile_id);
-          if (error) throw error;
+      // Stripe auto-resumed billing on its own. Only when this event is the
+      // pause ending (pause_collection was set before), so an unrelated
+      // update to a never-paused subscription cannot end a freeze. The
+      // subscription may be the primary one or any other membership's (C2).
+      // endFreeze resumes the client's other subscriptions too, moves the
+      // held sessions to start on the end day, and banks the frozen days.
+      const previous = (event.data as { previous_attributes?: Record<string, unknown> }).previous_attributes ?? {};
+      const pauseJustEnded = !subscription.pause_collection && previous.pause_collection != null;
+      if (pauseJustEnded) {
+        const owner = await clientBySubscription(admin, subscription.id, "profile_id");
+        const stillFrozen = owner?.profile_id ? await loadFreezeClient(admin, String(owner.profile_id)) : null;
+        if (stillFrozen?.membership_paused) {
+          const today = pacificToday();
+          const endsAt = stillFrozen.membership_freeze_ends_at ? String(stillFrozen.membership_freeze_ends_at) : today;
+          // Stripe resumes an hour before the end day starts, so the freeze
+          // ends on its end day, not today.
+          const endDay = endsAt > today ? endsAt : today;
+          await endFreeze(admin, stripe, stillFrozen, endDay, { resumeStripe: true });
           console.log(`stripe-webhook: freeze auto-resumed by Stripe for ${stillFrozen.profile_id}`);
         }
       }

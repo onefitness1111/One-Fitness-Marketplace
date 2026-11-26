@@ -53,6 +53,15 @@ BookingLimitKind? classifyBookingLimitError(Object error) {
   return null;
 }
 
+/// The block_frozen_client_booking sentence, when that is why a booking
+/// was refused. It names the day booking opens again. Null otherwise.
+String? frozenSentence(Object error) {
+  final text = bookingErrorText(error);
+  final match = RegExp(r"(Your|This client's) account is frozen[^.]*\.(\s*(You can book sessions starting that day|They can be booked starting that day|Message ONE Fitness to resume it)\.)?")
+      .firstMatch(text);
+  return match?.group(0);
+}
+
 /// True for a dropped socket, a timeout, or a host that never answered.
 /// A Postgres refusal is not one of these, even if its text mentions a
 /// connection — the server did answer.
@@ -89,6 +98,8 @@ String staffBookingFailureMessage(
   Object error, {
   String whatFailed = "Couldn't book that session",
 }) {
+  final frozen = frozenSentence(error);
+  if (frozen != null) return frozen;
   switch (classifyBookingLimitError(error)) {
     case BookingLimitKind.overlap:
       return coachOverlapRefusal;
@@ -109,6 +120,8 @@ String staffBookingFailureMessage(
 
 /// A drag that the server refused. The original booking is still where it was.
 String moveFailureMessage(Object error, {required String whatFailed}) {
+  final frozen = frozenSentence(error);
+  if (frozen != null) return frozen;
   switch (classifyBookingLimitError(error)) {
     case BookingLimitKind.overlap:
       return coachOverlapRefusal;
@@ -128,6 +141,10 @@ String moveFailureMessage(Object error, {required String whatFailed}) {
 /// and only by the public coach name the caller already chose.
 String clientBookingErrorMessage(Object error) {
   final text = bookingErrorText(error);
+  // The freeze trigger already says when the freeze ends (U14).
+  final frozen = frozenSentence(error);
+  if (frozen != null) return frozen;
+  // Unified unpaid-balance check (O4): BALANCE_DUE and BALANCE_GRACE_USED.
   final balanceMsg = unpaidBalanceErrorMessage(text);
   if (balanceMsg != null) return balanceMsg;
   if (text.contains("waiver-required")) {

@@ -27,6 +27,7 @@ import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "broadcast_screen.dart";
 import "team_chat_screen.dart";
+import "../../../core/privacy/client_email_privacy.dart";
 
 /// Set from a client's quick action so Chat opens that thread.
 class CoachChatOpenRequest extends Notifier<String?> {
@@ -87,6 +88,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   /// Owner list: which coach's threads are showing, and the open thread.
   String _ownerFilter = kOwnerFilterAll;
+
+  /// Coach (non-owner) list filter: 0 = everything, 1 = Coach Chats only
+  /// (staff-to-staff threads). U3: Coach Chats is a filter, not a tab.
+  int _coachFilter = 0;
   String _ownerQuery = "";
   String? _ownerCoachKey;
 
@@ -407,6 +412,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: _RecipientSetup(
           roster: roster,
+          viewerIsOwner: ref.read(trainerAuthProvider) == "owner",
           staff: _newChatTeammates,
           initialRecipientId: _recipientId,
           initialChannels: _channels,
@@ -639,6 +645,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
           padding: const EdgeInsets.all(16),
           child: _RecipientSetup(
             roster: roster,
+            viewerIsOwner: ref.read(trainerAuthProvider) == "owner",
             staff: _newChatTeammates,
             initialRecipientId: _recipientId,
             initialChannels: _channels,
@@ -728,11 +735,25 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
               padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Align(alignment: Alignment.centerLeft, child: CallGymButton()),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SegmentedToggle(
+              key: const Key("coach-chat-filter"),
+              labels: const ["All chats", kTeamChatLabel],
+              index: _coachFilter,
+              onChanged: (i) => setState(() => _coachFilter = i),
+            ),
+          ),
           Expanded(
             child: ConversationList(
-              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys), ..._staffConversations(unreadKeys), ..._pairConversations()]
-                ..sort((a, b) => b.at.compareTo(a.at)),
-              emptyText: "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
+              conversations: [
+                if (_coachFilter == 0) ..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys),
+                ..._staffConversations(unreadKeys),
+                ..._pairConversations(),
+              ]..sort((a, b) => b.at.compareTo(a.at)),
+              emptyText: _coachFilter == 1
+                  ? "No coach chats yet. Start one with New message below."
+                  : "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
               onOpen: (clientId) {
                 if (clientId.startsWith("pair:")) {
                   _openPair(clientId.substring(5));
@@ -893,9 +914,13 @@ class _RecipientSetup extends StatefulWidget {
     required this.confirmLabel,
     required this.onConfirm,
     this.onCancel,
+    this.viewerIsOwner = false,
   });
 
   final List<ClientInfo> roster;
+
+  /// Only the owner sees client emails or can search by them.
+  final bool viewerIsOwner;
 
   /// Coaches / owner / the business, listed after the clients. Their ids come
   /// back prefixed "staff:".
@@ -951,7 +976,7 @@ class _RecipientSetupState extends State<_RecipientSetup> {
     final browseable = widget.roster.length <= _browseAllMax;
     final matches = searching
         ? widget.roster
-            .where((c) => c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q))
+            .where((c) => clientMatchesSearch(name: c.name, email: c.email, query: q, viewerIsOwner: widget.viewerIsOwner))
             .toList()
         : widget.roster;
     // Whoever's already picked stays on screen even with the search empty —
@@ -1012,12 +1037,13 @@ class _RecipientSetupState extends State<_RecipientSetup> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                              Text(
-                                c.email ?? "No email on file",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 11, color: AppColors.mute),
-                              ),
+                              if (widget.viewerIsOwner)
+                                Text(
+                                  clientEmailForViewer(c.email, viewerIsOwner: true) ?? "No email on file",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 11, color: AppColors.mute),
+                                ),
                             ],
                           ),
                         ),

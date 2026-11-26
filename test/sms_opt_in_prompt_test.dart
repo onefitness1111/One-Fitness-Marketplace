@@ -47,7 +47,6 @@ void main() {
         id: "with-coach",
         smsOptIn: null,
         smsOptedOut: false,
-        primaryTrainerId: "coach-1",
       );
       const noCoach = SmsPromptPerson(
         id: "no-coach",
@@ -58,7 +57,6 @@ void main() {
         id: "stopped",
         smsOptIn: false,
         smsOptedOut: true,
-        primaryTrainerId: "coach-1",
       );
       const agreed = SmsPromptPerson(
         id: "agreed",

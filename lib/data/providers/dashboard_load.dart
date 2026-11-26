@@ -192,7 +192,7 @@ Set<GymSection> sectionsForClientScreen(String screen) => switch (screen) {
           GymSection.nutritionLibrary,
           GymSection.clientPlans,
         },
-      "booking" || "advancedBooking" => {
+      "booking" || "recurringBooking" || "advancedBooking" => {
           GymSection.bookingsRest,
           GymSection.blocked,
           GymSection.waitlist,
@@ -219,7 +219,8 @@ Set<GymSection> sectionsForClientScreen(String screen) => switch (screen) {
         },
       "shop" => {GymSection.products},
       "rewards" => {GymSection.points},
-      "badges" => {GymSection.badges},
+      // Merit Badges opens from Profile Settings only (U5).
+      "badges" || "settings" => {GymSection.badges},
       "challenges" => {GymSection.challenges, GymSection.challengeTemplates},
       "squad" => {GymSection.squads},
       "history" => {GymSection.bookingsRest},
@@ -244,7 +245,7 @@ Set<GymSection> sectionsForStaffScreen(String screen) => switch (screen) {
           GymSection.blocked,
           GymSection.waitlist,
         },
-      "chat" || "teamchat" => {GymSection.messages},
+      "chat" => {GymSection.messages},
       "exercises" => {GymSection.exercises},
       "equipment" => {GymSection.equipment},
       "builderWorkout" => {GymSection.programs, GymSection.exercises},
@@ -260,7 +261,12 @@ Set<GymSection> sectionsForStaffScreen(String screen) => switch (screen) {
       "waivers" => {GymSection.waivers},
       "reports" => {GymSection.charges, GymSection.coachBadges, GymSection.prEvents},
       "waitlist" => {GymSection.waitlist},
-      "coachbadges" => {GymSection.coachBadges, GymSection.prEvents},
+      // Coach badge progress lives on My Profile (U8). "coachbadges" is the
+      // old key, kept so a stale mode still loads what the page needs.
+      "myprofile" || "coachbadges" => {GymSection.coachBadges, GymSection.prEvents},
+      // The one Staff page (U7) shows each coach's badges this month.
+      "staff" || "coaches" => {GymSection.coachBadges, GymSection.prEvents},
+      "calendarsync" => {GymSection.bookingsRest},
       "mypay" => {GymSection.charges},
       _ => const {},
     };

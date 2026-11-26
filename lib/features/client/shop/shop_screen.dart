@@ -10,6 +10,7 @@ import "../../../core/widgets/widgets.dart";
 import "../../../data/models/product.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "my_orders_section.dart";
 
 /// Client-facing merchandise shop. Two states: a responsive grid of what's
 /// for sale, and a detail view with photos, size picker and checkout.
@@ -27,6 +28,10 @@ class ShopScreen extends ConsumerStatefulWidget {
 class _ShopScreenState extends ConsumerState<ShopScreen> {
   String? _openProductId;
 
+  /// U11: My Orders opens from the top of the Shop as well as Profile
+  /// Settings.
+  bool _ordersOpen = false;
+
   @override
   Widget build(BuildContext context) {
     // Only sellable merchandise: the products catalogue is shared with the
@@ -36,6 +41,17 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
         .watch(productsProvider)
         .where((p) => !p.archived && p.priceCents > 0 && p.sizes.isNotEmpty)
         .toList();
+
+    if (_ordersOpen) {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: () => setState(() => _ordersOpen = false),
+        child: MyOrdersSection(
+          backTitle: "Shop",
+          onBack: () => setState(() => _ordersOpen = false),
+        ),
+      );
+    }
 
     final open = products.where((p) => p.id == _openProductId).firstOrNull;
     if (open != null) {
@@ -49,13 +65,48 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
       );
     }
 
+    final ordersButton = Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: BtnGhost(
+          key: const Key("shop-my-orders"),
+          onPressed: () => setState(() => _ordersOpen = true),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.shoppingBag, size: 14),
+              SizedBox(width: 6),
+              Text("My Orders"),
+            ],
+          ),
+        ),
+      ),
+    );
+
     if (products.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(18),
-        child: HintBox(text: "Nothing in the shop just yet — check back soon."),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ordersButton,
+          const Padding(
+            padding: EdgeInsets.all(18),
+            child: HintBox(text: "Nothing in the shop just yet — check back soon."),
+          ),
+        ],
       );
     }
 
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ordersButton,
+        Expanded(child: _grid(products)),
+      ],
+    );
+  }
+
+  Widget _grid(List<Product> products) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Responsive by available width rather than a device guess, so it

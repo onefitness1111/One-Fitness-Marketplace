@@ -21,7 +21,6 @@ class ClientInfo {
     this.membershipFreezeEndsAt,
     this.sessionCountOverride,
     this.sessionCountOverrideMonth,
-    this.primaryTrainerId,
     this.hasOutstandingBalance = false,
     this.stripeSubscriptionId,
     this.pendingPlanId,
@@ -99,8 +98,6 @@ class ClientInfo {
   /// "YYYY-MM" the legacy override was set in. See [sessionCountOverride].
   final String? sessionCountOverrideMonth;
 
-  final String? primaryTrainerId;
-
   /// Non-null only when a real Stripe subscription backs the current plan —
   /// gates whether Change Plan (real proration/schedule) is even offered vs.
   /// falling back to a plain cancel-then-checkout.
@@ -138,10 +135,8 @@ class ClientInfo {
   final bool isStaff;
 
   /// Set once at signup if the client entered a valid Coach Code — the
-  /// referring coach's id. Also sets [primaryTrainerId] to the same coach
-  /// at signup time (see SupabaseService.signUpClient), so this is mostly
-  /// redundant with it going forward, but kept separate since a client's
-  /// primary trainer can change later while the original referral shouldn't.
+  /// referring coach's id. It only drives the one-time Coach Code alert.
+  /// It never assigns the client to that coach.
   final String? referredByTrainerId;
 
   /// Whether the referring coach has already seen the one-time "Coach Code"
@@ -239,7 +234,6 @@ class ClientInfo {
         membershipFreezeEndsAt: clearMembershipFreezeEndsAt ? null : (membershipFreezeEndsAt ?? this.membershipFreezeEndsAt),
         sessionCountOverride: clearSessionCountOverride ? null : (sessionCountOverride ?? this.sessionCountOverride),
         sessionCountOverrideMonth: clearSessionCountOverride ? null : (sessionCountOverrideMonth ?? this.sessionCountOverrideMonth),
-        primaryTrainerId: primaryTrainerId,
         hasOutstandingBalance: hasOutstandingBalance ?? this.hasOutstandingBalance,
         stripeSubscriptionId: clearStripeSubscriptionId ? null : (stripeSubscriptionId ?? this.stripeSubscriptionId),
         pendingPlanId: clearPendingPlan ? null : (pendingPlanId ?? this.pendingPlanId),

@@ -9,6 +9,7 @@ import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
+import "../../../core/privacy/client_email_privacy.dart";
 
 /// Mirrors RosterBar.jsx, trimmed to what's built so far: search and the
 /// horizontal client-card scroller. Deleting a client lives at the bottom
@@ -52,9 +53,10 @@ class _RosterBarState extends ConsumerState<RosterBar> {
     // stays limited to their own sessions. Chat can still be narrowed.
     final scoped = roster;
     final q = _search.text.trim().toLowerCase();
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
     final visible = q.isEmpty
         ? scoped
-        : scoped.where((c) => c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q)).toList();
+        : scoped.where((c) => clientMatchesSearch(name: c.name, email: c.email, query: q, viewerIsOwner: isOwner)).toList();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 6),
@@ -64,7 +66,7 @@ class _RosterBarState extends ConsumerState<RosterBar> {
         children: [
           AppField(kind: FieldKind.search,
             controller: _search,
-            placeholder: "Search clients by name or email…",
+            placeholder: isOwner ? "Search clients by name or email…" : "Search clients by name…",
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 6),
@@ -155,14 +157,15 @@ class _RosterBarState extends ConsumerState<RosterBar> {
                                   const SizedBox(height: 2),
                                   Row(
                                     children: [
-                                      Flexible(
-                                        child: Text(
-                                          _fmtEmail(c.email),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(fontSize: 10, color: AppColors.mute),
+                                      if (clientEmailForViewer(c.email, viewerIsOwner: isOwner) case final email?)
+                                        Flexible(
+                                          child: Text(
+                                            _fmtEmail(email),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(fontSize: 10, color: AppColors.mute),
+                                          ),
                                         ),
-                                      ),
                                       if (rec != null && getHighestFlag(rec, c) != null) ...[
                                         const SizedBox(width: 4),
                                         FlagAlert(flag: getHighestFlag(rec, c), compact: true),

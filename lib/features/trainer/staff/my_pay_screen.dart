@@ -7,7 +7,8 @@ import "../../../data/models/report_range.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
-import "coach_badge_progress_list.dart";
+import "../shell/trainer_shell_state.dart";
+import "my_profile_screen.dart";
 import "../reports/date_range_filter.dart";
 import "../reports/payroll_reports.dart";
 
@@ -66,13 +67,17 @@ class _MyPayScreenState extends ConsumerState<MyPayScreen> {
           const SectionLabel("Merit Badge Earnings"),
           MeritBadgeEarningsReport(range: _range, onlyTrainerId: me.id),
           const SizedBox(height: 12),
-          const SectionLabel("Coach Merit Badges — This Month"),
-          Text(
-            "Automatic monthly coaching-performance incentives — finalized and paid out once the month ends.",
-            style: TextStyle(fontSize: 11, color: AppColors.mute),
+          // U8: this month's badge progress is shown on My Profile only.
+          // Earnings above stay here because they are pay.
+          TextButton(
+            key: const Key("my-pay-badge-progress-link"),
+            onPressed: () {
+              ref.read(pendingMyProfileSectionProvider.notifier).set("badges");
+              ref.read(trainerModeProvider.notifier).go("myprofile");
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero),
+            child: const Text("See this month's badge progress on My Profile →", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
           ),
-          const SizedBox(height: 8),
-          CoachBadgeProgressList(coach: me),
         ],
       ),
     );

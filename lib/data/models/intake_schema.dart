@@ -263,13 +263,9 @@ class IntakeSubmission {
   };
 }
 
-/// How many superseded submissions one form keeps.
-///
-/// Not unbounded: an intake entry lives in `client_records.data`, which is
-/// bulk-loaded for the whole roster at sign-in, so every kept submission is
-/// weight every coach downloads to open the app. Twenty is far more re-intakes
-/// than a real client accumulates, and the attachments are only pointers.
-const kMaxIntakeHistory = 20;
+// Every superseded submission is kept (L4). There used to be a cap of 20
+// that silently dropped the oldest; a long-term client's first intakes are
+// exactly the ones worth keeping.
 
 /// One entry in client.intake — mirrors {answers, completed, at, by}, plus
 /// the files attached to it and any submissions it replaced.
@@ -360,9 +356,51 @@ class IntakeRecord {
           extra: extra,
         ),
         ...history,
-      ].take(kMaxIntakeHistory).toList(),
+      ],
     );
   }
+
+  /// One entry of `client_records.data.intake`, as stored.
+  ///
+  /// The form version rides along (`templateVersion`) on the current filing
+  /// and on every archived one, so a revised gym form never relabels or
+  /// hides what was answered against an earlier version.
+  static IntakeRecord fromEntry(Map<String, dynamic> m) {
+    final answersField = m["answers"];
+    return IntakeRecord(
+      answers: answersField is Map ? answersField.cast<String, dynamic>() : const <String, dynamic>{},
+      completed: m["completed"] as bool? ?? false,
+      at: m["at"] as String?,
+      by: m["by"] as String?,
+      attachments: ((m["attachments"] as List?) ?? const [])
+          .whereType<Map>()
+          .map((a) => IntakeAttachment.fromJson(a.cast<String, dynamic>()))
+          .whereType<IntakeAttachment>()
+          .toList(),
+      history: ((m["history"] as List?) ?? const [])
+          .whereType<Map>()
+          .map((h) => IntakeSubmission.fromJson(h.cast<String, dynamic>()))
+          .toList(),
+      templateVersion: (m["templateVersion"] as num?)?.toInt(),
+      extra: {
+        for (final e in m.entries)
+          if (!knownKeys.contains(e.key)) e.key: e.value,
+      },
+    );
+  }
+
+  /// What the app sends to submit_client_intake. History is never sent: the
+  /// server owns it, so a stale device can't drop or rewrite earlier filings.
+  Map<String, dynamic> toEntry() => {
+    // Spread first so the modelled fields below always win.
+    ...extra,
+    "answers": answers,
+    "completed": completed,
+    "at": at,
+    "by": by,
+    "attachments": [for (final a in attachments) a.toJson()],
+    if (templateVersion != null) "templateVersion": templateVersion,
+  };
 
   /// The keys this model stores in its own fields. Everything else on an
   /// intake entry belongs in [extra].

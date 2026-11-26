@@ -10,6 +10,10 @@
 // no-shows for that plan last month) roll into the new month, capped at that
 // client's rollover limit. Running it twice in the same month does not add
 // them again.
+//
+// Nothing rolls from a month the client was frozen for any part of, or
+// that was covered by sessions held from a freeze (L6). Sessions rolled
+// into a month still expire with that month, freeze or not.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
@@ -17,6 +21,7 @@ import {
   pacificCalendar,
   previousMonth,
 } from "../_shared/membershipRollover.mjs";
+import { monthTouchedByFreeze } from "../_shared/membershipFreeze.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -92,7 +97,7 @@ serve(async (req) => {
     }
 
     const clients = await eachPage(() =>
-      admin.from("clients").select("profile_id, plans, membership_plan_id, session_count_override, session_count_override_month")
+      admin.from("clients").select("profile_id, plans, membership_plan_id, session_count_override, session_count_override_month, membership_paused, membership_paused_at, membership_freeze_ends_at")
     );
     const bookings = await eachPage(() =>
       admin.from("bookings")
@@ -125,6 +130,8 @@ serve(async (req) => {
           if (legacyValue == null || client.membership_plan_id !== planId) return null;
           return { applies: true, value: legacyValue, month: client.session_count_override_month ?? null };
         },
+        // deno-lint-ignore no-explicit-any
+        (entry: any) => monthTouchedByFreeze(prev, entry, client),
       );
       if (!result.changed) continue;
       const { error } = await admin.from("clients").update({ plans: result.plans }).eq("profile_id", client.profile_id);

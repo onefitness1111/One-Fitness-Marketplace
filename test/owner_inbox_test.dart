@@ -18,7 +18,7 @@ void main() {
     ClientInfo(id: "alex", name: "Alex Rivera"),
     ClientInfo(id: "jordan", name: "Jordan Lee"),
     ClientInfo(id: "sam", name: "Sam Patel"),
-    ClientInfo(id: "quiet", name: "Quiet Client", primaryTrainerId: "chris"),
+    ClientInfo(id: "quiet", name: "Quiet Client"),
   ];
   const coaches = [
     Trainer(id: "chris", name: "Christina Legal", coachName: "Coach Chris"),
@@ -117,8 +117,10 @@ void main() {
     expect(filterOwnerInbox(all, coachKey: "chris").map((row) => row.title), ["Alex Rivera", "Coach Chris ↔ Coach Avery"]);
     expect(filterOwnerInbox(all, coachKey: kOwnerBusinessKey).map((row) => row.clientId), ["jordan"]);
     expect(filterOwnerInbox(all, coachKey: kOwnerFilterAll, query: "jor").single.clientId, "jordan");
+    expect(filterOwnerInbox(all, coachKey: kOwnerCoachChatsKey).map((row) => row.title), ["Coach Chris ↔ Coach Avery"]);
     expect(ownerCoachFilters(coaches).map((option) => option.label), [
       "All coaches",
+      "Coach Chats",
       "Coach Avery",
       "Coach Chris",
       kOneFitnessBusinessLabel,

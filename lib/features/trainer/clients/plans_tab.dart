@@ -231,7 +231,10 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
 
   // ── Workout AI draft ────────────────────────────────────────────────
 
+  /// O3: rebuild the program from the newest intake. Owner only, here and
+  /// on the server (the generate functions refuse anyone else).
   Future<void> _draftFromRefresh(String kind) async {
+    if (ref.read(trainerAuthProvider) != "owner") return;
     final nutrition = kind == "nutrition";
     final hasProgram = nutrition
         ? _record.savedNutritionPrograms.isNotEmpty
@@ -243,7 +246,7 @@ class _ProgramsPanelState extends ConsumerState<_ProgramsPanel> {
       if (res["ok"] == false) {
         _showAlert(res["reason"] == "intakes-incomplete" || res["reason"] == "nutrition-intake-incomplete"
             ? "That intake isn't marked complete yet."
-            : "Couldn't draft a program from the new intake.");
+            : "Couldn't rebuild the program from the new intake.");
         return;
       }
       await SupabaseService.clearProgramRefresh(widget.clientId, kind);

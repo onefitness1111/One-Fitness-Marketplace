@@ -1,6 +1,6 @@
 /// Mirrors a row in the `waitlist` table (App.jsx `waitlist`) — two status
 /// values in one table: "waiting" (single-slot, join-a-full-session) and
-/// "pending-approval" (Advanced Booking recurring-series requests, needs
+/// "pending-approval" (Recurring Booking series requests, needs
 /// the owner's approval before becoming a real booking).
 class WaitlistEntry {
   const WaitlistEntry({

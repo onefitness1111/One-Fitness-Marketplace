@@ -34,6 +34,8 @@ import "../../../core/privacy/client_contact_privacy.dart";
 import "coach_private_fields.dart";
 import "purchase_for_client_section.dart";
 import "../../../core/utils/phone_guard.dart";
+import "../../../data/models/client_plan.dart";
+import "../../../core/utils/freeze_utils.dart";
 
 /// Mirrors Profile.jsx (viewed from the coach side, via TrainerView). Trimmed
 /// vs. the web: Edit Profile is a simplified name/email/phone/city form here
@@ -120,12 +122,19 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                   programRefreshLabel(kind, forOwner: isOwner),
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
                 ),
+                // O3: owner only. Coaches see the neutral line above and no
+                // button; clients never see this banner.
                 if (isOwner && widget.onRequestProgram != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    rebuildProgramHint(flags[kind]),
+                    style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.35),
+                  ),
                   const SizedBox(height: 10),
-                  BtnGhost(
+                  BtnGold(
                     full: true,
                     onPressed: () => widget.onRequestProgram!(kind),
-                    child: Text(kind == "nutrition" ? "Draft nutrition program" : "Draft training program"),
+                    child: Text(rebuildProgramLabel(kind)),
                   ),
                 ],
               ],
@@ -456,6 +465,30 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
+                            )
+                          else if (freezeScheduled(info))
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Text(
+                                "Freeze scheduled ${info.membershipPausedAt}${info.membershipFreezeEndsAt != null ? ' – ${info.membershipFreezeEndsAt}' : ''}",
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.warning,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          if ((plan == null ? null : heldSessionsLeft(info, plan, bookings)) case final held?)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Text(
+                                "Held from freeze: ${heldSessionsLine(held.left, held.until)}",
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.gold,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
                         ],
                       ),
@@ -475,7 +508,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                         ),
                       ),
                     ),
-                  if (info.membershipPaused)
+                  if (info.membershipPaused || freezeScheduled(info))
                     BtnGold(
                       full: true,
                       onPressed: _freezeBusy
@@ -488,7 +521,9 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                         children: [
                           const Icon(LucideIcons.refreshCw, size: 14),
                           const SizedBox(width: 6),
-                          Text(_freezeBusy ? "Working…" : "Unfreeze now"),
+                          Text(_freezeBusy
+                              ? "Working…"
+                              : (info.membershipPaused ? "Unfreeze now" : "Cancel scheduled freeze")),
                         ],
                       ),
                     )
@@ -508,7 +543,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "Both dates are required — this shifts ${info.name}'s billing date too, so they don't lose any paid-for time.",
+                            freezeFormExplainer(info.name),
                             style: TextStyle(
                               fontSize: 12,
                               color: AppColors.mute,
@@ -1069,14 +1104,21 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
       _freezeErr = null;
     });
     try {
-      await SupabaseService.unfreezeMembership(info.id);
+      final res = await SupabaseService.unfreezeMembership(info.id);
+      final plans = res["plans"] is List ? SupabaseService.enrollmentsFromJson(res["plans"]) : null;
       update(
         (c) => c.copyWith(
           membershipPaused: false,
           clearMembershipPausedAt: true,
           clearMembershipFreezeEndsAt: true,
+          plans: plans,
         ),
       );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(unfreezeResultMessage(res, plans ?? info.plans))),
+        );
+      }
     } catch (e) {
       if (mounted)
         setState(
@@ -1234,14 +1276,22 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
         );
         return;
       }
-      await SupabaseService.freezeMembership(info.id, start, end);
+      final res = await SupabaseService.freezeMembership(info.id, start, end);
+      final scheduled = res["scheduled"] == true;
+      final plans = res["plans"] is List ? SupabaseService.enrollmentsFromJson(res["plans"]) : null;
       update(
         (c) => c.copyWith(
-          membershipPaused: true,
+          membershipPaused: !scheduled,
           membershipPausedAt: start,
           membershipFreezeEndsAt: end,
+          plans: plans,
         ),
       );
+      if (scheduled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Freeze scheduled. It starts $start. Booking stays open until then.")),
+        );
+      }
       if (mounted) setState(() => _freezing = false);
     } catch (e) {
       if (mounted)
@@ -1981,3 +2031,20 @@ class _CoachAskRow extends StatelessWidget {
     );
   }
 }
+
+/// The note after the owner unfreezes: how many held sessions are left and
+/// until when, or that a scheduled freeze was cancelled.
+String unfreezeResultMessage(Map<String, dynamic> res, List<ClientPlanEnrollment> plans) {
+  if (res["cancelledScheduled"] == true) return "Scheduled freeze cancelled.";
+  final held = heldSessionsLineFromPlans(plans);
+  return held == null ? "Unfrozen." : "Unfrozen. $held.";
+}
+
+/// What the freeze form tells staff before they confirm. The billing date
+/// does not move: any charge that falls inside the freeze is skipped, and
+/// billing picks up again on the client's normal billing date.
+String freezeFormExplainer(String clientName) =>
+    "Both dates are required. The end date is the first day $clientName can book again. "
+    "While frozen they can't book and aren't charged — any billing date inside the freeze is skipped. "
+    "Their billing date stays the same, so billing resumes on the next normal billing date after the freeze. "
+    "Sessions they hadn't used yet are kept for after the freeze, until that billing date.";

@@ -14,6 +14,7 @@ import "unavailability.dart";
 import "merge_token_utils.dart";
 import "offered_catalog.dart";
 import "platform_settings.dart";
+import "freeze_utils.dart";
 
 /// Booking/scheduling helpers ported from
 /// src/features/bookings/schedulingHelpers.js and src/lib/helpers.js —
@@ -403,10 +404,15 @@ BookingCheck canBookOffering(
   if (info.isStaff) return const BookingCheck(ok: true);
 
   if (plans.isEmpty) {
-    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Membership Hub to get started.", noMembership: true);
+    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Access Hub to get started.", noMembership: true);
   }
-  if (info.membershipPaused) {
-    return const BookingCheck(ok: false, reason: "paused", msg: "Your membership is currently paused — ask your gym to resume it before booking.");
+  // Only the frozen days are blocked: from the start day up to, not
+  // including, the end day. A day after the freeze can be booked during it,
+  // and a freeze set for later does not block today. The server checks the
+  // same window for every booking path (block_frozen_client_booking).
+  final frozenUntil = frozenUntilOn(info, date);
+  if (frozenUntil != null) {
+    return BookingCheck(ok: false, reason: "paused", msg: frozenBookingMessage(frozenUntil));
   }
   if (info.bookingRestricted) {
     return const BookingCheck(ok: false, reason: "restricted", msg: "Booking is paused on this account. Talk to ONE Fitness if you have a question.");

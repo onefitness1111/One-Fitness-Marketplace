@@ -260,3 +260,18 @@ test("Pacific month boundary is not UTC", () => {
   assert.equal(onTheFirst.month, "2026-11");
   assert.equal(previousMonth("2026-01"), "2025-12");
 });
+
+test("L6: nothing rolls from a frozen month, and the entry is stamped once", () => {
+  const entry = enrol("ten", { startDate: "2026-01-01" });
+  const planById = new Map([["ten", ten]]);
+  const frozen = applyMonthEndPlans([entry], planById, [], "2026-12", null, () => true);
+  assert.equal(frozen.changed, true);
+  assert.equal(frozen.plans[0].rolloverSessions, 0);
+  assert.equal(frozen.plans[0].rolloverMonth, "2026-12");
+  // Second run leaves it alone.
+  const again = applyMonthEndPlans(frozen.plans, planById, [], "2026-12", null, () => true);
+  assert.equal(again.changed, false);
+  // Not frozen: the usual rollover, capped at 4.
+  const normal = applyMonthEndPlans([entry], planById, [], "2026-12", null, () => false);
+  assert.equal(normal.plans[0].rolloverSessions, 4);
+});

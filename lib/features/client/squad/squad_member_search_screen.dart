@@ -4,6 +4,7 @@ import "../../../core/theme/app_colors.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/roster_client.dart";
 import "../../../data/models/squad.dart";
+import "../../../core/privacy/client_email_privacy.dart";
 
 /// Mirrors SquadDashboard.jsx `SquadMemberSearch` — search the roster,
 /// selecting someone sends them an invite (they aren't added directly).
@@ -44,7 +45,9 @@ class _SquadMemberSearchScreenState extends State<SquadMemberSearchScreen> {
         ? const <RosterClient>[]
         : widget.roster
             .where((c) => !inSquad.contains(c.id) && !invited.contains(c.id))
-            .where((c) => c.name.toLowerCase().contains(q) || (c.email ?? "").toLowerCase().contains(q))
+            // Clients find each other by name only. Another client's email is
+            // never shown or searchable here (only the owner sees emails).
+            .where((c) => clientMatchesSearch(name: c.name, email: c.email, query: q, viewerIsOwner: false))
             .take(12)
             .toList();
 
@@ -62,7 +65,7 @@ class _SquadMemberSearchScreenState extends State<SquadMemberSearchScreen> {
               text: "Selecting someone sends them an invitation — they'll need to accept it before joining the Squad.",
             ),
           ),
-          AppField(kind: FieldKind.search, controller: _controller, placeholder: "Name or email…", onChanged: (v) => setState(() => _query = v)),
+          AppField(kind: FieldKind.search, controller: _controller, placeholder: "Search by name…", onChanged: (v) => setState(() => _query = v)),
           const SizedBox(height: 10),
           if (q.length < 2)
             const HintBox(text: "Type at least 2 characters to search.")
@@ -80,7 +83,6 @@ class _SquadMemberSearchScreenState extends State<SquadMemberSearchScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                            Text(c.email ?? "", style: TextStyle(fontSize: 12, color: AppColors.mute)),
                           ],
                         ),
                       ),

@@ -252,6 +252,17 @@ IntakeFormTemplate? templateVersionFor(
   return newestTemplateFor(key, templates);
 }
 
+/// The newest version of every gym form, retired ones included. For reading
+/// what is already on file, never for offering a form to fill in.
+List<IntakeFormTemplate> newestOfEachTemplate(List<IntakeFormTemplate> all) {
+  final newest = <String, IntakeFormTemplate>{};
+  for (final t in all) {
+    final seen = newest[t.key];
+    if (seen == null || t.version > seen.version) newest[t.key] = t;
+  }
+  return newest.values.toList();
+}
+
 /// The built-in groups plus one holding the gym's own forms.
 ///
 /// Only live (non-archived) templates, at their current version — this is
