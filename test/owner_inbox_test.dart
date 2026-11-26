@@ -117,8 +117,10 @@ void main() {
     expect(filterOwnerInbox(all, coachKey: "chris").map((row) => row.title), ["Alex Rivera", "Coach Chris ↔ Coach Avery"]);
     expect(filterOwnerInbox(all, coachKey: kOwnerBusinessKey).map((row) => row.clientId), ["jordan"]);
     expect(filterOwnerInbox(all, coachKey: kOwnerFilterAll, query: "jor").single.clientId, "jordan");
+    expect(filterOwnerInbox(all, coachKey: kOwnerCoachChatsKey).map((row) => row.title), ["Coach Chris ↔ Coach Avery"]);
     expect(ownerCoachFilters(coaches).map((option) => option.label), [
       "All coaches",
+      "Coach Chats",
       "Coach Avery",
       "Coach Chris",
       kOneFitnessBusinessLabel,

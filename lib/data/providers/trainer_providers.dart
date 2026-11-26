@@ -133,7 +133,7 @@ class AllBookingsNotifier extends Notifier<List<Booking>> {
 final allBookingsProvider = NotifierProvider<AllBookingsNotifier, List<Booking>>(AllBookingsNotifier.new);
 
 /// Two statuses in one list (App.jsx `waitlist`): "waiting" (single-slot,
-/// join-a-full-session) and "pending-approval" (Advanced Booking recurring
+/// join-a-full-session) and "pending-approval" (Recurring Booking
 /// series requests, reviewed on the owner's Waitlist screen). Shared between
 /// the client side (their own requests) and the owner side (everyone's).
 class WaitlistNotifier extends Notifier<List<WaitlistEntry>> {

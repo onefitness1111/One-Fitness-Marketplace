@@ -88,6 +88,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
 
   /// Owner list: which coach's threads are showing, and the open thread.
   String _ownerFilter = kOwnerFilterAll;
+
+  /// Coach (non-owner) list filter: 0 = everything, 1 = Coach Chats only
+  /// (staff-to-staff threads). U3: Coach Chats is a filter, not a tab.
+  int _coachFilter = 0;
   String _ownerQuery = "";
   String? _ownerCoachKey;
 
@@ -731,11 +735,25 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
               padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Align(alignment: Alignment.centerLeft, child: CallGymButton()),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SegmentedToggle(
+              key: const Key("coach-chat-filter"),
+              labels: const ["All chats", kTeamChatLabel],
+              index: _coachFilter,
+              onChanged: (i) => setState(() => _coachFilter = i),
+            ),
+          ),
           Expanded(
             child: ConversationList(
-              conversations: [..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys), ..._staffConversations(unreadKeys), ..._pairConversations()]
-                ..sort((a, b) => b.at.compareTo(a.at)),
-              emptyText: "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
+              conversations: [
+                if (_coachFilter == 0) ..._recentConversations(roster, records, trainerAuth, isOwner, unreadKeys),
+                ..._staffConversations(unreadKeys),
+                ..._pairConversations(),
+              ]..sort((a, b) => b.at.compareTo(a.at)),
+              emptyText: _coachFilter == 1
+                  ? "No coach chats yet. Start one with New message below."
+                  : "No conversations yet. Start one with a client below — everything you send is timestamped and logged.",
               onOpen: (clientId) {
                 if (clientId.startsWith("pair:")) {
                   _openPair(clientId.substring(5));

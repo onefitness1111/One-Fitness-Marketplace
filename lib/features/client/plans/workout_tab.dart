@@ -20,7 +20,10 @@ import "../../../data/models/workout_log.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../core/feature_flags.dart";
 import "../../shared/session_logger_view.dart";
+import "../../../data/providers/beep_providers.dart";
 import "../beep/beep_bar.dart";
+import "../beep/client_live_session_layer.dart" show coachStartedWorkoutLabel;
+import "../shell/client_shell_state.dart";
 
 /// Mirrors ClientWorkoutWithNotes.jsx: overview day list -> active logging
 /// session -> saved confirmation (SessionLoggerView, shared with the
@@ -51,6 +54,29 @@ class _NoteTarget {
 class _WorkoutTabState extends ConsumerState<WorkoutTab> {
   String? _loggingDayId;
   String? _openDayId;
+
+  /// Coach-led days already opened here, so stepping back to the program
+  /// isn't undone on the next rebuild.
+  final Set<String> _followed = {};
+
+  /// L2: when the coach starts a session, open that day in follow-along
+  /// mode. Only a day from the active program the page shows; until the
+  /// program has loaded this waits and tries again on the next build.
+  void _followCoachLedDay(ClientRecord client) {
+    final led = ref.read(coachLedDaysProvider.notifier).forClient(client.id);
+    if (led == null || _followed.contains(led.dayId)) return;
+    final programs = client.savedPrograms.where((p) => p.status == "active" && p.programDays.isNotEmpty);
+    if (programs.isEmpty || !programs.first.programDays.any((d) => d.id == led.dayId)) return;
+    _followed.add(led.dayId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _loggingDayId = led.dayId);
+    });
+  }
+
+  bool _isCoachLed(String clientId, String? dayId) {
+    if (dayId == null) return false;
+    return ref.read(coachLedDaysProvider.notifier).forClient(clientId)?.dayId == dayId;
+  }
 
   Future<void> _saveSession(WorkoutLogEntry entry) async {
     final client = ref.read(clientRecordProvider);
@@ -312,10 +338,14 @@ class _WorkoutTabState extends ConsumerState<WorkoutTab> {
   @override
   Widget build(BuildContext context) {
     final client = ref.watch(clientRecordProvider);
+    ref.watch(coachLedDaysProvider);
+    _followCoachLedDay(client);
     final Widget page;
     if (_loggingDayId != null) {
       page = Column(
         children: [
+          if (_isCoachLed(client.id, _loggingDayId))
+            const _CoachLedBanner(),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
@@ -588,6 +618,43 @@ class _ProgramDayTile extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// L2: the small banner on a coach-led workout. Following along is the
+/// page itself; this keeps "Message your coach" one tap away.
+class _CoachLedBanner extends ConsumerWidget {
+  const _CoachLedBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      key: const Key("coach-led-banner"),
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                coachStartedWorkoutLabel,
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.txt),
+              ),
+            ),
+            TextButton(
+              onPressed: () => ref.read(clientScreenProvider.notifier).go("chat"),
+              style: TextButton.styleFrom(foregroundColor: AppColors.gold),
+              child: const Text("Message your coach", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
       ),
     );
   }

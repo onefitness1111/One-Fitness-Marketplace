@@ -28,16 +28,15 @@ const kDashboardTourSteps = [
 const kDrawerTourSteps = [
   TourStep("drawer-progress", "Log Progress", "Log your weight, photos, and measurements over time."),
   TourStep("drawer-habits", "Habit Tracker", "Check off your daily habits and build your streak."),
-  TourStep("drawer-history", "History", "Every workout you've logged, all in one place."),
+  TourStep("drawer-history", "History", "Every past session and workout you've logged, all in one place."),
   TourStep("drawer-forms", "Assessments", "Fill out or review your intake and assessment forms."),
   TourStep("drawer-shop", "Shop", "Gear and extras from the gym."),
   TourStep("drawer-rewards", "Rewards", "Points you've earned, and what you can spend them on."),
-  TourStep("drawer-badges", "Merit Badges", "Badges you've earned for showing up and improving."),
   TourStep("drawer-challenges", "Challenges", "Join gym-wide challenges and see the leaderboard."),
   TourStep("drawer-squad", "My Squad", "See your training squad and their progress."),
   TourStep("drawer-signatures", "Signatures", "View your signed agreements and waivers."),
   TourStep("drawer-support", "Support", "Call the gym when you need a person, not a message."),
-  TourStep("drawer-settings", "Profile Settings", "Update your personal info and photo."),
+  TourStep("drawer-settings", "Profile Settings", "Update your personal info and photo, and see your Merit Badges."),
 ];
 
 /// A coach's first open: the menu, then the four bottom buttons.
@@ -57,9 +56,9 @@ const kCoachMenuTourSteps = [
   TourStep("staff-drawer-exercises", "Exercises", "The movement library you build programs from."),
   TourStep("staff-drawer-equipment", "Equipment Library", "What the gym has, so programs stay realistic."),
   TourStep("staff-drawer-challenges", "Challenges", "Gym-wide challenges you can run."),
-  TourStep("staff-drawer-myprofile", "My Profile", "Your photo, bio, and the name clients see."),
-  TourStep("staff-drawer-coachbadges", "Merit Badges", "Badges you earn as a coach."),
+  TourStep("staff-drawer-myprofile", "My Profile", "Your photo, bio, the name clients see, and your Merit Badge progress."),
   TourStep("staff-drawer-mypay", "My Pay", "What you've earned."),
+  TourStep("staff-drawer-calendarsync", "Calendar Sync", "Put the sessions you run on the calendar you already use."),
   TourStep("staff-drawer-support", "Support", "How to reach the gym."),
 ];
 
@@ -86,7 +85,8 @@ const kOwnerMenuTourSteps = [
   TourStep("staff-drawer-waitlist", "Waitlist", "People waiting for an open spot."),
   TourStep("staff-drawer-memberships", "Access Hub", "Plans, packages, and who can buy them."),
   TourStep("staff-drawer-products", "Products", "Things the shop sells."),
-  TourStep("staff-drawer-coaches", "Coaches", "The team, and new coaches waiting on your approval."),
+  TourStep("staff-drawer-staff", "Staff", "Every coach in one place: approval code, profiles, pay, and new coaches waiting on you."),
+  TourStep("staff-drawer-collect", "Collect Payments", "Clients who owe money, and charging what's due."),
   TourStep("staff-drawer-reports", "Reports", "Money, attendance, and how the business is doing. Just the reports."),
   TourStep("staff-drawer-platformSettings", "Customize Platform", "The gym's name, hours, and the options clients see."),
   TourStep("staff-drawer-waivers", "Waivers & Contracts", "What a client signs before they train."),

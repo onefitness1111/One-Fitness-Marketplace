@@ -4,8 +4,8 @@
 // get-calendar-link makes the old URL 404.
 //
 // A client sees the sessions they booked. A coach sees the sessions they
-// are running. The owner has no feed: an owner token answers 404, the same
-// as a token that was never issued.
+// are running. The owner sees the sessions the owner runs personally
+// (trainer_id = the owner's own profile), never every coach's (U13).
 //
 // Deploy with the login check off:
 //   supabase functions deploy calendar-feed --no-verify-jwt
@@ -15,6 +15,7 @@ import {
   CACHE_CONTROL,
   businessTimeZone,
   clientLabelForStaff,
+  calendarFeedScopeColumn,
   calendarSyncAllowed,
   esc,
   eventRevision,
@@ -57,7 +58,7 @@ serve(async (req) => {
     const isStaff = profile.role === "coach" || profile.role === "owner";
     const { data: bookings } = await admin.from("bookings")
       .select("id, date, slot_min, duration_min, session_type, discipline, location, client_id, trainer_id, updated_at")
-      .eq(isStaff ? "trainer_id" : "client_id", profile.id)
+      .eq(calendarFeedScopeColumn(profile.role), profile.id)
       .gte("date", since)
       .is("cancelled_at", null)
       .order("date");

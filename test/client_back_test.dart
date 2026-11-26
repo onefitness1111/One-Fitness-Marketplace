@@ -84,7 +84,7 @@ void main() {
     "Assessments": "forms",
     "Shop": "shop",
     "Rewards": "rewards",
-    "Merit Badges": "badges",
+    // Merit Badges opens from Profile Settings only (U5).
     "Challenges": "challenges",
     "My Squad": "squad",
     "Signatures": "signatures",

@@ -11,6 +11,7 @@
 //   supabase functions deploy get-calendar-link
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { calendarSyncAllowed } from "../_shared/calendarFeed.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -39,8 +40,10 @@ serve(async (req) => {
     const { data: profile, error: readErr } = await admin.from("profiles")
       .select("calendar_token, role").eq("id", user.id).maybeSingle();
     if (readErr) throw readErr;
-    if (profile?.role === "owner") {
-      return new Response(JSON.stringify({ error: "The owner account does not have calendar sync." }), {
+    // The owner can sync too (U13); their feed carries only the sessions
+    // they run themselves. See calendar-feed.
+    if (!calendarSyncAllowed(profile?.role)) {
+      return new Response(JSON.stringify({ error: "Calendar sync isn't available for this account." }), {
         status: 403,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       });

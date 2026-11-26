@@ -57,8 +57,8 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (!isOwner)
-          Padding(
+        // Coaches and the owner both reach Calendar Sync from here (U13).
+        Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
             child: Material(
               color: AppColors.card,

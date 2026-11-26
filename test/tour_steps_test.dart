@@ -73,7 +73,6 @@ void main() {
         "drawer-forms",
         "drawer-shop",
         "drawer-rewards",
-        "drawer-badges",
         "drawer-challenges",
         "drawer-squad",
         "drawer-signatures",
@@ -213,7 +212,7 @@ void main() {
       expect(kStaffTourKeys[s.key], isNotNull, reason: s.key);
     }
     expect(kOwnerHomeTourSteps.map((s) => s.title), contains("Staff"));
-    expect(kOwnerMenuTourSteps.map((s) => s.title), containsAll(["Reports", "Coaches", "Customize Platform", "Waivers & Contracts"]));
+    expect(kOwnerMenuTourSteps.map((s) => s.title), containsAll(["Reports", "Staff", "Collect Payments", "Customize Platform", "Waivers & Contracts"]));
     expect(kCoachHomeTourSteps.map((s) => s.title), contains("Schedule"));
   });
 

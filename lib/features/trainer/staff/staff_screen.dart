@@ -1,23 +1,20 @@
 import "package:flutter/material.dart";
 import "package:flutter_riverpod/flutter_riverpod.dart";
-import "package:lucide_flutter/lucide_flutter.dart";
 import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/utils/save_error.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/utils/date_utils.dart";
-import "../../../core/utils/domain_labels.dart";
-import "../../../core/widgets/widgets.dart";
-import "../../../data/models/availability_block.dart";
 import "../../../data/models/trainer.dart";
 import "../../../data/providers/client_providers.dart";
-import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/supabase_bootstrap_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
+import "coaches_overview_screen.dart";
 import "trainer_edit_form.dart";
 
-/// Mirrors StaffManager.jsx (owner-only) — trainer roster with add/edit
-/// in place of a modal.
+/// The owner's one Staff page (bottom-right tab). Merges the old Staff tab
+/// (StaffManager.jsx: add a trainer, edit profile/availability/pay, delete)
+/// with the old Coaches page (CoachesOverview.jsx: approval code, review new
+/// coaches, client counts, flags, password tools, badges, remove).
 class StaffScreen extends ConsumerStatefulWidget {
   const StaffScreen({super.key});
 
@@ -31,8 +28,6 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final trainers = ref.watch(trainersProvider);
-
     if (_editing != null || _creating) {
       return LocalBackScope(
         isOpen: true,
@@ -192,205 +187,16 @@ class _StaffScreenState extends ConsumerState<StaffScreen> {
       );
     }
 
+    // U7: the Staff tab and the Coaches page are one page. The roster,
+    // the coach approval code, new-coach review, password tools, badges and
+    // removal all come from CoachesOverviewScreen; adding a trainer and the
+    // full profile/availability/pay editor come from here.
     final payReady = ref.watch(trainerPayReadyProvider);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              SectionLabel("Trainers (${trainers.length})"),
-              TextButton.icon(
-                onPressed: () => setState(() => _creating = true),
-                icon: Icon(
-                  LucideIcons.plus,
-                  size: 14,
-                  color: AppColors.gold,
-                ),
-                label: Text(
-                  "Trainer",
-                  style: TextStyle(
-                    color: AppColors.gold,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          ...trainers.map((t) {
-            final disciplines = t.offeredAvailability.map((b) => b.discipline).toSet();
-            final sessionTypes = t.offeredAvailability
-                .map((b) => b.sessionType)
-                .toSet();
-            return AppCard(
-              onTap: payReady ? () => setState(() => _editing = t) : null,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Avatar(src: t.photo, name: t.name, size: 40),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          t.displayTitle,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                      Icon(
-                        LucideIcons.edit3,
-                        size: 15,
-                        color: AppColors.mute,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 5,
-                    runSpacing: 5,
-                    children: [
-                      ...sessionTypes.map(
-                        (s) => Tag(text: sessionTypeLabel(s), gold: true),
-                      ),
-                      ...disciplines.map((d) => Tag(text: disciplineLabel(d))),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  if (t.email != null)
-                    _IconLine(icon: LucideIcons.mail, text: t.email!),
-                  if (t.phone != null)
-                    _IconLine(icon: LucideIcons.phone, text: t.phone!),
-                  // A coach with no location of their own works out of the
-                  // gym's default one, so say that rather than showing nothing.
-                  if (t.locationName != null)
-                    _IconLine(icon: LucideIcons.mapPin, text: t.locationName!)
-                  else if (ref.watch(platformSettingsProvider).locationName.trim().isNotEmpty)
-                    _IconLine(
-                      icon: LucideIcons.mapPin,
-                      text: "${ref.watch(platformSettingsProvider).locationName} (gym default)",
-                    ),
-                  _IconLine(
-                    icon: LucideIcons.dollarSign,
-                    text: payReady ? _payoutSummary(t) : "Loading pay…",
-                  ),
-                  const SizedBox(height: 8),
-                  _AvailSummary(availability: t.offeredAvailability),
-                  if (t.coachCode != null && t.coachCode!.isNotEmpty)
-                    _IconLine(
-                      icon: LucideIcons.badgePercent,
-                      text: "Coach Code: ${t.coachCode}",
-                    ),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
+    return CoachesOverviewScreen(
+      editEnabled: payReady,
+      onAddTrainer: () => setState(() => _creating = true),
+      onEditTrainer: (t) => setState(() => _editing = t),
     );
   }
 }
 
-String _payoutSummary(Trainer t) {
-  final rate = "\$${(t.payoutRateCents / 100).toStringAsFixed(2)}";
-  final unit = switch (t.payoutMode) {
-    "perClient" => "client",
-    "perHour" => "hour",
-    _ => "session",
-  };
-  return "$rate/$unit";
-}
-
-const _weekdayLabels = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"};
-
-/// Mirrors FormPrimitives.jsx `AvailSummary` — a compact weekly Mon-Sat
-/// slot grid per availability block (session type/discipline label, then
-/// one line per working day of that block's open slots).
-class _AvailSummary extends StatelessWidget {
-  const _AvailSummary({required this.availability});
-  final List<AvailabilityBlock> availability;
-
-  @override
-  Widget build(BuildContext context) {
-    if (availability.isEmpty) {
-      return const _IconLine(icon: LucideIcons.clock, text: "No availability set");
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: availability.map((b) {
-        final working = _weekdayLabels.entries.where((e) => (b.byDay[e.key] ?? const []).isNotEmpty).toList();
-        if (working.isEmpty) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(LucideIcons.clock, size: 12, color: AppColors.gold),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "${sessionTypeLabel(b.sessionType)} · ${disciplineLabel(b.discipline)}",
-                      style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700),
-                    ),
-                    ...working.map((e) {
-                      final slots = [...b.byDay[e.key]!]..sort();
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: RichText(
-                          text: TextSpan(
-                            style: TextStyle(fontSize: 12, color: AppColors.mute),
-                            children: [
-                              TextSpan(
-                                text: "${e.value}  ",
-                                style: TextStyle(color: AppColors.txt, fontWeight: FontWeight.w700),
-                              ),
-                              TextSpan(text: slots.map(fmtSlotShort).join(" ")),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _IconLine extends StatelessWidget {
-  const _IconLine({required this.icon, required this.text});
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 3),
-      child: Row(
-        children: [
-          Icon(icon, size: 12, color: AppColors.mute),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: TextStyle(fontSize: 11, color: AppColors.mute),
-          ),
-        ],
-      ),
-    );
-  }
-}

@@ -108,7 +108,7 @@ void main() {
     await tester.pump();
     expect(editorOpen, findsNothing);
 
-    await tester.tap(find.text("Go to Membership Hub"));
+    await tester.tap(find.text("Go to Access Hub"));
     await tester.pump();
     expect(container.read(clientScreenProvider), "memberships");
     expect(editorOpen, findsNothing, reason: "the Hub button opened a form");

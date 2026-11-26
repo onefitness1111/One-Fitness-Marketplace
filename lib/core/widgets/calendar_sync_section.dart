@@ -13,10 +13,11 @@ import "widgets.dart";
 /// "Sync to Google Calendar" — one button that hands the client's own
 /// schedule to whatever calendar they use, and keeps it current on its own.
 ///
-/// Shared by clients (Profile Settings) and coaches (My Profile): the feed
+/// Shared by clients (Profile Settings), coaches and the owner (Calendar
+/// Sync in the staff menu / Schedule card): the feed
 /// scopes itself to whoever the token belongs to, so a client gets the
-/// sessions they booked and a coach gets the sessions they're running —
-/// nothing here needs to know which is which.
+/// sessions they booked, and a coach or the owner gets the sessions they're
+/// running themselves — nothing here needs to know which is which.
 ///
 /// The link itself is deliberately not shown. Google can be handed a
 /// subscription URL directly (calendar.google.com/calendar/r?cid=…), which
@@ -185,7 +186,8 @@ class _CalendarSyncSectionState extends ConsumerState<CalendarSyncSection> {
 
   @override
   Widget build(BuildContext context) {
-    if (ref.watch(trainerAuthProvider) == "owner") return const SizedBox.shrink();
+    // U13: the owner syncs the sessions they run themselves.
+    final isOwner = ref.watch(trainerAuthProvider) == "owner";
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -201,8 +203,11 @@ class _CalendarSyncSectionState extends ConsumerState<CalendarSyncSection> {
           ),
           const SizedBox(height: 6),
           Text(
-            "Add your sessions to the calendar you already use. New bookings, reschedules and cancellations all follow "
-            "automatically.",
+            isOwner
+                ? "Add the sessions you run yourself to the calendar you already use. New bookings, reschedules and "
+                    "cancellations all follow automatically."
+                : "Add your sessions to the calendar you already use. New bookings, reschedules and cancellations all follow "
+                    "automatically.",
             style: TextStyle(fontSize: 11, color: AppColors.mute, height: 1.4),
           ),
           const SizedBox(height: 12),

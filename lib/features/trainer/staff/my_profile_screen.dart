@@ -15,13 +15,31 @@ import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/client_providers.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "../shell/trainer_shell_state.dart";
+import "coach_merit_badges_screen.dart";
 import "trainer_edit_form.dart";
+
+/// Set right before opening My Profile from somewhere that wants a section
+/// open on arrival (My Pay's "See badge progress" link opens "badges").
+/// Read once and cleared.
+class PendingMyProfileSection extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? section) => state = section;
+}
+
+final pendingMyProfileSectionProvider =
+    NotifierProvider<PendingMyProfileSection, String?>(PendingMyProfileSection.new);
 
 /// A coach editing their own profile (App.jsx trainerMode "myprofile") —
 /// same form as Staff management, minus commission rate and delete-someone-
 /// else, plus the coach's own Account section: the Terms they agreed to,
 /// and deleting their own account (Apple guideline 5.1.1(v), which applies
 /// to every account-holding role, not just clients).
+///
+/// U8: a coach's Merit Badge progress lives here and only here — the
+/// "Merit Badges" button opens this month's progress, Coach of the Month,
+/// how badges work, and the badge history.
 class MyProfileScreen extends ConsumerStatefulWidget {
   const MyProfileScreen({super.key});
 
@@ -36,7 +54,35 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
   void _close() => setState(() => _section = null);
 
   @override
+  void initState() {
+    super.initState();
+    final pending = ref.read(pendingMyProfileSectionProvider);
+    if (pending != null) {
+      _section = pending;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(pendingMyProfileSectionProvider.notifier).set(null);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_section == "badges") {
+      return LocalBackScope(
+        isOpen: true,
+        onBack: _close,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+              child: BackBar(onBack: _close, title: "My Profile"),
+            ),
+            const Expanded(child: CoachMeritBadgesScreen()),
+          ],
+        ),
+      );
+    }
     if (_section == "blocked") {
       return LocalBackScope(
         isOpen: true,
@@ -100,13 +146,22 @@ class _MyProfileScreenState extends ConsumerState<MyProfileScreen> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 4),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => setState(() => _section = "password"),
-              style: TextButton.styleFrom(foregroundColor: AppColors.txt, padding: EdgeInsets.zero),
-              child: const Text("Change password", style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
+          child: Row(
+            children: [
+              TextButton(
+                onPressed: () => setState(() => _section = "password"),
+                style: TextButton.styleFrom(foregroundColor: AppColors.txt, padding: EdgeInsets.zero),
+                child: const Text("Change password", style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                key: const Key("my-profile-merit-badges"),
+                onPressed: () => setState(() => _section = "badges"),
+                style: TextButton.styleFrom(foregroundColor: AppColors.gold, padding: EdgeInsets.zero),
+                icon: const Icon(LucideIcons.award, size: 15),
+                label: const Text("Merit Badges", style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ],
           ),
         ),
         Expanded(

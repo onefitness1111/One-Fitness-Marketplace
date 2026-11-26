@@ -1602,7 +1602,7 @@ class _NoPlanGate extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            "Sessions are booked against a membership or package. Pick one in the Membership Hub and the full schedule opens up here.",
+            "Sessions are booked against a membership or package. Pick one in the Access Hub and the full schedule opens up here.",
             style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.5),
           ),
           const SizedBox(height: 14),

@@ -14,7 +14,6 @@ import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/web/portal_layout.dart";
 import "../../../core/web/portal_sidebar.dart";
-import "../../../core/widgets/calendar_sync_section.dart";
 import "../../../core/widgets/widgets.dart";
 import "../../../data/models/tour_step.dart";
 import "../../../data/providers/client_providers.dart";
@@ -34,11 +33,10 @@ import "../programs/program_library_page.dart";
 import "../payments/collect_payments_screen.dart";
 import "../reports/reports_hub_screen.dart";
 import "../requests/requests_screen.dart";
+import "../schedule/calendar_sync_page.dart";
 import "../schedule/schedule_screen.dart";
 import "../schedule/waitlist_screen.dart";
 import "../settings/customize_platform_screen.dart";
-import "../staff/coach_merit_badges_screen.dart";
-import "../staff/coaches_overview_screen.dart";
 import "../staff/my_pay_screen.dart";
 import "../staff/my_profile_screen.dart";
 import "../staff/staff_screen.dart";
@@ -65,7 +63,12 @@ List<PortalNavEntry> _trainerWideNav({
   required int newCoachCount,
 }) {
   final entries = <PortalNavEntry>[
-    for (final item in bottom) PortalNavEntry(item.key, item.label, item.icon),
+    for (final item in bottom)
+      PortalNavEntry(
+        item.key,
+        item.key == "staff" ? staffNavLabel(newCoachCount) : item.label,
+        item.icon,
+      ),
   ];
   void add(String id, String label, IconData icon) {
     if (entries.any((entry) => entry.id == id)) return;
@@ -82,13 +85,16 @@ List<PortalNavEntry> _trainerWideNav({
     add("builderNutrition", "Build Nutrition Program", LucideIcons.apple);
     add("memberships", "Access Hub", LucideIcons.clipboardList);
     add("products", "Products", LucideIcons.package);
-    add("coaches", newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches", LucideIcons.users);
+    // Collect Payments is always here, not only when the Dashboard tile
+    // shows up because money is owed (U2).
+    add("collect", "Collect Payments", LucideIcons.wallet);
     add("reports", "Reports", LucideIcons.clipboardCheck);
     add("platformSettings", "Customize Platform", LucideIcons.slidersHorizontal);
     add("waivers", "Waivers & Contracts", LucideIcons.fileSignature);
   } else {
+    // Badge progress lives on My Profile only (U8), so there is no
+    // separate Merit Badges entry.
     add("myprofile", "My Profile", LucideIcons.user);
-    add("coachbadges", "Merit Badges", LucideIcons.award);
     add("mypay", "My Pay", LucideIcons.clipboardCheck);
     add("calendarsync", "Calendar Sync", LucideIcons.calendar);
   }
@@ -96,14 +102,26 @@ List<PortalNavEntry> _trainerWideNav({
   return entries;
 }
 
+/// The one Staff page (U7) carries the count of coaches the owner hasn't
+/// opened yet, the way the old Coaches entry did.
+String staffNavLabel(int newCoachCount) => newCoachCount > 0 ? "Staff ($newCoachCount new)" : "Staff";
+
+/// Screen keys that were folded into another page. A stale mode, a test or
+/// an old deep link that still names one lands on the page that replaced it.
+const kTrainerModeAliases = {
+  // U7: Coaches and the Staff tab are one page now.
+  "coaches": "staff",
+  // U8: badge progress is on the coach's own profile.
+  "coachbadges": "myprofile",
+};
+
 const _titles = {
   "dashboard": "Dashboard",
   "clients": "Clients",
   "schedule": "Schedule",
   "requests": "Requests",
   "chat": "Chat",
-  "teamchat": "Team Chat",
-  "staff": "Staff settings",
+  "staff": "Staff",
   "selfbook": "Book Session",
   "challenges": "Challenges",
   "myprofile": "My Profile",
@@ -114,9 +132,7 @@ const _titles = {
   "waitlist": "Waitlist",
   "memberships": "Access Hub",
   "waivers": "Waivers & Contracts",
-  "coaches": "Coaches",
   "platformSettings": "Customize Platform",
-  "coachbadges": "Merit Badges",
   "mypay": "My Pay",
   "exercises": "Exercises",
   "equipment": "Equipment Library",
@@ -264,7 +280,8 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
 
   @override
   Widget build(BuildContext context) {
-    final mode = ref.watch(trainerModeProvider);
+    final rawMode = ref.watch(trainerModeProvider);
+    final mode = kTrainerModeAliases[rawMode] ?? rawMode;
     final trainerAuth = ref.watch(trainerAuthProvider);
     final isOwner = trainerAuth == "owner";
     if (mode == "staff" || mode == "mypay" || mode == "reports") {
@@ -272,7 +289,7 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
     }
 
     void go(String key) {
-      ref.read(trainerModeProvider.notifier).go(key);
+      ref.read(trainerModeProvider.notifier).go(kTrainerModeAliases[key] ?? key);
       _scaffoldKey.currentState?.closeDrawer();
       unawaited(ensureStaffSections(ref, key));
     }
@@ -304,12 +321,6 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // The owner has no calendar sync. A leftover mode must not keep the
-      // page title on screen.
-      if (isOwner && mode == "calendarsync") {
-        ref.read(trainerModeProvider.notifier).reset();
-        return;
-      }
       _syncHomeTour(mode, isOwner, trainerAuth);
     });
 
@@ -422,20 +433,14 @@ class _TrainerShellState extends ConsumerState<TrainerShell> {
                       "equipment" => const EquipmentLibraryScreen(),
                       "builderWorkout" => const ProgramLibraryPage(kind: LibraryKind.workout),
                       "builderNutrition" => const ProgramLibraryPage(kind: LibraryKind.nutrition),
+                      // Owner-only. The one Staff page (U7) is also where
+                      // the coach approval code is generated, so a stale
+                      // mode must never put it in front of a coach.
                       "staff" when isOwner => const StaffScreen(),
-                      // Owner-only like the rest below — this is where the
-                      // coach approval code is generated. It was the one
-                      // owner page without the guard, which is how a stale
-                      // mode could put it in front of a freshly signed-up
-                      // coach.
-                      "coaches" when isOwner => const CoachesOverviewScreen(),
                       "myprofile" => const MyProfileScreen(),
-                      "calendarsync" when !isOwner => const SingleChildScrollView(
-                        padding: EdgeInsets.all(18),
-                        child: CalendarSyncSection(),
-                      ),
-                      "calendarsync" when isOwner => const SizedBox.shrink(),
-                      "coachbadges" when !isOwner => const CoachMeritBadgesScreen(),
+                      // A coach gets the sessions they run; the owner gets
+                      // the sessions they run themselves (U13).
+                      "calendarsync" => const CalendarSyncPage(),
                       "mypay" => const MyPayScreen(),
                       "reports" when isOwner => ReportsHubScreen(
                         initialReportKey: ref.read(trainerModeProvider.notifier).pendingReportKey,
@@ -584,11 +589,13 @@ class _TrainerDrawer extends ConsumerWidget {
         .where((t) => !t.reviewedByOwner)
         .length;
     // Admin (owner) hamburger order follows a fixed spec exactly: Dashboard,
-    // Chat, Build Workout Program, Build Nutrition Program, Exercises,
-    // Challenges, Waitlist, Access/Memberships, Products, Coaches, Reports
-    // (kept — it has no other entry point in the app), Staff Settings,
-    // Customize Platform, Waivers & Contracts. Coach (non-owner) menu is a
-    // separate list, unchanged from before.
+    // Requests, Build Workout Program, Build Nutrition Program, Exercises,
+    // Equipment Library, Challenges, Waitlist, Access Hub, Products, Staff
+    // (the one merged Staff page, U7 — also the bottom-right tab),
+    // Collect Payments (always listed, U2), Reports, Customize Platform,
+    // Waivers & Contracts, Support. Coach (non-owner) menu is a separate
+    // list: badge progress lives on My Profile (U8) and Calendar Sync has
+    // its own row (U13).
     final entries = isOwner
         ? [
             _DrawerEntry(LucideIcons.dumbbell, "Dashboard", "dashboard", true),
@@ -618,10 +625,11 @@ class _TrainerDrawer extends ConsumerWidget {
             _DrawerEntry(LucideIcons.package, "Products", "products", true),
             _DrawerEntry(
               LucideIcons.users,
-              newCoachCount > 0 ? "Coaches ($newCoachCount new)" : "Coaches",
-              "coaches",
+              staffNavLabel(newCoachCount),
+              "staff",
               true,
             ),
+            const _DrawerEntry(LucideIcons.wallet, "Collect Payments", "collect", true),
             _DrawerEntry(LucideIcons.clipboardCheck, "Reports", "reports", true),
             const _DrawerEntry(LucideIcons.slidersHorizontal, "Customize Platform", "platformSettings", true),
             const _DrawerEntry(LucideIcons.fileSignature, "Waivers & Contracts", "waivers", true),
@@ -635,8 +643,8 @@ class _TrainerDrawer extends ConsumerWidget {
             _DrawerEntry(LucideIcons.wrench, "Equipment Library", "equipment", true),
             _DrawerEntry(LucideIcons.trophy, "Challenges", "challenges", true),
             _DrawerEntry(LucideIcons.user, "My Profile", "myprofile", true),
-            _DrawerEntry(LucideIcons.award, "Merit Badges", "coachbadges", true),
             _DrawerEntry(LucideIcons.clipboardCheck, "My Pay", "mypay", true),
+            _DrawerEntry(LucideIcons.calendar, "Calendar Sync", "calendarsync", true),
             _DrawerEntry(LucideIcons.phone, "Support", "support", true),
           ];
 

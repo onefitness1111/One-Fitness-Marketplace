@@ -820,7 +820,7 @@ class _MembershipTab extends StatelessWidget {
     if (ms == null) {
       return const HintBox(
         text:
-            "No shared membership or package yet. The Lead Account can assign one from the Membership Hub.",
+            "No shared membership or package yet. The Lead Account can assign one from the Access Hub.",
       );
     }
     final pct = ms.sessionsTotal > 0

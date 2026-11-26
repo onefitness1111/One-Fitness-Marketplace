@@ -4,7 +4,6 @@ import "package:lucide_flutter/lucide_flutter.dart";
 
 import "../../../core/feature_flags.dart";
 import "../../../core/theme/app_colors.dart";
-import "../../../core/widgets/session_timer.dart";
 import "../../../data/models/live_session.dart";
 import "../../../data/providers/beep_providers.dart";
 import "../../../data/providers/client_providers.dart";
@@ -23,10 +22,13 @@ bool coachLiveBarShowsBeep(CoachLedDay day, LiveSession? beepable) {
 
 /// What a client sees on every screen while their coach has a session running:
 ///
-///  * a one-time "Your session has started" window the moment the coach
-///    starts it (or when the client opens the app mid-session), and
-///  * a pinned bar with the countdown, the Beep Your Coach button and a way
-///    to message the coach, for as long as the session is live.
+///  * the moment the coach starts it (or when the client opens the app
+///    mid-session), the app goes straight to Plans > Workout and opens the
+///    coach-led day in follow-along mode (L2) — no pop-up first, and
+///  * a pinned bar with the Beep Your Coach button (only while
+///    kBeepYourCoachEnabled) and a way to message the coach, on every other
+///    screen for as long as the session is live. On Plans the workout page
+///    carries its own small "Message your coach" banner.
 ///
 /// Both are driven by [liveSessionsProvider], which the realtime channel on
 /// `session_runs` keeps current. RLS only returns sessions the client is
@@ -51,88 +53,29 @@ class ClientLiveSessionLayer extends ConsumerStatefulWidget {
 }
 
 class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer> {
-  /// Runs already announced, so the window opens once per session.
+  /// Coach-led days already opened, so the logging page opens once per
+  /// session and a client who steps away isn't pulled back on every rebuild.
   final Set<String> _announced = {};
 
   @override
   void initState() {
     super.initState();
+    // Opening the app mid-session goes straight to the workout too.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final clientId = ref.read(clientInfoProvider).id;
-      final led = ref.read(coachLedDaysProvider.notifier).forClient(clientId);
-      if (led != null && !_announced.contains(led.dayId)) {
-        _announced.add(led.dayId);
-        LiveSession? run;
-        for (final r in ref.read(liveSessionsProvider)) {
-          if (r.isLive) {
-            run = r;
-            break;
-          }
-        }
-        _showStartedDialog(run);
-      }
+      _openIfNew(ref.read(coachLedDaysProvider.notifier).forClient(clientId));
     });
   }
 
-  Future<void> _showStartedDialog(LiveSession? run) {
-    return showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: AppColors.card,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(LucideIcons.play, size: 20, color: AppColors.gold),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      "Your session has started",
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                kBeepYourCoachEnabled
-                    ? "Your coach has started the session. Head over — you can beep "
-                        "or message them from here at any time."
-                    : "Your coach has started the session. Head over — you can message them from here at any time.",
-                style: TextStyle(fontSize: 12.5, color: AppColors.mute, height: 1.4),
-              ),
-              if (run != null) ...[
-                const SizedBox(height: 12),
-                SessionTimer(run: run, label: "SESSION LIVE"),
-              ],
-              if (kBeepYourCoachEnabled) ...[
-                const SizedBox(height: 14),
-                const BeepBar(exerciseNames: [], focusIndex: 0),
-              ],
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  widget.onOpenChat();
-                },
-                icon: const Icon(LucideIcons.messageSquare, size: 16),
-                label: const Text("Message your coach"),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text("Close"),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  /// L2: when the coach starts the session the client lands on Plans >
+  /// Workout with the coach-led day open in follow-along mode (WorkoutTab
+  /// opens the day itself). No pop-up in between; a small banner keeps
+  /// "Message your coach" one tap away.
+  void _openIfNew(CoachLedDay? led) {
+    if (led == null || _announced.contains(led.dayId)) return;
+    _announced.add(led.dayId);
+    widget.onOpenWorkout?.call();
   }
 
   @override
@@ -146,17 +89,7 @@ class _ClientLiveSessionLayerState extends ConsumerState<ClientLiveSessionLayer>
           break;
         }
       }
-      if (led == null || _announced.contains(led.dayId)) return;
-      _announced.add(led.dayId);
-      LiveSession? run;
-      for (final r in ref.read(liveSessionsProvider)) {
-        if (r.isLive) {
-          run = r;
-          break;
-        }
-      }
-      _showStartedDialog(run);
-      widget.onOpenWorkout?.call();
+      _openIfNew(led);
     });
 
     final clientId = ref.watch(clientInfoProvider).id;

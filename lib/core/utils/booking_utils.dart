@@ -404,7 +404,7 @@ BookingCheck canBookOffering(
   if (info.isStaff) return const BookingCheck(ok: true);
 
   if (plans.isEmpty) {
-    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Membership Hub to get started.", noMembership: true);
+    return const BookingCheck(ok: false, reason: "no-membership", msg: "You need a membership to book this. Visit the Access Hub to get started.", noMembership: true);
   }
   // Only the frozen days are blocked: from the start day up to, not
   // including, the end day. A day after the freeze can be booked during it,

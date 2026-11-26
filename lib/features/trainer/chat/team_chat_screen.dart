@@ -8,7 +8,7 @@ import "../../../core/utils/chat_channels.dart";
 import "../../../core/utils/notification_triggers.dart";
 import "../../../core/widgets/widgets.dart";
 
-/// Team Chat: coaches message each other and the business contact
+/// Coach Chats: coaches message each other and the business contact
 /// (ONE Fitness Marketplace). Marketplace messages reach the owner and go
 /// by In app or Email only, never SMS. A coach does not get a separate
 /// owner person in this list. The owner still messages coaches directly.
@@ -157,7 +157,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
       });
       _toBottom();
     } catch (e) {
-      if (mounted && !quiet) setState(() => _error = "Couldn't load Team Chat — check your connection.");
+      if (mounted && !quiet) setState(() => _error = "Couldn't load Coach Chats — check your connection.");
     } finally {
       if (mounted && _loading) setState(() => _loading = false);
     }

@@ -188,7 +188,7 @@ class BookingDeniedScreen extends StatelessWidget {
                 children: [
                   Icon(LucideIcons.creditCard, size: 15, color: AppColors.onGold),
                   SizedBox(width: 6),
-                  Text("Go to Membership Hub"),
+                  Text("Go to Access Hub"),
                 ],
               ),
             ),
