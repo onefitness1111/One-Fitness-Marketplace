@@ -5,6 +5,33 @@ import "../../../core/widgets/widgets.dart";
 import "../../../data/models/intake_schema.dart";
 import "intake_attachments.dart";
 
+/// Above Edit answers. Every save files a new copy and keeps this one (L3).
+const kEditKeepsCopyHint =
+    "Editing files a new copy with today's date. These answers stay saved "
+    "under Archived, and the newest copy is the one in use.";
+
+/// Answers whose question isn't on [schema], keyed as stored. Empty values
+/// are left out.
+Map<String, dynamic> answersNotOnForm(IntakeSchema schema, Map<String, dynamic> answers) {
+  final ids = {for (final s in schema.sections) for (final q in s.questions) q.id};
+  return {
+    for (final e in answers.entries)
+      if (!ids.contains(e.key) && e.value != null && "${e.value}".trim().isNotEmpty && !(e.value is List && (e.value as List).isEmpty))
+        e.key: e.value,
+  };
+}
+
+/// "main_goal" or "mainGoal" as "Main goal".
+String readableAnswerKey(String key) {
+  final spaced = key
+      .replaceAllMapped(RegExp(r"([a-z0-9])([A-Z])"), (m) => "${m[1]} ${m[2]}")
+      .replaceAll(RegExp(r"[_\-]+"), " ")
+      .trim()
+      .toLowerCase();
+  if (spaced.isEmpty) return key;
+  return spaced[0].toUpperCase() + spaced.substring(1);
+}
+
 /// A client's completed intake, laid out for reading rather than filling in.
 ///
 /// Staff reach every assessment through the same screens the client uses, and
@@ -32,7 +59,11 @@ class IntakeAnswersScreen extends StatefulWidget {
     this.onFillAgain,
     this.schemaFor,
     this.initialViewing = 0,
+    this.readOnly = false,
   });
+
+  /// Opened from Archived: nothing here can be edited or re-filed.
+  final bool readOnly;
 
   final IntakeSchema schema;
   final IntakeRecord record;
@@ -166,6 +197,28 @@ class _IntakeAnswersScreenState extends State<IntakeAnswersScreen> {
               ),
             );
           }),
+          // Answers to questions that are no longer on this version of the
+          // form (a retired question, or a version that can't be found) are
+          // still shown, so nothing a client said ever disappears.
+          if (answersNotOnForm(schema, answers).isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "OTHER ANSWERS ON FILE",
+                    style: TextStyle(fontSize: 11, color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 1),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final e in answersNotOnForm(schema, answers).entries)
+                    _AnswerRow(
+                      question: IntakeQuestion(id: e.key, label: readableAnswerKey(e.key), type: "text"),
+                      value: e.value,
+                    ),
+                ],
+              ),
+            ),
           if (_attachments.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 22),
@@ -182,16 +235,10 @@ class _IntakeAnswersScreenState extends State<IntakeAnswersScreen> {
           // is a record of what was said at the time — there is nothing
           // sensible to write back to, and offering Edit here would imply you
           // could rewrite history.
-          if (_isCurrent) ...[
-            HintBox(
-              text: widget.onFillAgain == null
-                  ? "Editing this re-files the form under your name and today's "
-                      "date, replacing the record of who filled it in and when."
-                  : "Editing corrects what's on record. Start new intake files "
-                      "another copy, with these answers already filled in so "
-                      "only what changed has to be updated. The earlier copy "
-                      "stays readable.",
-            ),
+          if (_isCurrent && widget.readOnly) ...[
+            const HintBox(text: "Read-only here. These answers are kept exactly as they were filed. An active form is edited from the form list."),
+          ] else if (_isCurrent) ...[
+            const HintBox(text: kEditKeepsCopyHint),
             const SizedBox(height: 10),
             BtnGhost(
               onPressed: widget.onEdit,

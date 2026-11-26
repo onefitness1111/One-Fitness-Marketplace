@@ -161,12 +161,9 @@ void main() {
       expect(find.text("Tell us about the injury"), findsOneWidget);
     });
 
-    testWidgets("warns that editing overwrites who filled it in", (tester) async {
+    testWidgets("says editing keeps the earlier answers (L3)", (tester) async {
       await pump(tester, const IntakeRecord(answers: {}, completed: true, by: "Client"));
-      expect(
-        find.textContaining("re-files the form under your name"),
-        findsOneWidget,
-      );
+      expect(find.textContaining("These answers stay saved"), findsOneWidget);
     });
 
     testWidgets("editing is a deliberate tap, not the default", (tester) async {
@@ -333,15 +330,15 @@ void main() {
       expect(find.text("Add another"), findsNothing);
     });
 
-    testWidgets("the hint explains the difference when both are offered", (tester) async {
+    testWidgets("both paths keep a copy, and the hint says so (L3)", (tester) async {
       await pump(tester, onFillAgain: () {});
-      expect(find.textContaining("Start new intake files"), findsOneWidget);
+      expect(find.textContaining("These answers stay saved"), findsOneWidget);
     });
 
-    testWidgets("and doesn't mention re-filling when it isn't on offer", (tester) async {
+    testWidgets("no wording suggests an edit replaces the record", (tester) async {
       await pump(tester);
       expect(find.textContaining("Add another"), findsNothing);
-      expect(find.textContaining("replacing the record"), findsOneWidget);
+      expect(find.textContaining("replacing the record"), findsNothing);
     });
 
     testWidgets("Add another is what fires the fresh-submission path", (tester) async {

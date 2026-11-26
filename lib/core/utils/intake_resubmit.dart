@@ -20,6 +20,11 @@ String programRefreshLabel(String kind, {required bool forOwner}) {
       : "New training program needed";
 }
 
+/// Shown when an intake save fails. The save is all-or-nothing, so the
+/// earlier answers are still on record and trying again is safe.
+const intakeSaveFailedMessage =
+    "Couldn't save. Nothing was changed, and the earlier answers are still on file. Please try again.";
+
 /// A correction of the filing already on record does not ask for a new
 /// program. The first completion does, and so does an explicit resubmit.
 bool shouldFlagProgramRefresh({

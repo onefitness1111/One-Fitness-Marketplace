@@ -3568,180 +3568,35 @@ class SupabaseService {
       ...entry,
       "attachments": [for (final a in attachments) a.toJson()],
     };
-    try {
-      await client.rpc("patch_client_intake", params: {
-        "p_client": profileId,
-        "p_assessment": assessmentKey,
-        "p_entry": nextEntry,
-      });
-    } catch (_) {
-      await client.from("client_records").upsert({
-        "profile_id": profileId,
-        "data": {
-          ...current,
-          "intake": {
-            ...currentIntake,
-            assessmentKey: nextEntry,
-          },
-        },
-      });
-    }
+    // No whole-record fallback (L5): if this fails, the caller says so and
+    // nothing else on the record is touched.
+    await client.rpc("patch_client_intake", params: {
+      "p_client": profileId,
+      "p_assessment": assessmentKey,
+      "p_entry": nextEntry,
+    });
   }
 
-  /// Saves one intake form.
+  /// Saves one intake filing, all or nothing (L3, L5).
   ///
-  /// [keepPrevious] archives whatever completed submission is already on the
-  /// row before writing this one, so the earlier answers stay readable — pass
-  /// it when a questionnaire is being submitted. It is off by default because
-  /// the physical assessment re-saves itself with `completed: true` every
-  /// time a coach touches a note, and each of those is the same submission
-  /// being edited, not a new one; archiving them would bury the real
-  /// re-intakes under a pile of near-identical copies.
-  static Future<void> updateClientIntake(
+  /// One call to submit_client_intake, which locks the record, moves any
+  /// completed filing already on record into `history` (no cap), writes this
+  /// one as current, and mirrors both into intake_submissions, in a single
+  /// transaction. There is no fallback write: if the call fails, nothing has
+  /// changed and the caller shows an error to try again. Returns the entry as
+  /// the server saved it, history included.
+  static Future<IntakeRecord> updateClientIntake(
     String profileId,
     String assessmentKey,
-    IntakeRecord record, {
-    bool keepPrevious = false,
-  }) async {
-    final row = await client
-        .from("client_records")
-        .select("data")
-        .eq("profile_id", profileId)
-        .maybeSingle();
-    final current = (row?["data"] as Map?)?.cast<String, dynamic>() ?? const {};
-    // Some rows carry `intake` as a stale `[]` instead of `{}` (see the same
-    // check in _clientRecordFromJson) — `as Map?` throws on those, so every
-    // save for that client failed silently as "couldn't save".
-    final intakeField = current["intake"];
-    final currentIntake =
-        intakeField is Map ? intakeField.cast<String, dynamic>() : const <String, dynamic>{};
-    // What's on the row right now, which is what gets archived — not
-    // `record.history`. The caller's copy came from a roster load that may be
-    // minutes old; this one was read a line ago, same fetch-then-merge
-    // reasoning as the rest of this method.
-    final priorRaw = currentIntake[assessmentKey];
-    final prior = priorRaw is Map ? priorRaw.cast<String, dynamic>() : null;
-    final priorHistory =
-        ((prior?["history"] as List?) ?? const []).whereType<Map>().toList();
-    final nextHistory = keepPrevious && prior?["completed"] == true
-        ? [
-            {
-              "answers": prior?["answers"] ?? const <String, dynamic>{},
-              "at": prior?["at"],
-              "by": prior?["by"],
-              "attachments": prior?["attachments"] ?? const [],
-              "archivedAt": record.at,
-              "extra": {
-                for (final entry in prior!.entries)
-                  if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
-              },
-            },
-            ...priorHistory,
-          ]
-        : priorHistory;
-
-    final nextIntake = {
-      ...currentIntake,
-      assessmentKey: {
-        // Spread first so the modelled fields below always win — `extra` is
-        // only ever the keys this app doesn't model.
-        ...record.extra,
-        "answers": record.answers,
-        "completed": record.completed,
-        "at": record.at,
-        "by": record.by,
-        "attachments": [for (final a in record.attachments) a.toJson()],
-        if (nextHistory.isNotEmpty) "history": nextHistory,
-      },
-    };
-    try {
-      await client.rpc("patch_client_intake", params: {
-        "p_client": profileId,
-        "p_assessment": assessmentKey,
-        "p_entry": nextIntake[assessmentKey],
-      });
-    } catch (_) {
-      await client.from("client_records").upsert({
-        "profile_id": profileId,
-        "data": {...current, "intake": nextIntake},
-      });
-    }
-    await _syncIntakeSubmissions(
-      profileId: profileId,
-      assessmentKey: assessmentKey,
-      prior: prior,
-      record: record,
-      keepPrevious: keepPrevious && prior?["completed"] == true,
-    );
-  }
-
-  /// Best-effort copy into intake_submissions. The JSON on client_records
-  /// remains the current filing, so a build that predates this table still
-  /// reads the latest answers. A missing table is ignored.
-  static Future<void> _syncIntakeSubmissions({
-    required String profileId,
-    required String assessmentKey,
-    required Map<String, dynamic>? prior,
-    required IntakeRecord record,
-    required bool keepPrevious,
-  }) async {
-    try {
-      final closed = await client
-          .from("intake_submissions")
-          .update({
-            "archived_at": DateTime.now().toUtc().toIso8601String(),
-            "archived_by": currentUser?.id,
-          })
-          .eq("client_id", profileId)
-          .eq("assessment_key", assessmentKey)
-          .isFilter("archived_at", null)
-          .select("id");
-      final closedCount = closed.length;
-      if (keepPrevious && closedCount == 0 && prior != null) {
-        final answers = prior["answers"];
-        final extra = {
-          for (final entry in prior.entries)
-            if (!IntakeRecord.knownKeys.contains(entry.key)) entry.key: entry.value,
-        };
-        await client.from("intake_submissions").insert({
-          "client_id": profileId,
-          "assessment_key": assessmentKey,
-          "answers": answers is Map ? answers : const {},
-          "completed": true,
-          "completed_at": prior["at"],
-          "completed_by": prior["by"],
-          "archived_at": DateTime.now().toUtc().toIso8601String(),
-          "archived_by": currentUser?.id,
-          "attachments": prior["attachments"] ?? const [],
-          "extra": extra,
-        });
-      }
-      await _insertCurrentIntakeSubmission(
-        profileId: profileId,
-        assessmentKey: assessmentKey,
-        record: record,
-      );
-    } catch (_) {}
-  }
-
-  static Future<void> _insertCurrentIntakeSubmission({
-    required String profileId,
-    required String assessmentKey,
-    required IntakeRecord record,
-  }) async {
-    try {
-      await client.from("intake_submissions").insert({
-        "client_id": profileId,
-        "assessment_key": assessmentKey,
-        "answers": record.answers,
-        "completed": record.completed,
-        "completed_at": record.at,
-        "completed_by": record.by,
-        "attachments": [for (final a in record.attachments) a.toJson()],
-        "template_version": record.templateVersion,
-        "extra": record.extra,
-      });
-    } catch (_) {}
+    IntakeRecord record,
+  ) async {
+    final saved = await client.rpc("submit_client_intake", params: {
+      "p_client": profileId,
+      "p_assessment": assessmentKey,
+      "p_entry": record.toEntry(),
+    });
+    if (saved is Map) return IntakeRecord.fromEntry(saved.cast<String, dynamic>());
+    return record;
   }
 
   static Future<void> flagProgramRefresh(String profileId, String kind) async {
@@ -6875,36 +6730,9 @@ class SupabaseService {
       intake: Map.fromEntries(
         intakeRaw.entries.where((e) => e.value is Map).map((e) {
           final m = (e.value as Map).cast<String, dynamic>();
-          final answersField = m["answers"];
           return MapEntry(
             e.key,
-            IntakeRecord(
-              answers: answersField is Map
-                  ? answersField.cast<String, dynamic>()
-                  : const <String, dynamic>{},
-              completed: m["completed"] as bool? ?? false,
-              at: m["at"] as String?,
-              by: m["by"] as String?,
-              attachments: ((m["attachments"] as List?) ?? const [])
-                  .whereType<Map>()
-                  .map((a) => IntakeAttachment.fromJson(a.cast<String, dynamic>()))
-                  .whereType<IntakeAttachment>()
-                  .toList(),
-              // Submissions this one replaced. Absent on every record written
-              // before re-filling kept history, and on anything the web app
-              // writes — an empty list is the right reading of both.
-              history: ((m["history"] as List?) ?? const [])
-                  .whereType<Map>()
-                  .map((h) => IntakeSubmission.fromJson(h.cast<String, dynamic>()))
-                  .toList(),
-              // The physical assessment's own fields, and anything else the
-              // web app writes here — kept so a save from this app can put
-              // them back instead of dropping them.
-              extra: {
-                for (final e in m.entries)
-                  if (!IntakeRecord.knownKeys.contains(e.key)) e.key: e.value,
-              },
-            ),
+            IntakeRecord.fromEntry(m),
           );
         }),
       ),
