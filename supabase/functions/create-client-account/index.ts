@@ -34,8 +34,11 @@ serve(async (req) => {
   try {
     const {
       name, firstName, lastName, email, phone, city, birthday,
-      password: chosenPassword, photo, coachCode, primaryTrainerId,
+      password: chosenPassword, photo, coachCode,
     } = await req.json();
+    // primaryTrainerId from older app builds is ignored: clients are never
+    // assigned to a coach (no primary_trainer_id). Every coach and the owner
+    // see every client.
     const cleanFirst = String(firstName ?? "").trim();
     const cleanLast = String(lastName ?? "").trim();
     // Same shape the client's own signup produces: split names stored
@@ -74,8 +77,9 @@ serve(async (req) => {
     // signup screen enforces.
     const password = String(chosenPassword ?? "").length >= 6 ? String(chosenPassword) : tempPassword();
 
-    // A coach code links the client to that coach, exactly as the client's
-    // own signup does — a typo just means no link, never a failed account.
+    // A coach code records which coach referred the client (referral credit
+    // only, not an assignment) — a typo just means no credit, never a failed
+    // account.
     let codeTrainerId: string | null = null;
     const cleanCode = String(coachCode ?? "").trim();
     if (cleanCode) {
@@ -114,16 +118,12 @@ serve(async (req) => {
     if (profileErr) throw profileErr;
 
     // trg_ensure_client_row creates this too, but doing it explicitly means
-    // the city/coach fields land in the same write rather than needing a
-    // second one.
+    // the city/referral fields land in the same write rather than needing a
+    // second one. primary_trainer_id is never written.
     const { error: clientErr } = await admin.from("clients").upsert({
       profile_id: newId,
       city: String(city ?? "").trim() || null,
       birthday: String(birthday ?? "").trim() || null,
-      // Precedence: an explicit pick, then a coach code, then — for a
-      // coach adding someone — themselves. An owner with neither leaves
-      // the client unassigned.
-      primary_trainer_id: primaryTrainerId ?? codeTrainerId ?? (me.role === "coach" ? user.id : null),
       ...(codeTrainerId ? { referred_by_trainer_id: codeTrainerId } : {}),
     });
     if (clientErr) throw clientErr;

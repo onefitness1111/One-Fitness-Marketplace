@@ -4965,7 +4965,6 @@ class SupabaseService {
     String? password,
     String? photo,
     String? coachCode,
-    String? primaryTrainerId,
   }) =>
       _invokeFunction("create-client-account", {
         "name": name,
@@ -4979,7 +4978,6 @@ class SupabaseService {
         if (city != null && city.trim().isNotEmpty) "city": city.trim(),
         if (state != null && state.trim().isNotEmpty) "state": state.trim(),
         if (birthday != null && birthday.trim().isNotEmpty) "birthday": birthday.trim(),
-        if (primaryTrainerId != null) "primaryTrainerId": primaryTrainerId,
       });
 
   /// Merchandise orders. RLS scopes the result by itself — a client gets
