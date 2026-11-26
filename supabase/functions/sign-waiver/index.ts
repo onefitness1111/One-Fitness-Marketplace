@@ -33,7 +33,8 @@ const STRUCTURAL_RE = /\{\{\s*(initial|signature|guardian_signature|photo_opt_ou
 const TOKEN_RE = /\{\{\s*([a-zA-Z_]+)\s*\}\}/g;
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  // Copy into a plain ArrayBuffer-backed view for the WebCrypto typings.
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const sha256Text = (t: string) => sha256Hex(new TextEncoder().encode(t));

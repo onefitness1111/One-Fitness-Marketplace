@@ -28,7 +28,9 @@ const THIRTY_DAYS_MS = 1000 * 60 * 60 * 24 * 30;
 // _shared/ is for the pure FIFO calculator six call sites genuinely need
 // identically; this DB-touching clawback is small enough that keeping each
 // function self-contained (this app's existing convention) wins out.
-async function clawbackReferral(admin: ReturnType<typeof createClient>, referredClientId: string, reasonSuffix: string) {
+// Untyped client (no generated DB types in this repo); type-only change.
+// deno-lint-ignore no-explicit-any
+async function clawbackReferral(admin: any, referredClientId: string, reasonSuffix: string) {
   const { data: referralRow } = await admin.from("points_ledger")
     .select("*").eq("source", "referral").eq("source_ref_id", referredClientId).eq("type", "earn").maybeSingle();
   if (!referralRow) return;
