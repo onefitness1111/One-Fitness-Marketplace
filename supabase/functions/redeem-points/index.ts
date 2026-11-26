@@ -56,7 +56,9 @@ serve(async (req) => {
 
     const { data: allRows } = await admin.from("points_ledger").select("*").eq("client_id", clientId);
     const { lots } = replayLedger(allRows || []);
-    const plan = planRedemption(lots, new Date(), { capPoints: 40, minPoints: 40 });
+    // One redemption: at least 40 points, at most 100 (the same 40..100
+    // bounds as checkout). The balance itself is unlimited.
+    const plan = planRedemption(lots, new Date(), { capPoints: 100, minPoints: 40 });
     if (!plan) throw new Error("Not enough points to redeem — a minimum of 40 points is required.");
 
     const discountCents = pointsToDiscountCents(plan.points, priceCents);
