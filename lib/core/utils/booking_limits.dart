@@ -1,6 +1,7 @@
 import "package:supabase_flutter/supabase_flutter.dart"
     show FunctionException, PostgrestException;
 
+import "../payments/outstanding_balance.dart";
 import "date_utils.dart";
 
 /// How the live `enforce_booking_limits` trigger refused an insert.
@@ -127,15 +128,8 @@ String moveFailureMessage(Object error, {required String whatFailed}) {
 /// and only by the public coach name the caller already chose.
 String clientBookingErrorMessage(Object error) {
   final text = bookingErrorText(error);
-  if (text.contains("BALANCE_DUE")) {
-    final start = text.indexOf("You have an outstanding balance");
-    if (start >= 0) {
-      final end = text.indexOf("book sessions.");
-      if (end > start)
-        return text.substring(start, end + "book sessions.".length);
-    }
-    return "You have an outstanding balance. Please pay your balance to book sessions.";
-  }
+  final balanceMsg = unpaidBalanceErrorMessage(text);
+  if (balanceMsg != null) return balanceMsg;
   if (text.contains("waiver-required")) {
     return "Please sign the waiver under Signatures (in the menu) before booking.";
   }

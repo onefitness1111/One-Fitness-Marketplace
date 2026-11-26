@@ -9,28 +9,38 @@ import "../../../core/widgets/widgets.dart";
 import "../../../data/providers/dashboard_extras.dart";
 import "../../../data/providers/platform_settings_provider.dart";
 
-/// True when booking must stop. The sheet is the notice, with Pay now.
-Future<bool> stopForOutstandingBalance(BuildContext context, String clientId) async {
-  final cents = await unpaidBalanceCents(clientId);
+/// True when booking or joining a waitlist must stop. Uses the single shared
+/// balance check and opens the Pay now sheet when blocked.
+Future<bool> stopForOutstandingBalance(
+  BuildContext context,
+  String clientId, {
+  bool isWaitlist = false,
+}) async {
+  final cents = await unpaidBalanceCents(clientId, isWaitlist: isWaitlist);
   if (cents == null || !context.mounted) return cents != null;
   await showOutstandingBalanceSheet(context, balanceCents: cents);
   return true;
 }
 
 /// Shown every time a client tries to book while they owe a fee.
-Future<void> showOutstandingBalanceSheet(BuildContext context, {required int balanceCents}) {
+Future<void> showOutstandingBalanceSheet(
+  BuildContext context, {
+  required int balanceCents,
+  String? message,
+}) {
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: AppColors.card,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (ctx) => _BalanceDueSheet(balanceCents: balanceCents),
+    builder: (ctx) => _BalanceDueSheet(balanceCents: balanceCents, message: message),
   );
 }
 
 class _BalanceDueSheet extends ConsumerStatefulWidget {
-  const _BalanceDueSheet({required this.balanceCents});
+  const _BalanceDueSheet({required this.balanceCents, this.message});
 
   final int balanceCents;
+  final String? message;
 
   @override
   ConsumerState<_BalanceDueSheet> createState() => _BalanceDueSheetState();
@@ -70,7 +80,7 @@ class _BalanceDueSheetState extends ConsumerState<_BalanceDueSheet> {
             const Text("Outstanding balance", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             Text(
-              outstandingBalanceMessage(widget.balanceCents),
+              widget.message ?? outstandingBalanceMessage(widget.balanceCents),
               style: TextStyle(fontSize: 13.5, color: AppColors.txt, height: 1.4),
             ),
             if (_error != null) ...[

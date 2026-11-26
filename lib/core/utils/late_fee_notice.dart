@@ -50,11 +50,15 @@ String? lateFeeNotice(Map<String, dynamic>? res) {
   return "Cancelled. ${outstandingBalanceMessage(cents)} Your session is back on your plan.";
 }
 
-/// Null when the client may book. The database enforces the same rule.
-Future<int?> unpaidBalanceCents(String clientId) async {
+/// Null when the client may book. Uses the single shared balance check.
+Future<int?> unpaidBalanceCents(String clientId, {bool isWaitlist = false}) async {
   try {
-    final cents = await SupabaseService.loadBalanceCents(clientId);
-    if (cents < 0) return cents;
+    final check = await SupabaseService.checkBookingBalance(
+      clientId,
+      isWaitlist: isWaitlist,
+      isSelf: true,
+    );
+    if (!check.allowed && check.owes) return check.balanceCents;
   } catch (_) {
     // Offline: the database re-checks when the booking is saved.
   }
@@ -62,8 +66,16 @@ Future<int?> unpaidBalanceCents(String clientId) async {
 }
 
 /// Null when the client may book; otherwise the sentence they are shown.
-Future<String?> bookingBlockMessage(String clientId) async {
-  final cents = await unpaidBalanceCents(clientId);
-  if (cents == null) return null;
-  return outstandingBalanceMessage(cents);
+Future<String?> bookingBlockMessage(String clientId, {bool isWaitlist = false}) async {
+  try {
+    final check = await SupabaseService.checkBookingBalance(
+      clientId,
+      isWaitlist: isWaitlist,
+      isSelf: true,
+    );
+    if (check.allowed) return null;
+    return check.message ?? outstandingBalanceMessage(check.balanceCents);
+  } catch (_) {
+    return null;
+  }
 }

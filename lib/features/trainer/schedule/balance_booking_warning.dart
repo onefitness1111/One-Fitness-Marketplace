@@ -15,18 +15,20 @@ Future<bool> confirmStaffBalanceAdd(
   required bool isOwner,
   Future<String?> Function(String clientId)? chargeBalance,
 }) async {
-  final hold = await SupabaseService.loadBookingHold(clientId);
-  final gate = BalanceGate(balanceCents: hold.balanceCents, graceUsed: hold.graceUsed);
-  final decision = staffAddDecision(isOwner: isOwner, gate: gate);
-  if (decision == StaffAdd.clear) return true;
+  final check = await SupabaseService.checkBookingBalance(
+    clientId,
+    isSelf: false,
+    isOwner: isOwner,
+    isCoach: !isOwner,
+  );
+  if (!check.owes) return true;
   if (!context.mounted) return false;
-  final choices = staffBalanceChoices(isOwner: isOwner, gate: gate);
   final go = await showDialog<bool>(
     context: context,
     builder: (ctx) => StaffBalanceDialog(
-      warning: staffBalanceWarning(gate.balanceCents),
-      bookAnywayEnabled: choices.bookAnywayEnabled,
-      blockedNote: choices.note,
+      warning: check.message ?? staffBalanceWarning(check.balanceCents),
+      bookAnywayEnabled: check.allowed,
+      blockedNote: check.allowed ? null : kCoachGraceUsedNote,
       onCharge: () => (chargeBalance ?? SupabaseService.chargeOutstandingOnFile)(clientId),
     ),
   );
@@ -201,10 +203,7 @@ class _BalanceButton extends StatelessWidget {
 }
 
 /// Pulls the warning sentence out of a server refusal.
-String staffBalanceWarningFromError(String text) {
-  final start = text.indexOf("This client has an outstanding balance");
-  if (start < 0) return "This client has an outstanding balance.";
-  final end = text.indexOf(".", start);
-  if (end < 0) return text.substring(start);
-  return text.substring(start, end + 1);
-}
+String staffBalanceWarningFromError(String text) =>
+    unpaidBalanceErrorMessage(text) ?? "This client has an outstanding balance.";
+
+bool isUnpaidBalanceError(Object error) => unpaidBalanceErrorMessage(error) != null;

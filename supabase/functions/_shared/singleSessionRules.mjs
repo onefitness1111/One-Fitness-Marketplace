@@ -48,18 +48,77 @@ export function afterSingleSessionPayment(booked) {
     : { settleBalance: false, refundWholeCharge: true };
 }
 
+// Canonical unpaid-balance decision mirroring SQL public.unpaid_balance_rule.
+export function evaluateUnpaidBalance({
+  balanceCents,
+  graceUsed = false,
+  isSelf = false,
+  role = "client",
+  target = "booking",
+}) {
+  const owes = Number(balanceCents ?? 0) < 0;
+  if (!owes) {
+    return { allowed: true, code: "OK", message: null, consumeGrace: false, canOverride: false };
+  }
+  const amount = money(balanceCents);
+  if (target === "waitlist") {
+    if (!isSelf && (role === "owner" || role === "coach")) {
+      return { allowed: true, code: "OK", message: null, consumeGrace: false, canOverride: true };
+    }
+    return {
+      allowed: false,
+      code: "BALANCE_DUE",
+      message: `You have an outstanding balance of ${amount}. Please pay your balance to book sessions.`,
+      consumeGrace: false,
+      canOverride: false,
+    };
+  }
+  if (!isSelf && role === "owner") {
+    return {
+      allowed: true,
+      code: "BALANCE_OWNER_OVERRIDE",
+      message: `This client has an outstanding balance of ${amount}.`,
+      consumeGrace: false,
+      canOverride: true,
+    };
+  }
+  if (!isSelf && role === "coach") {
+    if (graceUsed === true) {
+      return {
+        allowed: false,
+        code: "BALANCE_GRACE_USED",
+        message: `This client has an outstanding balance of ${amount}.`,
+        consumeGrace: false,
+        canOverride: false,
+      };
+    }
+    return {
+      allowed: true,
+      code: "BALANCE_COACH_GRACE",
+      message: `This client has an outstanding balance of ${amount}.`,
+      consumeGrace: true,
+      canOverride: true,
+    };
+  }
+  return {
+    allowed: false,
+    code: "BALANCE_DUE",
+    message: `You have an outstanding balance of ${amount}. Please pay your balance to book sessions.`,
+    consumeGrace: false,
+    canOverride: false,
+  };
+}
+
 // Free adds only. A paid single session is not a grace booking.
 // Owner: any number of free adds. Coach: one while the balance is unpaid.
 export function staffMayAddSingle({ role, balanceCents, graceUsed }) {
-  const owes = Number(balanceCents ?? 0) < 0;
-  if (!owes) return { ok: true, consumeGrace: false };
-  if (role === "owner") return { ok: true, consumeGrace: false };
-  if (role === "coach" && graceUsed !== true) return { ok: true, consumeGrace: true };
+  const decision = evaluateUnpaidBalance({ balanceCents, graceUsed, isSelf: false, role, target: "booking" });
+  if (decision.allowed) return { ok: true, consumeGrace: decision.consumeGrace };
   return {
     ok: false,
     consumeGrace: false,
-    code: "BALANCE_GRACE_USED",
-    message: `This client has an outstanding balance of ${money(balanceCents)}.`,
+    code: decision.code,
+    message: decision.message,
   };
 }
 
