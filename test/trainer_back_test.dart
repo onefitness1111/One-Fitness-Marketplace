@@ -128,35 +128,33 @@ void main() {
     "Equipment Library": "equipment",
     "Challenges": "challenges",
     "My Profile": "myprofile",
-    "Merit Badges": "coachbadges",
     "My Pay": "mypay",
+    "Calendar Sync": "calendarsync",
     "Support": "support",
   });
 
-  testWidgets("admin menu does not offer Calendar Sync", (tester) async {
-    await boot(tester, as: "owner");
-    await tester.tap(find.byIcon(LucideIcons.menu));
-    await tester.pumpAndSettle();
-    final drawer = find.byType(Drawer);
-    final scrollable = find.descendant(of: drawer, matching: find.byType(Scrollable)).first;
-    await tester.drag(scrollable, const Offset(0, -2400));
-    await tester.pumpAndSettle();
-    expect(
-      find.descendant(of: drawer, matching: find.text("Calendar Sync")),
-      findsNothing,
-    );
-  });
-
-  testWidgets("coach schedule offers Calendar Sync and the menu does not", (tester) async {
+  testWidgets("U13: coach menu has Calendar Sync, and so does the Schedule card", (tester) async {
     await boot(tester);
     await tester.tap(find.byIcon(LucideIcons.menu));
     await tester.pumpAndSettle();
-    expect(find.descendant(of: find.byType(Drawer), matching: find.text("Calendar Sync")), findsNothing);
+    expect(find.descendant(of: find.byType(Drawer), matching: find.text("Calendar Sync")), findsOneWidget);
+    expect(find.descendant(of: find.byType(Drawer), matching: find.text("Merit Badges")), findsNothing,
+        reason: "U8: coach badge progress lives on My Profile only");
     await tester.tap(find.byTooltip("Close menu"));
     await tester.pumpAndSettle();
     await tester.tap(find.text("Schedule"));
     await tester.pumpAndSettle();
     expect(find.text("Calendar Sync"), findsOneWidget);
+  });
+
+  testWidgets("U13: the owner opening Calendar Sync sees their own sync page, not a blank one", (tester) async {
+    await boot(tester, as: "owner");
+    await tapBottomTab(tester, "Schedule");
+    await tester.tap(find.text("Calendar Sync"));
+    await tester.pumpAndSettle();
+    expect(mode(), "calendarsync");
+    expect(find.text("Sync to Calendar"), findsOneWidget);
+    expect(find.text("Only sessions you run yourself are added — not every coach's."), findsOneWidget);
   });
 
   // Admin (owner) hamburger. "Reports" is a group whose label navigates.
@@ -169,7 +167,7 @@ void main() {
     "Waitlist": "waitlist",
     "Access Hub": "memberships",
     "Products": "products",
-    "Coaches": "coaches",
+    "Collect Payments": "collect",
     "Reports": "reports",
     "Customize Platform": "platformSettings",
     "Waivers & Contracts": "waivers",
