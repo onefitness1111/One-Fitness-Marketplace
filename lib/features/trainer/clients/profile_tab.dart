@@ -508,7 +508,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "Both dates are required — this shifts ${info.name}'s billing date too, so they don't lose any paid-for time.",
+                            freezeFormExplainer(info.name),
                             style: TextStyle(
                               fontSize: 12,
                               color: AppColors.mute,
@@ -1981,3 +1981,12 @@ class _CoachAskRow extends StatelessWidget {
     );
   }
 }
+
+/// What the freeze form tells staff before they confirm. The billing date
+/// does not move: any charge that falls inside the freeze is skipped, and
+/// billing picks up again on the client's normal billing date.
+String freezeFormExplainer(String clientName) =>
+    "Both dates are required. The end date is the first day $clientName can book again. "
+    "While frozen they can't book and aren't charged — any billing date inside the freeze is skipped. "
+    "Their billing date stays the same, so billing resumes on the next normal billing date after the freeze. "
+    "Sessions they hadn't used yet are kept for after the freeze, until that billing date.";
