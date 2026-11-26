@@ -20,6 +20,7 @@ import "../../../data/providers/platform_settings_provider.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "automation_emails_screen.dart";
 import "manage_coupons_screen.dart";
+import "../memberships/manage_intake_forms_screen.dart";
 
 /// Dropdown option key/label pairs — mirrors SubTabs.jsx's mobile `<select>`
 /// (this app is mobile-only, so that's the correct web analog to port, not
@@ -34,6 +35,7 @@ const _tabs = [
   ("workouts", "Workouts & General"),
   ("coupons", "Coupons"),
   ("emails", "Automation Emails"),
+  ("intake", "Intake Forms"),
   ("location", "Location"),
 ];
 
@@ -238,6 +240,15 @@ class _CustomizePlatformScreenState extends ConsumerState<CustomizePlatformScree
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [tabSelector, const Expanded(child: ManageCouponsScreen())],
+      );
+    }
+
+    // Intake forms are versioned rows with their own Save (U1). Owner-only,
+    // like this whole screen; the editor checks again itself.
+    if (_tab == "intake") {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [tabSelector, const Expanded(child: ManageIntakeFormsScreen())],
       );
     }
 

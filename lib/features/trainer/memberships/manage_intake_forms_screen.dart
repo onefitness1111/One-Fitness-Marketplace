@@ -136,6 +136,13 @@ class _ManageIntakeFormsScreenState
 
   @override
   Widget build(BuildContext context) {
+    // Only the owner edits intake forms. The database enforces the same rule.
+    if (ref.watch(trainerAuthProvider) != "owner") {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: HintBox(text: "Only the owner can change intake forms."),
+      );
+    }
     if (_draft != null) {
       return LocalBackScope(
         isOpen: true,
@@ -165,7 +172,9 @@ class _ManageIntakeFormsScreenState
             padding: const EdgeInsets.only(top: 4, bottom: 16),
             child: Text(
               "Questionnaires your clients fill in, alongside the ones built "
-              "into the app.",
+              "into the app. Revise a form to add sections or questions, or to "
+              "take a question out. Answers already given, including to a "
+              "question you take out, stay on that client's archived intakes.",
               style: TextStyle(fontSize: 12, color: AppColors.mute),
             ),
           ),
