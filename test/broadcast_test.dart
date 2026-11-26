@@ -3,7 +3,6 @@ import "package:onefitness/core/utils/broadcast.dart";
 
 BroadcastClient person({
   required String id,
-  String? coach,
   String phone = "",
   String email = "",
   bool smsOptIn = false,
@@ -11,7 +10,6 @@ BroadcastClient person({
 }) =>
     BroadcastClient(
       id: id,
-      primaryTrainerId: coach,
       phone: phone,
       email: email,
       smsOptIn: smsOptIn,
@@ -20,9 +18,9 @@ BroadcastClient person({
 
 void main() {
   final clients = [
-    person(id: "a", coach: "chris", phone: "5551112222", email: "a@gym.test", smsOptIn: true),
-    person(id: "b", coach: "chris", email: "b@gym.test"),
-    person(id: "c", coach: "pat", phone: "5553334444", email: "c@gym.test", smsOptIn: true),
+    person(id: "a", phone: "5551112222", email: "a@gym.test", smsOptIn: true),
+    person(id: "b", email: "b@gym.test"),
+    person(id: "c", phone: "5553334444", email: "c@gym.test", smsOptIn: true),
   ];
 
   test("any mix of in app, text, and email is allowed, and empty is not", () {
@@ -84,7 +82,7 @@ void main() {
   test("texts are counted only when the person can be texted, and quiet hours skip them", () {
     final open = previewBroadcast(
       ways: const BroadcastWays(app: true, sms: true),
-      recipients: clients.where((c) => c.primaryTrainerId == "chris").toList(),
+      recipients: clients.where((c) => const {"a", "b"}.contains(c.id)).toList(),
       nowUtc: DateTime.utc(2026, 1, 15, 18),
     );
     expect(open.app, 2);
@@ -105,7 +103,7 @@ void main() {
       ways: const BroadcastWays(email: true),
       recipients: [
         clients[1],
-        person(id: "d", coach: "chris"),
+        person(id: "d"),
       ],
       nowUtc: DateTime.utc(2026, 1, 15, 18),
     );
@@ -126,7 +124,7 @@ void main() {
     final stopped = previewBroadcast(
       ways: const BroadcastWays(app: true, sms: true),
       recipients: [
-        person(id: "a", coach: "chris", phone: "555", smsOptIn: true, smsOptedOut: true),
+        person(id: "a", phone: "555", smsOptIn: true, smsOptedOut: true),
       ],
       nowUtc: DateTime.utc(2026, 7, 15, 20),
     );

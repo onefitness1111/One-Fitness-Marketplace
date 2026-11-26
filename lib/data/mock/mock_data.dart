@@ -110,7 +110,6 @@ class MockData {
     phone: "18185559876",
     city: "North Hollywood",
     membershipPlanId: "semiprivate-membership",
-    primaryTrainerId: "demo-marcus",
     plans: [
       ClientPlanEnrollment(planId: "semiprivate-membership", status: "active", startDate: "2026-06-01"),
     ],
@@ -478,7 +477,6 @@ class MockData {
     phone: "18185558765",
     city: "North Hollywood",
     membershipPlanId: "oneonone-package",
-    primaryTrainerId: "demo-marcus",
     plans: [ClientPlanEnrollment(planId: "oneonone-package", status: "active", startDate: "2026-06-01")],
   );
 
@@ -489,7 +487,6 @@ class MockData {
     phone: "18185557654",
     city: "North Hollywood",
     membershipPlanId: "oneonone-package",
-    primaryTrainerId: "demo-marcus",
     plans: [ClientPlanEnrollment(planId: "oneonone-package", status: "active", startDate: "2026-06-01")],
   );
 

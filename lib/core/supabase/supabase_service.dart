@@ -286,12 +286,10 @@ class SupabaseService {
       if (city != null) "city": city,
       if (state != null) "state": state,
       if (birthday != null) "birthday": birthday,
-      // A referred client becomes that coach's client — this is what
-      // makes the coach's roster-scoped Needs Attention alert (and their
-      // Clients tab) actually show this signup.
+      // The referring coach is recorded for the one-time Coach Code
+      // alert. It does not assign the client to that coach.
       if (referringTrainerId != null)
         "referred_by_trainer_id": referringTrainerId,
-      if (referringTrainerId != null) "primary_trainer_id": referringTrainerId,
     }, onConflict: "profile_id");
     // Same shape for the same reason — a retry after a failure part-way
     // through must not trip over its own earlier half-success.
@@ -564,7 +562,7 @@ class SupabaseService {
   /// Client columns a coach may see. Card, bank, Stripe, and balance fields
   /// are not in this list.
   static const _clientColumns =
-      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, primary_trainer_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason, booking_location";
+      "profile_id, birthday, city, state, home_lat, home_lng, membership_plan_id, plans, tour_seen, membership_paused, membership_paused_at, membership_paused_days, updated_at, custom_fields, membership_freeze_ends_at, session_count_override, pending_plan_id, pending_plan_effective_at, session_count_override_month, membership_cancels_at, referred_by_trainer_id, coach_code_alert_seen, sms_opt_in, redeem_points_next_renewal, marketing_opt_out, sms_opt_in_at, sms_consent_text, emergency_contact_name, booking_restricted, booking_restricted_reason, booking_location";
 
   /// Trainer columns anyone signed in may see. Pay rates are not included.
   static const _trainerColumns =
@@ -5110,7 +5108,6 @@ class SupabaseService {
     String? password,
     String? photo,
     String? coachCode,
-    String? primaryTrainerId,
   }) =>
       _invokeFunction("create-client-account", {
         "name": name,
@@ -5124,7 +5121,6 @@ class SupabaseService {
         if (city != null && city.trim().isNotEmpty) "city": city.trim(),
         if (state != null && state.trim().isNotEmpty) "state": state.trim(),
         if (birthday != null && birthday.trim().isNotEmpty) "birthday": birthday.trim(),
-        if (primaryTrainerId != null) "primaryTrainerId": primaryTrainerId,
       });
 
   /// Merchandise orders. RLS scopes the result by itself — a client gets
@@ -6395,7 +6391,6 @@ class SupabaseService {
       membershipFreezeEndsAt: c["membership_freeze_ends_at"] as String?,
       sessionCountOverride: _asInt(c["session_count_override"]),
       sessionCountOverrideMonth: c["session_count_override_month"] as String?,
-      primaryTrainerId: c["primary_trainer_id"] as String?,
       hasOutstandingBalance: c["has_outstanding_balance"] as bool? ?? false,
       stripeSubscriptionId: c["stripe_subscription_id"] as String?,
       pendingPlanId: c["pending_plan_id"] as String?,
