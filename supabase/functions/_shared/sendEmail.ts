@@ -1,5 +1,6 @@
-// Unchanged copy of the live helper, included so send-email and client-notify
-// can be deployed from this folder. Delivery is Microsoft Graph, not SMTP.
+// Live email helper (Microsoft Graph, not SMTP). Merged from the live
+// bundles so every function in this folder, including sign-waiver's PDF
+// attachment and the HTML-only senders, deploys against one copy.
 const TOKEN_HOST = "https://login.microsoftonline.com";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -37,10 +38,23 @@ async function graphToken(): Promise<string> {
   return cachedToken.value;
 }
 
-export async function sendEmailOrThrow(to: string, subject: string, text: string, html?: string): Promise<void> {
+export type EmailAttachment = { name: string; contentType: string; base64: string };
+
+/// The fourth argument is either an HTML body (send-email, client-notify) or
+/// a list of file attachments (sign-waiver's signed PDF). Both shapes are in
+/// use by live functions, so this helper accepts either.
+export async function sendEmailOrThrow(
+  to: string,
+  subject: string,
+  text: string,
+  htmlOrAttachments?: string | EmailAttachment[],
+): Promise<void> {
   const from = emailFrom();
   if (!from) throw new Error("No sender address configured (set EMAIL_FROM or SMTP_USER).");
   if (!to) throw new Error("No recipient given.");
+
+  const html = typeof htmlOrAttachments === "string" ? htmlOrAttachments : undefined;
+  const attachments = Array.isArray(htmlOrAttachments) ? htmlOrAttachments : [];
 
   const token = await graphToken();
   const res = await fetch(`${GRAPH}/users/${encodeURIComponent(from)}/sendMail`, {
@@ -51,6 +65,17 @@ export async function sendEmailOrThrow(to: string, subject: string, text: string
         subject,
         body: { contentType: html ? "HTML" : "Text", content: html || text },
         toRecipients: [{ emailAddress: { address: to } }],
+        // Graph accepts inline file attachments up to 3 MB each.
+        ...(attachments.length
+          ? {
+            attachments: attachments.map((a) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: a.name,
+              contentType: a.contentType,
+              contentBytes: a.base64,
+            })),
+          }
+          : {}),
       },
       saveToSentItems: true,
     }),
@@ -58,10 +83,20 @@ export async function sendEmailOrThrow(to: string, subject: string, text: string
   if (!res.ok) throw new Error(`Microsoft Graph sendMail failed (${res.status}): ${await res.text()}`);
 }
 
-export async function sendEmail(to: string, subject: string, text: string, html?: string): Promise<void> {
+/// HTML-only send (send-welcome-email, send-booking-confirmation).
+export async function sendHtmlEmailOrThrow(to: string, subject: string, html: string): Promise<void> {
+  await sendEmailOrThrow(to, subject, "", html);
+}
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  text: string,
+  htmlOrAttachments?: string | EmailAttachment[],
+): Promise<void> {
   if (!to) return;
   try {
-    await sendEmailOrThrow(to, subject, text, html);
+    await sendEmailOrThrow(to, subject, text, htmlOrAttachments);
   } catch (e) {
     console.error(`sendEmail: ${e instanceof Error ? e.message : String(e)}`);
   }
