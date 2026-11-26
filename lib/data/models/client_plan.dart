@@ -14,6 +14,10 @@ class ClientPlanEnrollment {
     this.maxSessionsOverride,
     this.maxSessionsOverrideMonth,
     this.rolloverMaxOverride,
+    this.heldSessions,
+    this.frozenFrom,
+    this.heldFrom,
+    this.heldUntil,
   });
 
   final String planId;
@@ -57,6 +61,34 @@ class ClientPlanEnrollment {
   /// only.
   final int? rolloverMaxOverride;
 
+  /// Unused sessions kept through the last freeze on this membership,
+  /// written when the freeze started. They can be used from [heldFrom] (the
+  /// freeze's end day) up to, not including, [heldUntil] (the next billing
+  /// day). During that window they replace the monthly count; rolled-over
+  /// sessions for the month still count on top and still expire with it.
+  final int? heldSessions;
+
+  /// First frozen day of the last freeze. With [heldUntil] it marks the
+  /// months no sessions roll over from.
+  final String? frozenFrom;
+  final String? heldFrom;
+  final String? heldUntil;
+
+  /// True when [today] ("YYYY-MM-DD") is in the held-sessions window.
+  bool holdActiveOn(String today) =>
+      heldSessions != null &&
+      heldFrom != null &&
+      heldUntil != null &&
+      today.compareTo(heldFrom!) >= 0 &&
+      today.compareTo(heldUntil!) < 0;
+
+  /// True when [date] falls in the held-sessions window, active or not.
+  bool inHoldWindow(String date) =>
+      heldFrom != null &&
+      heldUntil != null &&
+      date.compareTo(heldFrom!) >= 0 &&
+      date.compareTo(heldUntil!) < 0;
+
   ClientPlanEnrollment copyWith({
     String? status,
     String? cancelsAt,
@@ -87,6 +119,10 @@ class ClientPlanEnrollment {
         maxSessionsOverride: clearMaxSessionsOverride ? null : (maxSessionsOverride ?? this.maxSessionsOverride),
         maxSessionsOverrideMonth: clearMaxSessionsOverride ? null : (maxSessionsOverrideMonth ?? this.maxSessionsOverrideMonth),
         rolloverMaxOverride: clearRolloverMaxOverride ? null : (rolloverMaxOverride ?? this.rolloverMaxOverride),
+        heldSessions: heldSessions,
+        frozenFrom: frozenFrom,
+        heldFrom: heldFrom,
+        heldUntil: heldUntil,
       );
 
   Map<String, dynamic> toJson() => {
@@ -103,5 +139,9 @@ class ClientPlanEnrollment {
         if (maxSessionsOverride != null) "maxSessionsOverride": maxSessionsOverride,
         if (maxSessionsOverrideMonth != null) "maxSessionsOverrideMonth": maxSessionsOverrideMonth,
         if (rolloverMaxOverride != null) "rolloverMaxOverride": rolloverMaxOverride,
+        if (heldSessions != null) "heldSessions": heldSessions,
+        if (frozenFrom != null) "frozenFrom": frozenFrom,
+        if (heldFrom != null) "heldFrom": heldFrom,
+        if (heldUntil != null) "heldUntil": heldUntil,
       };
 }
