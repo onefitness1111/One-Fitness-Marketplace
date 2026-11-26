@@ -33,7 +33,7 @@ void main() {
     },
   );
 
-  Future<void> pump(WidgetTester tester, {required bool keepPrevious}) async {
+  Future<void> pump(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1200, 2400);
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
@@ -49,7 +49,6 @@ void main() {
               client: filled,
               who: "trainer",
               onSaved: (_) {},
-              keepPrevious: keepPrevious,
             ),
           ),
         ),
@@ -59,12 +58,12 @@ void main() {
   }
 
   testWidgets("editing opens on what the client already said", (tester) async {
-    await pump(tester, keepPrevious: false);
+    await pump(tester);
     expect(find.text("Lose fat"), findsOneWidget);
   });
 
   testWidgets("a new filing starts from the previous answers", (tester) async {
-    await pump(tester, keepPrevious: true);
+    await pump(tester);
     expect(find.text("Lose fat"), findsOneWidget);
     expect(find.text("Main goal"), findsOneWidget);
   });

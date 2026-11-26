@@ -10,6 +10,7 @@ import "../../../data/models/client_record.dart";
 import "../../../data/models/intake_schema.dart";
 import "../../../data/providers/trainer_providers.dart";
 import "intake_attachments.dart";
+import "../../../core/utils/intake_resubmit.dart";
 
 /// Mirrors FormFiller.jsx — a generic schema-driven questionnaire renderer:
 /// text/textarea/single/multi/scale question types, with `showIf`
@@ -31,7 +32,6 @@ class FormFillerScreen extends ConsumerStatefulWidget {
     required this.client,
     required this.who,
     required this.onSaved,
-    this.keepPrevious = false,
   });
 
   final String assessmentKey;
@@ -40,16 +40,12 @@ class FormFillerScreen extends ConsumerStatefulWidget {
   final String profileId;
   final ClientRecord client;
   final String who; // "client" | "trainer"
-  final void Function(IntakeRecord) onSaved;
-
-  /// Whether saving files this as a new submission, keeping whatever is
-  /// already on record, rather than correcting the one that's there.
+  /// Called with the entry as the server saved it, history included.
   ///
-  /// Off for "Edit answers", which is how a coach fixes a figure they
-  /// mistyped — archiving that would bury the real re-intakes under a pile of
-  /// near-identical copies. On for "Fill in again", which is a client
-  /// answering the same questionnaire afresh months later.
-  final bool keepPrevious;
+  /// Every save of a completed form is a new filing (L3): the server moves
+  /// the filing already on record into history before writing this one, so
+  /// "Edit answers" and "Start new intake" both keep the earlier answers.
+  final void Function(IntakeRecord) onSaved;
 
   @override
   ConsumerState<FormFillerScreen> createState() => _FormFillerScreenState();
@@ -138,21 +134,21 @@ class _FormFillerScreenState extends ConsumerState<FormFillerScreen> {
       templateVersion: template?.version,
     );
     try {
-      await SupabaseService.updateClientIntake(
+      final saved = await SupabaseService.updateClientIntake(
         widget.profileId,
         widget.assessmentKey,
         record,
-        keepPrevious: widget.keepPrevious,
       );
-      widget.onSaved(record);
+      widget.onSaved(saved);
       // A new filing never drafts a program by itself. The owner does that
       // from the client's profile, after they have seen the new answers.
       widget.onBack();
     } catch (e) {
       if (!mounted) return;
+      // Nothing was saved, and nothing already on record was touched.
       setState(() {
         _saving = false;
-        _error = e.toString().replaceFirst("Exception: ", "");
+        _error = intakeSaveFailedMessage;
       });
     }
   }

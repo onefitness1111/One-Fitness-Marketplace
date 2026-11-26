@@ -120,12 +120,19 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
                   programRefreshLabel(kind, forOwner: isOwner),
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
                 ),
+                // O3: owner only. Coaches see the neutral line above and no
+                // button; clients never see this banner.
                 if (isOwner && widget.onRequestProgram != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    rebuildProgramHint(flags[kind]),
+                    style: TextStyle(fontSize: 12, color: AppColors.mute, height: 1.35),
+                  ),
                   const SizedBox(height: 10),
-                  BtnGhost(
+                  BtnGold(
                     full: true,
                     onPressed: () => widget.onRequestProgram!(kind),
-                    child: Text(kind == "nutrition" ? "Draft nutrition program" : "Draft training program"),
+                    child: Text(rebuildProgramLabel(kind)),
                   ),
                 ],
               ],

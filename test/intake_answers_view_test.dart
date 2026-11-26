@@ -161,12 +161,9 @@ void main() {
       expect(find.text("Tell us about the injury"), findsOneWidget);
     });
 
-    testWidgets("warns that editing overwrites who filled it in", (tester) async {
+    testWidgets("says editing keeps the earlier answers (L3)", (tester) async {
       await pump(tester, const IntakeRecord(answers: {}, completed: true, by: "Client"));
-      expect(
-        find.textContaining("re-files the form under your name"),
-        findsOneWidget,
-      );
+      expect(find.textContaining("These answers stay saved"), findsOneWidget);
     });
 
     testWidgets("editing is a deliberate tap, not the default", (tester) async {
@@ -333,15 +330,15 @@ void main() {
       expect(find.text("Add another"), findsNothing);
     });
 
-    testWidgets("the hint explains the difference when both are offered", (tester) async {
+    testWidgets("both paths keep a copy, and the hint says so (L3)", (tester) async {
       await pump(tester, onFillAgain: () {});
-      expect(find.textContaining("Start new intake files"), findsOneWidget);
+      expect(find.textContaining("These answers stay saved"), findsOneWidget);
     });
 
-    testWidgets("and doesn't mention re-filling when it isn't on offer", (tester) async {
+    testWidgets("no wording suggests an edit replaces the record", (tester) async {
       await pump(tester);
       expect(find.textContaining("Add another"), findsNothing);
-      expect(find.textContaining("replacing the record"), findsOneWidget);
+      expect(find.textContaining("replacing the record"), findsNothing);
     });
 
     testWidgets("Add another is what fires the fresh-submission path", (tester) async {
@@ -402,16 +399,15 @@ void main() {
       expect(blankWithPast.supersededBy(second).history, hasLength(1));
     });
 
-    test("stops at the cap rather than growing without limit", () {
-      // An intake entry rides along in every roster load, so this can't grow
-      // forever.
+    test("keeps every earlier submission, with no cap (L4)", () {
       var rec = first;
-      for (var i = 0; i < kMaxIntakeHistory + 5; i++) {
+      for (var i = 0; i < 45; i++) {
         rec = rec.supersededBy(IntakeRecord(answers: const {}, completed: true, at: "fill-$i"));
       }
-      expect(rec.history, hasLength(kMaxIntakeHistory));
-      // The most recent ones are the ones kept.
-      expect(rec.history.first.at, "fill-${kMaxIntakeHistory + 3}");
+      expect(rec.history, hasLength(45));
+      expect(rec.history.first.at, "fill-43");
+      // The very first filing is still there.
+      expect(rec.history.last.at, "2026-05-14");
     });
   });
 

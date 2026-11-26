@@ -5,7 +5,6 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/utils/date_utils.dart";
-import "../../../core/utils/write_failure.dart";
 import "../../../core/utils/intake_entitlements.dart";
 import "../../../core/utils/intake_resubmit.dart";
 import "../../../core/utils/notification_triggers.dart";
@@ -179,8 +178,9 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
   /// generate-ai-workout-program reads.
   Future<void> _savePhysical(String assessmentKey, Map<String, dynamic> payload) async {
     final prior = widget.client.intake[assessmentKey];
-    final already = prior?.completed ?? false;
-    final fresh = _fillingAgain || !already;
+    // Every completed save is a new filing now (L3), so the owner is always
+    // told the newest one is in.
+    const fresh = true;
     final record = IntakeRecord(
       answers: prior?.answers ?? const {},
       completed: true,
@@ -188,24 +188,25 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
       by: "Trainer/Coach",
       attachments: _fillingAgain ? const [] : (prior?.attachments ?? const []),
       extra: _fillingAgain ? payload : {...?prior?.extra, ...payload},
-      history: prior?.history ?? const [],
     );
+    final IntakeRecord saved;
     try {
-      await SupabaseService.updateClientIntake(
+      // The server keeps the assessment already on record as an earlier
+      // filing before writing this one (L3), all in one transaction (L5).
+      saved = await SupabaseService.updateClientIntake(
         widget.profileId,
         assessmentKey,
         record,
-        keepPrevious: _fillingAgain && already,
       );
       await _noteRefresh(assessmentKey, fresh: fresh);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(writeFailureMessage(e, whatFailed: "Couldn't save the assessment"))),
+        const SnackBar(content: Text(intakeSaveFailedMessage)),
       );
       return;
     }
-    widget.onSaved(assessmentKey, record);
+    widget.onSaved(assessmentKey, saved);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Assessment saved.")));
     _closeAssessment();
@@ -257,6 +258,7 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
             profileId: widget.profileId,
             assessmentKey: archive.form.key,
             initialViewing: archive.viewing,
+            readOnly: true,
             onBack: () => setState(() => _archive = null),
             onEdit: () {},
           ),
@@ -392,11 +394,9 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
           profileId: widget.profileId,
           client: client,
           who: widget.who,
-          keepPrevious: _fillingAgain,
           onSaved: (record) {
-            final already = client.intake[a.key]?.completed ?? false;
             widget.onSaved(a.key, record);
-            _noteRefresh(a.key, fresh: _fillingAgain || !already);
+            _noteRefresh(a.key, fresh: true);
             // A client who has bought nothing has just told the gym what they
             // want out of training. Choosing a plan is the next thing they
             // came to do, so take them there rather than returning them to a
@@ -672,11 +672,19 @@ class _IntakeAreaScreenState extends ConsumerState<IntakeAreaScreen> {
 
   Widget _archivedSection(bool isClientView) {
     final rows = <({AssessmentDef form, int viewing, String at, String by})>[];
-    for (final group in intakeFormsWith(ref.watch(liveIntakeFormTemplatesProvider))) {
+    // Retired gym forms are included: a form that is no longer offered still
+    // has answers on file, and those stay readable here (U1, L3).
+    final liveKeys = {for (final t in ref.watch(liveIntakeFormTemplatesProvider)) t.key};
+    final everyForm = newestOfEachTemplate(ref.watch(intakeFormTemplatesProvider));
+    for (final group in intakeFormsWith(everyForm)) {
       for (final form in group.assessments) {
         if (form.physical && isClientView) continue;
         final record = widget.client.intake[form.key];
         if (record == null) continue;
+        final retired = group.key == "custom" && !liveKeys.contains(form.key);
+        if (retired && record.completed) {
+          rows.add((form: form, viewing: 0, at: record.at ?? "", by: record.by ?? "Client"));
+        }
         for (var i = 0; i < record.history.length; i++) {
           final past = record.history[i];
           rows.add((form: form, viewing: i + 1, at: past.at ?? "", by: past.by ?? "Client"));
