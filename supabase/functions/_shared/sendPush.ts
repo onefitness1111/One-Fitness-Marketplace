@@ -1,5 +1,8 @@
-// Unchanged copy of the live Firebase Cloud Messaging helper.
+// Firebase Cloud Messaging helper.
 // Best-effort: a missing Firebase secret or a bad token never fails the caller.
+// Nov 27, 2026: a token FCM reports as unregistered or invalid is deleted
+// from device_tokens, so we stop sending to phones that removed the app.
+import { deadPushToken } from "./pushErrors.mjs";
 interface ServiceAccount {
   project_id: string;
   client_email: string;
@@ -76,6 +79,24 @@ async function withoutOptedOut(tokens: string[]): Promise<string[]> {
   }
 }
 
+/** Removes dead device tokens. Best effort; never throws. */
+async function removeDeadTokens(tokens: string[]): Promise<void> {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key || tokens.length === 0) return;
+  try {
+    const list = tokens.map((t) => `"${t.replace(/"/g, "")}"`).join(",");
+    const res = await fetch(`${url}/rest/v1/device_tokens?token=in.(${encodeURIComponent(list)})`, {
+      method: "DELETE",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: "return=minimal" },
+    });
+    if (!res.ok) console.error(`sendPush: dead token cleanup failed (${res.status})`);
+    else console.log(`sendPush: removed ${tokens.length} dead device token(s)`);
+  } catch (e) {
+    console.error("sendPush: dead token cleanup error:", e instanceof Error ? e.message : String(e));
+  }
+}
+
 export async function sendPush(allTokens: string[], title: string, body: string, data?: Record<string, string>): Promise<void> {
   const raw = Deno.env.get("FIREBASE_SERVICE_ACCOUNT_JSON");
   if (!raw || allTokens.length === 0) return;
@@ -98,6 +119,7 @@ export async function sendPush(allTokens: string[], title: string, body: string,
     return;
   }
 
+  const dead: string[] = [];
   for (const token of tokens) {
     try {
       const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
@@ -105,9 +127,17 @@ export async function sendPush(allTokens: string[], title: string, body: string,
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ message: { token, notification: { title, body }, data: data ?? {} } }),
       });
-      if (!res.ok) console.error(`sendPush: send failed for token …${token.slice(-6)} (${res.status}): ${await res.text()}`);
+      if (!res.ok) {
+        const text = await res.text();
+        if (deadPushToken(res.status, text)) {
+          dead.push(token);
+        } else {
+          console.error(`sendPush: send failed for token …${token.slice(-6)} (${res.status}): ${text}`);
+        }
+      }
     } catch (e) {
       console.error(`sendPush: send error for token …${token.slice(-6)}:`, e instanceof Error ? e.message : String(e));
     }
   }
+  await removeDeadTokens(dead);
 }
