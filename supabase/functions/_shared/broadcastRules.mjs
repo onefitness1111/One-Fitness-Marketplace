@@ -61,20 +61,8 @@ export function scopeBroadcast({ senderIsOwner, senderId, all, requestedIds, cli
   return { allowed, refused };
 }
 
-export function pacificHour(now) {
-  const hour = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "numeric",
-    hourCycle: "h23",
-  }).format(now instanceof Date ? now : new Date(now));
-  return Number(hour);
-}
-
-/** Before 8:00am and from 9:00pm Pacific, a text waits. App chat still sends. */
-export function smsQuietHours(now) {
-  const hour = pacificHour(now);
-  return hour < 8 || hour >= 21;
-}
+export { pacificHour, smsQuietHours } from "./quietHours.mjs";
+import { smsQuietHours } from "./quietHours.mjs";
 
 export function canText(person) {
   const phone = String(person?.phone || "").trim();

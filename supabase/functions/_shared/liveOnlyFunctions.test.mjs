@@ -57,9 +57,15 @@ test("TCPA: nothing texts a client without an explicit opt-in", () => {
   const offers = code("_shared/waitlistOffers.ts");
   assert.match(offers, /smsClientIfOptedIn\(/);
   assert.doesNotMatch(offers, /sendSms\(/);
-  const notify = code("_shared/notifySms.ts");
-  assert.match(notify, /sms_opt_in !== true\) return false/);
-  assert.match(notify, /sms_opted_out === true\) return false/);
+  // notifySms hands off to sendAutoSms, whose rule needs an explicit
+  // opt-in and no STOP (autoSmsRules.mjs).
+  const rules = code("_shared/autoSmsRules.mjs");
+  assert.match(rules, /smsOptIn !== true\) return "skip: not opted in"/);
+  assert.match(rules, /optedOut === true\) return "skip: replied STOP"/);
+  const auto = code("_shared/autoSms.ts");
+  assert.match(auto, /sms_opt_in === true/);
+  assert.match(auto, /sms_opted_out === true/);
+  assert.match(code("_shared/notifySms.ts"), /sendAutoSms\(/);
   assert.match(code("notify-waitlist-joined/index.ts"), /sms_opt_in === true && profile\?\.sms_opted_out !== true/);
   assert.match(code("send-scheduled-reminders/index.ts"), /sms_opted_out === true\) return/);
 });
