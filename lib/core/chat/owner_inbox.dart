@@ -2,6 +2,7 @@ import "../../data/models/client_info.dart";
 import "../../data/models/comm_message.dart";
 import "../../data/models/trainer.dart";
 import "../utils/coach_names.dart";
+import "../utils/chat_channels.dart";
 
 /// Filter value for every coach plus the business threads.
 const kOwnerFilterAll = "all";
@@ -10,10 +11,10 @@ const kOwnerFilterAll = "all";
 const kOwnerBusinessKey = "business";
 
 /// The name on a business row. Clients still only see coach names.
-const kOneFitnessLabel = "ONE Fitness";
+const kOneFitnessLabel = kMarketplaceName;
 
 /// The business choice in the coach filter.
-const kOneFitnessBusinessLabel = "ONE Fitness (business)";
+const kOneFitnessBusinessLabel = "$kMarketplaceName (business)";
 
 /// Staff-to-staff threads, when any exist. Also the name of the filter that
 /// shows only those threads (U3: Coach Chats is a filter inside Chat, not a
@@ -135,9 +136,10 @@ List<OwnerInboxRow> ownerClientThreads({
       final messages = entry.value..sort((a, b) => b.sentAt.compareTo(a.sentAt));
       final last = messages.first;
       final business = entry.key == kOwnerBusinessKey;
+      // Each staff member has their own read marks (thread_reads, via
+      // my_unread_chat_keys). The shared read_by_coach flag is not used.
       final unread = unreadKeys.contains(ownerUnreadKey(client.id, entry.key)) ||
-          (business && unreadKeys.contains(client.id)) ||
-          messages.any((m) => m.who == "client" && !m.readByCoach);
+          (business && unreadKeys.contains(client.id));
       rows.add(OwnerInboxRow(
         id: ownerThreadId(client.id, entry.key),
         clientId: client.id,

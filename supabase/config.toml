@@ -39,3 +39,11 @@ verify_jwt = true
 # Stripe posts here with no JWT. The function checks Stripe's signature.
 [functions.stripe-webhook]
 verify_jwt = false
+
+# Twilio delivery reports. Twilio sends no JWT; the function checks
+# X-Twilio-Signature. Only called once TWILIO_STATUS_CALLBACK_URL is set.
+[functions.twilio-status]
+verify_jwt = false
+
+[functions.notify-moderation]
+verify_jwt = true

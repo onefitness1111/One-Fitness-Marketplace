@@ -22,6 +22,7 @@ import {
 } from "../_shared/messagingGuard.ts";
 import { pushStaffForClientMessage, resolveStaffAlertMessageId } from "../_shared/staffAlert.ts";
 import { staffPushCopy } from "../_shared/chatRouting.mjs";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 function cleanLabel(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
@@ -94,7 +95,7 @@ serve(async (req) => {
           await sendEmailOrThrow(
             me.email,
             "You reached your goal weight!",
-            `Hi ${me.name || "there"},\n\nCongratulations — your latest measurement shows you've reached your goal weight. Amazing work!\n\n— ONE Fitness`,
+            `Hi ${me.name || "there"},\n\nCongratulations — your latest measurement shows you've reached your goal weight. Amazing work!\n\n${EMAIL_SIGNOFF}`,
           );
         } catch (e) {
           console.error("client-notify goal email:", e instanceof Error ? e.message : String(e));

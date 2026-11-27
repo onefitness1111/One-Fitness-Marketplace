@@ -97,7 +97,7 @@ void main() {
     );
     expect(quiet.app, 1);
     expect(quiet.sms, 0);
-    expect(quiet.skippedQuietHours, 1);
+    expect(quiet.smsLater, 1);
 
     final mail = previewBroadcast(
       ways: const BroadcastWays(email: true),

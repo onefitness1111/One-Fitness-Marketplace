@@ -2,6 +2,7 @@
 // Best-effort: a missing device token or a mail failure must not undo the decision.
 import { sendEmail } from "./sendEmail.ts";
 import { sendPush } from "./sendPush.ts";
+import { EMAIL_SIGNOFF } from "./businessName.mjs";
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
@@ -25,7 +26,7 @@ export async function notifyProfile(
   try {
     const { data: profile } = await admin.from("profiles").select("email, name").eq("id", profileId).maybeSingle();
     const email = String(profile?.email ?? "").trim();
-    if (email) await sendEmail(email, title, `${body}\n\n— ONE Fitness`);
+    if (email) await sendEmail(email, title, `${body}\n\n${EMAIL_SIGNOFF}`);
   } catch (e) {
     console.error("request email failed:", e instanceof Error ? e.message : String(e));
   }
@@ -42,7 +43,7 @@ export async function emailOwners(admin: Admin, title: string, body: string, htm
   const { data: owners } = await admin.from("profiles").select("id, email").eq("role", "owner");
   for (const owner of owners || []) {
     const email = String(owner.email ?? "").trim();
-    if (email) await sendEmail(email, title, `${body}\n\n— ONE Fitness`, html);
+    if (email) await sendEmail(email, title, `${body}\n\n${EMAIL_SIGNOFF}`, html);
     await notifyProfile(admin, owner.id as string, title, body, false);
   }
 }

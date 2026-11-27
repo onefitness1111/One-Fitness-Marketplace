@@ -234,12 +234,112 @@ test("an unknown number gets the signup text and the owner gets a notice", () =>
   const book = gym();
   const lead = book.receiveSms({ fromId: null, phone: "+15559990000", text: "Do you have openings?", now: T0 });
   assert.equal(lead.kind, "lead");
-  assert.match(lead.twiml, /not a ONE Fitness client yet/);
-  assert.match(lead.twiml, /APP_STORE_LINK/);
-  assert.match(lead.twiml, /GOOGLE_PLAY_LINK/);
+  assert.match(lead.twiml, /not a ONE Fitness Marketplace client yet/);
+  assert.match(lead.twiml, /https:\/\/apps\.apple\.com\/app\/one-fitness-marketplace\/id6811959585/);
+  assert.equal(/APP_STORE_LINK|GOOGLE_PLAY_LINK/.test(lead.twiml), false);
+  // Not on Google Play yet: Android phones get the website.
+  assert.match(lead.twiml, /Android: https:\/\/www\.onefitnessworkout\.com/);
   assert.equal(lead.sms[0].body, businessNotice("a new number ending 0000"));
   assert.equal(book.leads.length, 1);
   assert.equal(book.messages.length, 0);
+});
+
+test("STOP or HELP from an unknown number never gets the signup text", () => {
+  const book = gym();
+  const stop = book.receiveSms({ fromId: null, phone: "+15559990000", text: "STOP", now: T0 });
+  assert.equal(stop.kind, "stop");
+  assert.equal(stop.twiml, null);
+  assert.equal(stop.sms.length, 0);
+  const help = book.receiveSms({ fromId: null, phone: "+15559990000", text: "help", now: T0 });
+  assert.equal(help.twiml, HELP_TEXT);
+  assert.equal(book.leads.length, 0);
+});
+
+test("lead reply uses app_config links, and ignores placeholders", () => {
+  assert.match(leadReply({ playStoreUrl: "https://play.google.com/store/apps/details?id=x" }), /Google Play: https:\/\/play\.google\.com/);
+  assert.equal(leadReply({ appStoreUrl: "APP_STORE_LINK", playStoreUrl: "GOOGLE_PLAY_LINK" }).includes("LINK"), false);
+});
+
+test("an owner tag opens a fresh 6-hour window: the client's replies go to the tagged coach", () => {
+  const book = gym();
+  // The client talked to the business; Coach Pat had an older thread.
+  book.sendApp({ fromId: "pat", toId: "sam", text: "Good session", now: T0 });
+  book.sendApp({ fromId: "owner", toId: "sam", text: "Thanks for writing in", now: T0 + 30 * MIN });
+  const tagAt = T0 + 60 * MIN;
+  const tag = book.sendApp({ fromId: "owner", toId: "sam", text: "@CoachChris can you help Sam with times?", now: tagAt, includeSms: false });
+  // In-app only: the copy is not texted to the client, and the coach is not texted either.
+  assert.equal(tag.sms.length, 0);
+  const reply = book.receiveSms({ fromId: "sam", text: "Thursday works", now: tagAt + 5 * 60 * MIN });
+  assert.equal(reply.kind, "owner-tag");
+  assert.equal(reply.sms[0].toId, "chris");
+  assert.equal(reply.routedTo, "conversation");
+});
+
+test("the tag window closes after 6 hours and the usual order applies again", () => {
+  const book = gym();
+  const tagAt = T0;
+  book.sendApp({ fromId: "owner", toId: "sam", text: "@CoachChris please follow up", now: tagAt, includeSms: false });
+  const late = book.receiveSms({ fromId: "sam", text: "Hello?", now: tagAt + WINDOW_MS + MIN });
+  assert.equal(late.kind, "fallthrough");
+  assert.equal(late.sms[0].toId, "owner");
+});
+
+test("a client's own @tag and newer activity elsewhere beat the owner tag", () => {
+  const book = gym();
+  book.sendApp({ fromId: "owner", toId: "sam", text: "@CoachChris please follow up", now: T0, includeSms: false });
+  const own = book.receiveSms({ fromId: "sam", text: "@CoachPat question for you", now: T0 + 10 * MIN });
+  assert.equal(own.kind, "tag");
+  assert.equal(own.sms[0].toId, "pat");
+  // Pat's thread is now newer than the tag, so an untagged reply follows it.
+  const next = book.receiveSms({ fromId: "sam", text: "thanks", now: T0 + 20 * MIN });
+  assert.equal(next.kind, "active");
+  assert.equal(next.sms[0].toId, "pat");
+});
+
+test("the tagged coach's text names the client", () => {
+  const book = gym();
+  const sent = book.sendApp({ fromId: "owner", toId: "sam", text: "@CoachChris can you take this one?", now: T0 });
+  const coachText = sent.sms.find((row) => row.toId === "chris");
+  assert.equal(coachText.body, "ONE Fitness Marketplace: @CoachChris can you take this one? (re: Sam)");
+});
+
+test("planTextsForSavedMessage opens a reply route for any owner tag on a client thread", () => {
+  const coaches = [
+    { id: "chris", role: "coach", coachName: "Coach Chris" },
+    { id: "pat", role: "coach", coachName: "Coach Pat" },
+  ];
+  const owner = { id: "owner", role: "owner", displayName: BUSINESS_NAME };
+  const sam = { id: "sam", role: "client", displayName: "Sam", phone: "+15551110002", hasConsent: true };
+  const inBusiness = planTextsForSavedMessage({ sender: owner, recipient: sam, body: "@CoachChris help", routedTo: "business", coaches, includeSms: false });
+  assert.deepEqual(inBusiness.replyRoute, { clientId: "sam", coachId: "chris" });
+  assert.equal(inBusiness.passAlong.length, 1);
+  const inOwnThread = planTextsForSavedMessage({ sender: owner, recipient: sam, body: "@CoachChris help", routedTo: "conversation", trainerId: "chris", coaches, includeSms: false });
+  assert.deepEqual(inOwnThread.replyRoute, { clientId: "sam", coachId: "chris" });
+  assert.equal(inOwnThread.passAlong.length, 0);
+  const inPatsThread = planTextsForSavedMessage({ sender: owner, recipient: sam, body: "@CoachChris help", routedTo: "conversation", trainerId: "pat", coaches, includeSms: false });
+  assert.equal(inPatsThread.passAlong[0].coachId, "chris");
+});
+
+test("the sender is told why a text was skipped", () => {
+  const coach = { id: "chris", role: "coach", displayName: "Coach Chris" };
+  const plan = (recipient) => planTextsForSavedMessage({ sender: coach, recipient, body: "hi", routedTo: "conversation", coaches: [], includeSms: true });
+  assert.equal(plan({ id: "a", role: "client", phone: "" }).skipReason, "no mobile number");
+  assert.equal(plan({ id: "a", role: "client", phone: "+18182237001", optedOut: true }).skipReason, "replied STOP");
+  assert.equal(plan({ id: "a", role: "client", phone: "+18182237001", declined: true }).skipReason, "turned texts off");
+  assert.equal(plan({ id: "a", role: "client", phone: "+18182237001", hasConsent: true }).skipReason, null);
+});
+
+test("a coach with texting off cannot relay a text to a client through the business number", () => {
+  const book = gym();
+  book.textingOff.add("chris");
+  book.sendApp({ fromId: "chris", toId: "sam", text: "See you at 6", now: T0, includeSms: false });
+  for (const text of ["@Sam running late", "running late"]) {
+    const sent = book.receiveSms({ fromId: "chris", text, now: T0 + 10 * MIN });
+    assert.ok(["fallthrough", "active"].includes(sent.kind), text);
+    assert.equal(sent.sms.some((row) => row.toId === "sam"), false, text);
+    assert.equal(sent.sms[0].toId, "owner");
+    assert.match(sent.twiml, /Texting clients is turned off/);
+  }
 });
 
 test("the owner can tag a coach in Business Chat to pass the message along", () => {

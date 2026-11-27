@@ -13,7 +13,7 @@ import {
 test("the invite is one plain sentence and does not name a person", () => {
   assert.equal(
     INVITE_SMS_BODY,
-    "ONE Fitness: Your coach sent you a message in the ONE Fitness app. Reply YES to receive it. Reply STOP to opt out.",
+    "ONE Fitness Marketplace: Your coach sent you a message in the ONE Fitness app. Reply YES to receive it. Reply STOP to opt out.",
   );
 });
 

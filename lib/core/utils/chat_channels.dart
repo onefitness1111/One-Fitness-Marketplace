@@ -10,8 +10,10 @@
 /// The three are now picked independently, so In app alone is a valid
 /// choice and asks for nothing. SMS is the only one that needs a phone
 /// number, and it's the only one that asks for it.
-/// The name the business contact goes by everywhere in chat. It is a business
-/// contact, not a location, and has no SMS channel.
+/// The one name the business (the owner) goes by everywhere: chat, texts and
+/// emails. Coach Chris picked it on Nov 27, 2026. Change it here only; the
+/// server copy is supabase/functions/_shared/businessName.mjs and the
+/// database copy is public.business_display_name().
 const kMarketplaceName = "ONE Fitness Marketplace";
 
 enum ChatChannel {

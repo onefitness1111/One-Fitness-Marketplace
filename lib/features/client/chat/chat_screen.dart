@@ -488,7 +488,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   /// A message as this client reads it. In a direct thread with the owner,
-  /// the sender shows as ONE Fitness Market, never the owner's name.
+  /// the sender shows as ONE Fitness Marketplace, never the owner's name.
   String _clientText(CommMessage m, String threadId) {
     if (m.who == "client") return m.text;
     final owners = ref.read(ownerDirectoryProvider);

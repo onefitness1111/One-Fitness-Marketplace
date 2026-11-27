@@ -13,6 +13,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
 import { sendEmail } from "../_shared/sendEmail.ts";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -341,7 +342,7 @@ serve(async (req) => {
       await sendEmail(
         String(profile.email),
         `Your signed copy — ${waiver.title}`,
-        `Hi ${mergeValues.client_first_name || fullName},\n\nThanks for signing "${waiver.title}". Your signed copy, including the completion certificate, is attached.\n\nYou can also find it any time in the app under Signatures.\n\n— ONE Fitness`,
+        `Hi ${mergeValues.client_first_name || fullName},\n\nThanks for signing "${waiver.title}". Your signed copy, including the completion certificate, is attached.\n\nYou can also find it any time in the app under Signatures.\n\n${EMAIL_SIGNOFF}`,
         [{ name: `${String(waiver.title || "Waiver").replace(/[^\w\- ]+/g, "")}.pdf`, contentType: "application/pdf", base64: pdfBase64 }],
       );
       emailedTo = String(profile.email);

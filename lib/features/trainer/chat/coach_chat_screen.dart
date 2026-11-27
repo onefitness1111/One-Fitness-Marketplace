@@ -9,9 +9,11 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/chat/chat_entry.dart";
+import "../../../core/chat/coach_thread_scope.dart";
 import "../../../core/chat/owner_inbox.dart";
 import "../../../core/widgets/owner_chat_list.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/utils/sms_outcome.dart";
 import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../core/widgets/chat_gate.dart";
 import "../../../core/widgets/message_reactions.dart";
@@ -86,6 +88,11 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// picker is only reached deliberately via "New message".
   _ChatView _view = _ChatView.list;
   final Set<String> _pendingIds = {};
+
+  /// Text outcomes for messages staff chose to also text (message id ->
+  /// outcome), so the sender sees when and why a text was skipped.
+  final Map<String, String> _smsOutcomes = {};
+  final Set<String> _smsOutcomesAsked = {};
 
   /// Owner list: which coach's threads are showing, and the open thread.
   String _ownerFilter = kOwnerFilterAll;
@@ -369,21 +376,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// into it (including a remembered thread reopened via SharedPreferences)
   /// — mirrors the old _CoachCompose.initState's read-receipt behavior.
   void _markThreadRead(String clientId) {
+    // Per-person read marks (thread_reads): opening a thread clears it for
+    // this staff member only, never for the owner or another coach.
     SupabaseService.markChatRead(clientId);
     ref.read(unreadChatKeysProvider.notifier).clear(clientId);
-    final trainerAuth = ref.read(trainerAuthProvider);
-    final record = ref.read(trainerClientRecordsProvider)[clientId];
-    if (record == null) return;
-    // Same scope as the conversation list's bold/dot (and the thread itself):
-    // the owner sees every coach's messages, so opening the thread has to mark
-    // all of them read, not only the ones addressed to "owner".
-    final isOwner = trainerAuth == "owner";
-    bool isUnread(CommMessage m) =>
-        m.who == "client" && !m.readByCoach && (isOwner || m.trainerId == null || m.trainerId == trainerAuth);
-    if (!record.comms.any(isUnread)) return;
-    final updated = record.comms.map((m) => isUnread(m) ? m.copyWith(readByCoach: true) : m).toList();
-    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
-    SupabaseService.markMessagesRead(clientId).catchError((Object _) {});
   }
 
   /// The owner opened one thread. Other threads with that client stay unread.
@@ -391,16 +387,6 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final key = ownerUnreadKey(clientId, coachKey);
     SupabaseService.markChatRead(key);
     ref.read(unreadChatKeysProvider.notifier).clear(key);
-    final record = ref.read(trainerClientRecordsProvider)[clientId];
-    if (record == null) return;
-    final ownerIds = _ownerIds();
-    bool unreadInThread(CommMessage m) =>
-        ownerThreadCoachKey(m, ownerIds) == coachKey && m.who == "client" && !m.readByCoach;
-    if (!record.comms.any(unreadInThread)) return;
-    final ids = [for (final m in record.comms) if (unreadInThread(m)) m.id];
-    final updated = record.comms.map((m) => unreadInThread(m) ? m.copyWith(readByCoach: true) : m).toList();
-    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
-    SupabaseService.markMessageIdsRead(ids).catchError((Object _) {});
   }
 
   void _scrollToBottom({bool animate = true}) {
@@ -494,6 +480,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             client.id,
             (r) => r.copyWith(comms: r.comms.map((c) => c.id == tempId ? saved : c).toList()),
           );
+      if (deliver.contains(ChatChannel.sms)) {
+        // The text is decided a moment later on the server; look again then.
+        Future<void>.delayed(const Duration(seconds: 4), () => _refreshSmsOutcomes([saved.id], force: true));
+      }
       // The push is what In app means in practice — the message is in the
       // thread either way. `sms: false` because SMS is a channel of its
       // own here; letting the push text them too would double-send to a
@@ -547,7 +537,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final out = <ChatConversation>[];
     for (final c in roster) {
       final comms = records[c.id]?.comms ?? const <CommMessage>[];
-      final mine = comms.where((m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth).toList();
+      final mine = comms.where((m) => staffSeesMessage(m, isOwner: isOwner, trainerAuth: trainerAuth)).toList();
       if (mine.isEmpty) continue;
       mine.sort((a, b) => b.sentAt.compareTo(a.sentAt));
       final last = mine.first;
@@ -558,9 +548,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         preview: last.text,
         at: last.sentAt,
         outgoing: last.who == "trainer",
-        // Unread means the client wrote something the coach hasn't opened
-        // yet — the same flag the thread clears on open.
-        unread: unreadKeys.contains(c.id) || mine.any((m) => m.who == "client" && !m.readByCoach),
+        // Unread comes from this coach's own read marks (thread_reads).
+        unread: unreadKeys.contains(c.id),
       ));
     }
     out.sort((a, b) => b.at.compareTo(a.at));
@@ -802,7 +791,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final ownerKey = _ownerCoachKey ?? kOwnerBusinessKey;
     final thread = isOwner
         ? messagesForOwnerThread(comms, coachKey: ownerKey, ownerIds: _ownerIds())
-        : (comms.where((m) => m.trainerId == null || m.trainerId == trainerAuth).toList()
+        : (comms.where((m) => staffSeesMessage(m, isOwner: false, trainerAuth: trainerAuth)).toList()
           ..sort((a, b) => a.sentAt.compareTo(b.sentAt)));
 
     return LocalBackScope(
@@ -877,7 +866,28 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     }
   }
 
+  Future<void> _refreshSmsOutcomes(List<String> ids, {bool force = false}) async {
+    final ask = force ? ids : ids.where((id) => !_smsOutcomesAsked.contains(id)).toList();
+    if (ask.isEmpty) return;
+    _smsOutcomesAsked.addAll(ask);
+    final found = await SupabaseService.loadSmsOutcomes(ask);
+    if (!mounted || found.isEmpty) return;
+    setState(() => _smsOutcomes.addAll(found));
+  }
+
   List<Widget> _buildBubbleList(List<CommMessage> thread, String clientId) {
+    final texted = [
+      for (final c in thread)
+        if (c.who == "trainer" &&
+            !_pendingIds.contains(c.id) &&
+            c.channel != null &&
+            decodeChannels(c.channel!).contains(ChatChannel.sms) &&
+            !_smsOutcomesAsked.contains(c.id))
+          c.id,
+    ];
+    if (texted.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshSmsOutcomes(texted));
+    }
     final items = <Widget>[];
     DateTime? lastDay;
     for (final c in thread) {
@@ -889,6 +899,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       items.add(_Bubble(
         message: c,
         isPending: _pendingIds.contains(c.id),
+        smsNotice: c.who == "trainer" ? smsOutcomeNotice(_smsOutcomes[c.id]) : null,
         onReact: _pendingIds.contains(c.id)
             ? null
             : (reaction) => _react(clientId: clientId, message: c, reaction: reaction),
@@ -1239,9 +1250,13 @@ class _DaySeparator extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.isPending, this.onReact});
+  const _Bubble({required this.message, required this.isPending, this.onReact, this.smsNotice});
   final CommMessage message;
   final bool isPending;
+
+  /// "Not texted: they replied STOP" and the like, under the sender's own
+  /// message. Null when the text went (or wasn't asked for).
+  final String? smsNotice;
   final void Function(String reaction)? onReact;
 
   @override
@@ -1296,6 +1311,11 @@ class _Bubble extends StatelessWidget {
                     ],
                   ],
                 ),
+          if (!isPending && smsNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(smsNotice!, style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic)),
+            ),
         ],
       ),
     );

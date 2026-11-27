@@ -4,7 +4,8 @@
 import { hasSmsConsent } from "./chatRouting.mjs";
 import { publicCoachName } from "./coachName.ts";
 
-export const BUSINESS_NAME = "ONE Fitness Marketplace";
+export { OWNER_DISPLAY_NAME as BUSINESS_NAME } from "./businessName.mjs";
+import { OWNER_DISPLAY_NAME as BUSINESS_NAME } from "./businessName.mjs";
 
 const CONSENT_TEXT =
   "Text me booking confirmations, reminders and waitlist offers from ONE Fitness. " +

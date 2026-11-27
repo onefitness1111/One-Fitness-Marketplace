@@ -61,20 +61,8 @@ export function scopeBroadcast({ senderIsOwner, senderId, all, requestedIds, cli
   return { allowed, refused };
 }
 
-export function pacificHour(now) {
-  const hour = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "numeric",
-    hourCycle: "h23",
-  }).format(now instanceof Date ? now : new Date(now));
-  return Number(hour);
-}
-
-/** Before 8:00am and from 9:00pm Pacific, a text waits. App chat still sends. */
-export function smsQuietHours(now) {
-  const hour = pacificHour(now);
-  return hour < 8 || hour >= 21;
-}
+export { pacificHour, smsQuietHours } from "./quietHours.mjs";
+import { smsQuietHours } from "./quietHours.mjs";
 
 export function canText(person) {
   const phone = String(person?.phone || "").trim();
@@ -85,7 +73,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
   let sms = 0;
   let skippedNoPhone = 0;
   let skippedOptOut = 0;
-  let skippedQuietHours = 0;
+  let smsLater = 0;
   let email = 0;
   let skippedNoEmail = 0;
   const quiet = smsQuietHours(now);
@@ -96,7 +84,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
     if (smsOn) {
       if (!String(person.phone || "").trim()) skippedNoPhone += 1;
       else if (person.smsOptIn !== true || person.smsOptedOut === true) skippedOptOut += 1;
-      else if (quiet) skippedQuietHours += 1;
+      else if (quiet) smsLater += 1;
       else sms += 1;
     }
     if (emailOn) {
@@ -111,7 +99,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
     email,
     skippedNoPhone,
     skippedOptOut,
-    skippedQuietHours,
+    smsLater,
     skippedNoEmail,
     refused,
   };

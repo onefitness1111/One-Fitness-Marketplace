@@ -23,6 +23,8 @@ import {
 } from "../_shared/messagingGuard.ts";
 import { broadcastSummaryChannel, broadcastWays, sanitizeGroupName, smsQuietHours } from "../_shared/broadcastRules.mjs";
 import { publicCoachName } from "../_shared/coachName.ts";
+import { OWNER_DISPLAY_NAME } from "../_shared/businessName.mjs";
+import { sendAutoSms } from "../_shared/autoSms.ts";
 
 const BATCH = 20;
 
@@ -76,7 +78,9 @@ serve(async (req) => {
       channel: broadcastSummaryChannel(ways),
       channels,
       app: { sent: 0, failed: 0 },
-      sms: { sent: 0, skipped: 0, failed: 0, skippedNoPhone: 0, skippedOptOut: 0, skippedQuietHours: 0 },
+      // later: opted in, but it is quiet hours (9pm-8am Pacific). The text
+      // waits in sms_outbox and goes out at 8:00am. Nothing is dropped.
+      sms: { sent: 0, skipped: 0, failed: 0, skippedNoPhone: 0, skippedOptOut: 0, later: 0 },
       email: { sent: 0, skipped: 0, failed: 0, skippedNoEmail: 0 },
       refused: refused.length,
       rateLimited: 0,
@@ -120,6 +124,7 @@ serve(async (req) => {
         if (!ways.app && !ways.sms) continue;
 
         let includeSms = false;
+        let smsLater = false;
         if (ways.sms) {
           if (!person.phone) {
             result.sms.skipped += 1;
@@ -128,33 +133,45 @@ serve(async (req) => {
             result.sms.skipped += 1;
             result.sms.skippedOptOut += 1;
           } else if (quiet) {
-            result.sms.skipped += 1;
-            result.sms.skippedQuietHours += 1;
+            smsLater = true;
           } else {
             includeSms = true;
           }
         }
 
-        if (!ways.app && !includeSms) continue;
+        if (!ways.app && !includeSms && !smsLater) continue;
 
         const savedChannel = [ways.app ? "inapp" : null, includeSms ? "sms" : null].filter(Boolean).join(",");
         // trainer_id is the sender. chat-auto-reply-sms then texts the client
         // on this row. A broadcast does not invite someone who has not
         // opted in; includeSms is set only when they already agreed.
-        const { error } = await admin.from("messages").insert({
+        // A text held for 8:00am still leaves the message in the app thread
+        // now (in-app only, so nothing is texted tonight).
+        const { data: saved, error } = await admin.from("messages").insert({
           client_id: person.id,
           trainer_id: userId,
           sender_id: userId,
           who: "trainer",
           body: text,
-          channel: savedChannel,
+          channel: savedChannel || "inapp",
           read_by_coach: true,
           ...(groupName ? { group_name: groupName } : {}),
-        });
+        }).select("id").maybeSingle();
         if (error) {
           if (ways.app) result.app.failed += 1;
-          if (includeSms) result.sms.failed += 1;
+          if (includeSms || smsLater) result.sms.failed += 1;
           continue;
+        }
+        if (smsLater) {
+          const queued = await sendAutoSms(admin, {
+            profileId: person.id,
+            text: `${label}: ${text}`,
+            raw: true,
+            kind: "broadcast",
+            ref: saved?.id ?? null,
+          });
+          if (queued === "deferred" || queued === "already queued" || queued === "sent") result.sms.later += 1;
+          else result.sms.skipped += 1;
         }
         if (ways.app) {
           result.app.sent += 1;
@@ -186,7 +203,7 @@ async function remainingBudget(admin: any, senderId: string): Promise<number> {
 
 // deno-lint-ignore no-explicit-any
 async function senderLabel(admin: any, userId: string, role: string): Promise<string> {
-  if (role === "owner") return "ONE Fitness Marketplace";
+  if (role === "owner") return OWNER_DISPLAY_NAME;
   return publicCoachName(admin, userId);
 }
 

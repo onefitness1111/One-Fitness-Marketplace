@@ -11,7 +11,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
-import { sendSms } from "../_shared/sendSms.ts";
+import { sendAutoSms } from "../_shared/autoSms.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -127,9 +127,12 @@ serve(async (req) => {
         const line = who
           ? `Hey ${who}, it's been 3 days since your last meal or workout log. Open the app when you can.`
           : "It's been 3 days since your last meal or workout log. Open the app when you can.";
+        // may_text is the stricter nudge rule (consent evidence, no marketing
+        // opt-out). sendAutoSms checks STOP / opt-in again, skips made-up
+        // numbers, and holds the text for 8:00am during quiet hours.
         try {
-          await sendSms(String(row.phone), `One Fitness Marketplace: ${line}`);
-          texted += 1;
+          const outcome = await sendAutoSms(admin, { profileId: clientId, text: line, kind: "quiet-nudge", ref: today });
+          if (outcome === "sent" || outcome === "deferred") texted += 1;
         } catch (e) {
           console.error("quiet nudge text failed:", e instanceof Error ? e.message : String(e));
         }

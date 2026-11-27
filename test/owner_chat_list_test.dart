@@ -65,7 +65,7 @@ void main() {
 
     expect(find.text("All coaches"), findsOneWidget);
     expect(find.text("Coach Chris"), findsWidgets);
-    expect(find.text("ONE Fitness (business)"), findsOneWidget);
+    expect(find.text("ONE Fitness Marketplace (business)"), findsOneWidget);
     expect(find.text("Alex Rivera"), findsOneWidget);
     expect(find.text("ONE Fitness"), findsOneWidget);
     expect(find.text(kTeamChatLabel), findsOneWidget);

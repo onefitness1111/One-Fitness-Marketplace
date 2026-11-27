@@ -71,7 +71,7 @@ void main() {
       );
 
   test("the owner sees every thread, newest first, with coach names", () {
-    final rows = inbox();
+    final rows = inbox(unread: {"owner:alex:chris"});
 
     expect(rows.map((row) => row.title).toList(), ["Alex Rivera", "Jordan Lee", "Sam Patel"]);
     expect(rows.map((row) => row.coachLabel).toList(), ["Coach Chris", kOneFitnessLabel, "Coach Avery"]);
@@ -80,6 +80,12 @@ void main() {
     expect(rows[1].unread, isFalse);
     expect(rows.any((row) => row.coachLabel.contains("Legal")), isFalse);
     expect(rows.any((row) => row.title == "Quiet Client"), isFalse);
+  });
+
+  test("unread comes from the owner's own read marks, not a shared flag", () {
+    // Alex's message has readByCoach false, but the owner has opened it.
+    expect(inbox().first.unread, isFalse);
+    expect(inbox(unread: {"owner:alex:chris"}).first.unread, isTrue);
   });
 
   test("a text routed to the business stays with ONE Fitness", () {

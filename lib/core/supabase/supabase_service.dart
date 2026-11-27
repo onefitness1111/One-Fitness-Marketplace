@@ -3320,21 +3320,20 @@ class SupabaseService {
     return (rows as List).map((r) => r["blocked_id"] as String).toSet();
   }
 
-  /// Marks the messages in one thread read, without clearing the other
-  /// threads that client has with other coaches.
-  static Future<void> markMessageIdsRead(List<String> ids) async {
-    if (ids.isEmpty) return;
-    await client.from("messages").update({"read_by_coach": true}).inFilter("id", ids);
-  }
-
-  /// Read receipts for the coach viewing a thread.
-  static Future<void> markMessagesRead(String clientId) async {
-    await client
-        .from("messages")
-        .update({"read_by_coach": true})
-        .eq("client_id", clientId)
-        .eq("who", "client")
-        .eq("read_by_coach", false);
+  /// Text outcomes for messages the signed-in person sent (the owner sees
+  /// all). Message id -> chat_auto_reply_sms.outcome. Empty on any error.
+  static Future<Map<String, String>> loadSmsOutcomes(List<String> messageIds) async {
+    final ids = messageIds.where(_looksLikeUuid).toList();
+    if (ids.isEmpty) return {};
+    try {
+      final rows = await client.from("chat_auto_reply_sms").select("message_id, outcome").inFilter("message_id", ids);
+      return {
+        for (final r in (rows as List).cast<Map<String, dynamic>>())
+          if (r["message_id"] is String && r["outcome"] is String) r["message_id"] as String: r["outcome"] as String,
+      };
+    } catch (_) {
+      return {};
+    }
   }
 
   static Map<String, dynamic> _trainerNoteToJson(TrainerNote n) => {

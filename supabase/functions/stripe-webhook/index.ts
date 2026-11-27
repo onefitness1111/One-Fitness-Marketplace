@@ -16,7 +16,7 @@ import { sendEmail } from "../_shared/sendEmail.ts";
 import { swapMembershipEnrollment, clientBySubscription, nextSlotHolder } from "../_shared/planEnrollments.ts";
 import { endFreeze, loadFreezeClient } from "../_shared/freezeOps.ts";
 import { pacificToday } from "../_shared/membershipFreeze.mjs";
-import { sendSms } from "../_shared/sendSms.ts";
+import { sendAutoSms } from "../_shared/autoSms.ts";
 import { sendPush } from "../_shared/sendPush.ts";
 import {
   backfillSubscriptionLink,
@@ -25,6 +25,7 @@ import {
   subscriptionIdFromInvoice,
   subscriptionMetadataFromInvoice,
 } from "../_shared/stripeSubscriptionRef.mjs";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2024-06-20",
@@ -57,7 +58,7 @@ async function sendReferralEmail(toEmail: string, name: string) {
   await sendEmail(
     toEmail,
     "You just earned 3 rewards points!",
-    `Hi ${name},\n\nSomeone you referred just completed their first purchase — you've been credited 3 rewards points. Check the Rewards tab in the app to see your balance.\n\n— ONE Fitness`,
+    `Hi ${name},\n\nSomeone you referred just completed their first purchase — you've been credited 3 rewards points. Check the Rewards tab in the app to see your balance.\n\n${EMAIL_SIGNOFF}`,
   );
 }
 
@@ -557,7 +558,7 @@ serve(async (req) => {
               `Hi ${profile.name || "there"},\n\n` +
                 `Your payment of $${(subtotalCents / 100).toFixed(2)} for ${plan?.name || "your plan"} was successful.` +
                 `${isSubscription ? " Your membership is now active." : " Your package has been added to your account."}` +
-                `\n\n— ONE Fitness`,
+                `\n\n${EMAIL_SIGNOFF}`,
             );
           } catch (emailErr) {
             console.error("stripe-webhook: payment receipt email failed:", emailErr instanceof Error ? emailErr.message : String(emailErr));
@@ -795,16 +796,18 @@ serve(async (req) => {
 
           console.log(`stripe-webhook: payment failed for ${clientRow.profile_id}, invoice ${invoice.id}`);
 
-          // Notifications spec — "Failed payment" (SMS). Requires the
-          // client's own opt-in (clients.sms_opt_in) AND Twilio secrets to
-          // actually be set — sendSms no-ops quietly otherwise, so this is
-          // safe to leave deployed before either exists.
+          // Notifications spec — "Failed payment" (SMS). Same consent rules as
+          // every automatic text (autoSms.ts): opted in, no STOP, texts not
+          // turned off in the app. Quiet hours (9pm-8am Pacific): it waits
+          // for 8:00am. One text per invoice.
           if (clientRow.sms_opt_in && profile?.phone) {
             try {
-              await sendSms(
-                profile.phone,
-                `ONE Fitness: Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
-              );
+              await sendAutoSms(admin, {
+                profileId: clientRow.profile_id as string,
+                text: `Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
+                kind: "payment-failed",
+                ref: String(invoice.id),
+              });
             } catch (smsErr) {
               console.error("stripe-webhook: failed-payment SMS failed:", smsErr instanceof Error ? smsErr.message : String(smsErr));
             }
@@ -833,7 +836,7 @@ serve(async (req) => {
                 `Hi ${profile.name || "there"},\n\n` +
                   `A new invoice for $${((invoice.amount_due ?? 0) / 100).toFixed(2)} has been generated${dueDate ? `, due ${dueDate}` : ""}.` +
                   `${invoice.hosted_invoice_url ? `\n\nView it here: ${invoice.hosted_invoice_url}` : ""}` +
-                  `\n\n— ONE Fitness`,
+                  `\n\n${EMAIL_SIGNOFF}`,
               );
             } catch (emailErr) {
               console.error("stripe-webhook: invoice-generated email failed:", emailErr instanceof Error ? emailErr.message : String(emailErr));
