@@ -6,21 +6,24 @@
 // happened to tap Decline.
 //
 // Deployed --no-verify-jwt — cron carries no user session — and gated by the
-// same shared x-cron-secret as send-scheduled-reminders.
+// timer's x-cron-secret (Vault secret via cron_vault_secret(); the older
+// CRON_SECRET is still accepted). Texts it causes wait for 8:00am during
+// quiet hours (sendAutoSms).
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isCronRequest } from "../_shared/cronAuth.ts";
+import { pacificDate } from "../_shared/quietHours.mjs";
 import { offerSlot } from "../_shared/waitlistOffers.ts";
 
 const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
 
 serve(async (req) => {
-  const secret = Deno.env.get("CRON_SECRET");
-  if (!secret || req.headers.get("x-cron-secret") !== secret) {
+  if (!(await isCronRequest(admin, req))) {
     return new Response("Forbidden", { status: 403 });
   }
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = pacificDate(new Date());
     const { data: rows } = await admin.from("waitlist")
       .select("trainer_id, date, slot")
       .in("status", ["waiting", "offered"])
