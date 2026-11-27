@@ -29,15 +29,21 @@ export const WINDOW_MS = 6 * 60 * 60 * 1000;
 
 export const BUSINESS_NAME = OWNER_DISPLAY_NAME;
 
-// This gym's own App Store page is not a link we can verify. A public
-// "One Fitness" app belongs to a different company, so it is not used here.
-// Replace APP_STORE_LINK before the lead text goes live.
-export const APP_STORE_URL = "APP_STORE_LINK";
-export const PLAY_STORE_URL = "GOOGLE_PLAY_LINK";
+// The App Store page is app_config.app_store_url (checked Nov 27, 2026:
+// "One Fitness Marketplace" on the App Store). The Android app is not on
+// Google Play yet, so app_config.play_store_url is empty and the text
+// points Android phones at the website instead. The inbound handler reads
+// both from app_config on every text; these are only the fallbacks.
+export const APP_STORE_URL = "https://apps.apple.com/app/one-fitness-marketplace/id6811959585";
+export const PLAY_STORE_URL = "";
+export const WEBSITE_URL = "https://www.onefitnessworkout.com";
 
 export const HELP_TEXT =
   `${SMS_PREFIX}for help call (818) 223-7001 or email info@onefitnessworkout.com. ` +
   "Reply STOP to unsubscribe. Msg & data rates may apply.";
+
+export const COACH_TEXTING_OFF_TEXT =
+  `${SMS_PREFIX}Texting clients is turned off for your account, so this went to ${OWNER_DISPLAY_NAME} instead. Please message clients in the app.`;
 
 const OPT_OUT = new Set(["STOP", "STOPALL", "CANCEL", "END", "QUIT", "UNSUBSCRIBE", "REVOKE", "OPTOUT"]);
 const OPT_IN = new Set(["START", "UNSTOP", "JOIN"]);
@@ -77,10 +83,19 @@ export function unknownSenderLabel(phone) {
   return tail ? `a new number ending ${tail}` : "a new number";
 }
 
-export function leadReply() {
+/** Only real https links are used. A placeholder or blank falls back. */
+function realLink(value, fallback) {
+  const text = String(value ?? "").trim();
+  return /^https:\/\/\S+$/.test(text) ? text : fallback;
+}
+
+export function leadReply({ appStoreUrl, playStoreUrl } = {}) {
+  const apple = realLink(appStoreUrl, APP_STORE_URL);
+  const play = realLink(playStoreUrl, PLAY_STORE_URL);
+  const android = play ? `Google Play: ${play}` : `Android: ${WEBSITE_URL}`;
   return (
-    "Hey, we see you're not a ONE Fitness client yet! Tap here to create your profile so we can help you further: " +
-    `${APP_STORE_URL}\nGoogle Play: ${PLAY_STORE_URL}`
+    `Hey, we see you're not a ${BUSINESS_NAME} client yet! Create your profile so we can help you further. ` +
+    `iPhone: ${apple}\n${android}`
   );
 }
 
@@ -268,6 +283,27 @@ export function canText(person) {
   return person.hasConsent === true;
 }
 
+/**
+ * Why a person cannot be texted, in the words the sender sees under the
+ * message. null when they can be. Never reveals the number.
+ */
+export function smsSkipReason(person) {
+  if (!person) return "no mobile number";
+  if (!String(person.phone || "").trim()) return "no mobile number";
+  if (person.optedOut === true) return "replied STOP";
+  if (isStaffRole(person.role)) return null;
+  if (person.declined === true) return "turned texts off";
+  if (person.hasConsent !== true) return "not opted in to texts";
+  return null;
+}
+
+/** The text a tagged coach gets: the owner's words and which client it is about. */
+export function tagNoticeText(body, clientName) {
+  const name = String(clientName || "").trim();
+  const text = String(body || "").trim();
+  return name ? `${text} (re: ${name})` : text;
+}
+
 /** A client writing to a coach or the owner. The channel picker does not apply. */
 export function clientToStaff(sender, recipient) {
   return sender?.role === "client" && isStaffRole(recipient?.role);
@@ -322,6 +358,14 @@ export class ThreadBook {
     this.likes = [];
     this.outbox = [];
     this.leads = [];
+    // Owner @CoachName tags: clientId -> { coachId, openedAt }. For 6 hours
+    // the client's untagged texts go to that coach (sms_reply_routes).
+    this.replyRoutes = new Map();
+    // app_config.app_store_url / play_store_url, for the lead reply.
+    this.storeLinks = {};
+    // Coaches whose "Text clients" switch is off. Their texts to the business
+    // number are never relayed to a client.
+    this.textingOff = new Set();
     // Matches app_config.sms_invite_enabled. Off until a test or the
     // server turns it on. No invite is queued while this is false.
     this.inviteEnabled = false;
@@ -363,8 +407,16 @@ export class ThreadBook {
     return this.conversations.get(pairKey(a, b)) || null;
   }
 
-  /** Existing threads and saved messages, so a new text can see the window. */
-  seed({ conversations = [], messages = [] } = {}) {
+  /**
+   * Existing threads and saved messages, so a new text can see the window.
+   * @param {{ conversations?: any[], messages?: any[], replyRoutes?: any[] }} [seedData]
+   */
+  seed({ conversations = [], messages = [], replyRoutes = [] } = {}) {
+    for (const route of replyRoutes) {
+      if (route?.clientId && route?.coachId) {
+        this.replyRoutes.set(route.clientId, { coachId: route.coachId, openedAt: route.openedAt });
+      }
+    }
     for (const convo of conversations) {
       this.conversations.set(convo.key, {
         key: convo.key,
@@ -389,6 +441,24 @@ export class ThreadBook {
 
   bump(convo, now) {
     convo.lastActivityAt = now;
+  }
+
+  /**
+   * The coach an owner tag points this client's replies to, or null.
+   * The tag opens a fresh 6-hour window. It stops applying when the window
+   * ends or when the client has newer activity in another thread.
+   */
+  taggedCoachFor(clientId, now) {
+    const route = this.replyRoutes.get(clientId);
+    if (!route || !windowOpen(route.openedAt, now)) return null;
+    const coach = this.people.get(route.coachId);
+    if (!coach || coach.role !== "coach") return null;
+    const opened = typeof route.openedAt === "number" ? route.openedAt : Date.parse(route.openedAt);
+    const coachKey = pairKey(clientId, coach.id);
+    const newerElsewhere = [...this.conversations.values()].some((c) =>
+      (c.a === clientId || c.b === clientId) && c.key !== coachKey && c.lastActivityAt != null && c.lastActivityAt > opened
+    );
+    return newerElsewhere ? null : coach;
   }
 
   activeConvos(personId, now) {
@@ -442,7 +512,7 @@ export class ThreadBook {
     });
     this._relaySaved({ from, to, message, includeSms, now });
 
-    if (from.role === "owner" && convo.routedTo === "business") {
+    if (from.role === "owner" && convo.routedTo === "business" && to.role === "client") {
       const tagged = matchCoachTag(text, this.coaches()) || matchCoachTag(message.body, this.coaches());
       if (tagged && tagged.id !== to.id && tagged.id !== from.id) {
         const coach = this.person(tagged.id);
@@ -457,7 +527,10 @@ export class ThreadBook {
           routedTo: "conversation",
           alreadyPrefixed: true,
         });
-        if (includeSms) this.textPerson(coach, copy.body);
+        // The copy is in-app only, so the client is not texted twice.
+        if (includeSms) this.textPerson(coach, tagNoticeText(copy.body, to.displayName));
+        // The tag opens a fresh 6-hour window: the client's replies go to the coach.
+        this.replyRoutes.set(to.id, { coachId: coach.id, openedAt: now });
       }
     }
 
@@ -522,6 +595,15 @@ export class ThreadBook {
    */
   receiveSms({ fromId, text, now, phone }) {
     const before = this.outbox.length;
+    // STOP / HELP / START from a number we don't know: answer the keyword,
+    // never the signup text. Twilio also blocks that number after STOP.
+    const unknownKeyword = fromId ? null : keywordKind(text);
+    if (unknownKeyword === "stop" || unknownKeyword === "start") {
+      return { kind: unknownKeyword, twiml: null, sms: [], routedTo: null };
+    }
+    if (unknownKeyword === "help") {
+      return { kind: "help", twiml: HELP_TEXT, sms: [], routedTo: null };
+    }
     if (!fromId) {
       this.leads.push({
         phone: phone || "",
@@ -533,7 +615,7 @@ export class ThreadBook {
       });
       const owner = this.owner();
       if (owner) this.textPerson(owner, businessNotice(unknownSenderLabel(phone)));
-      return { kind: "lead", twiml: leadReply(), sms: this.outbox.slice(before), routedTo: "business" };
+      return { kind: "lead", twiml: leadReply(this.storeLinks), sms: this.outbox.slice(before), routedTo: "business" };
     }
 
     const keyword = keywordKind(text);
@@ -606,7 +688,8 @@ export class ThreadBook {
       }
     }
 
-    if (from.role === "coach") {
+    const blockedCoach = from.role === "coach" && this.textingOff.has(from.id);
+    if (from.role === "coach" && !blockedCoach) {
       const clientTag = matchClientTag(text, this.clients());
       if (clientTag && clientTag.id !== from.id) {
         return this._deliverInbound(from, this.person(clientTag.id), text, now, "tag", before);
@@ -615,7 +698,7 @@ export class ThreadBook {
       if (recentClient) {
         return this._deliverInbound(from, recentClient, text, now, "active", before);
       }
-    } else {
+    } else if (from.role !== "coach") {
       const tagged = matchCoachTag(text, this.coaches());
       if (tagged && tagged.id !== from.id) {
         const coach = this.person(tagged.id);
@@ -627,13 +710,23 @@ export class ThreadBook {
           return this._deliverInbound(from, this.person(clientTag.id), text, now, "tag", before);
         }
       }
+      if (from.role === "client") {
+        const routed = this.taggedCoachFor(from.id, now);
+        if (routed) return this._deliverInbound(from, routed, text, now, "owner-tag", before);
+      }
     }
 
-    const active = this.activeConvos(from.id, now);
+    const active = this.activeConvos(from.id, now).filter((convo) => {
+      if (!blockedCoach) return true;
+      const other = this.people.get(convo.a === from.id ? convo.b : convo.a);
+      return other?.role !== "client";
+    });
     if (active.length > 0) {
       const convo = active[0];
       const otherId = convo.a === from.id ? convo.b : convo.a;
-      return this._deliverInbound(from, this.person(otherId), text, now, "active", before);
+      const delivered = this._deliverInbound(from, this.person(otherId), text, now, "active", before);
+      if (blockedCoach) delivered.twiml = COACH_TEXTING_OFF_TEXT;
+      return delivered;
     }
 
     const owner = this.owner();
@@ -649,7 +742,9 @@ export class ThreadBook {
       });
       return { kind: "business", message: null, sms: [], twiml: null, routedTo: "business" };
     }
-    return this._deliverInbound(from, owner, text, now, "fallthrough", before);
+    const delivered = this._deliverInbound(from, owner, text, now, "fallthrough", before);
+    if (blockedCoach) delivered.twiml = COACH_TEXTING_OFF_TEXT;
+    return delivered;
   }
 
   _deliverInbound(from, to, text, now, how, before) {
@@ -701,8 +796,11 @@ export function heldStaffTexts(rows) {
     }));
 }
 
-/** What the app-send texter should send for a row that is already saved. */
-export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName, inviteEnabled = false }) {
+/**
+ * What the app-send texter should send for a row that is already saved.
+ * @param {{ sender: any, recipient: any, body: string, originChannel?: string, routedTo?: string, coaches?: any[], includeSms?: boolean, groupName?: any, inviteEnabled?: boolean, trainerId?: string | null }} input
+ */
+export function planTextsForSavedMessage({ sender, recipient, body, originChannel, routedTo, coaches, includeSms = true, groupName, inviteEnabled = false, trainerId = null }) {
   const sms = [];
   const passAlong = [];
   let clientSms = null;
@@ -732,11 +830,21 @@ export function planTextsForSavedMessage({ sender, recipient, body, originChanne
       body: savedMessageText({ sender, recipient, body, originChannel, routedTo, groupName }),
     });
   }
-  if (sender.role === "owner" && routedTo === "business" && recipient) {
+  // The owner tagging a coach in a client's thread (Business Chat or another
+  // coach's thread): copy it into the tagged coach's thread unless that is
+  // already the thread, and open a 6-hour reply window to that coach.
+  let replyRoute = null;
+  if (sender.role === "owner" && recipient?.role === "client") {
     const tagged = matchCoachTag(body, coaches);
     if (tagged && tagged.id !== recipient.id && tagged.id !== sender.id) {
-      passAlong.push({ coachId: tagged.id, clientId: recipient.id, body });
+      replyRoute = { clientId: recipient.id, coachId: tagged.id };
+      if (routedTo === "business" || (trainerId && trainerId !== tagged.id)) {
+        passAlong.push({ coachId: tagged.id, clientId: recipient.id, body });
+      }
     }
   }
-  return { sms, passAlong, clientSms, invite, hold };
+  const skipReason = staffToClient && clientSms === "skip" ? smsSkipReason(recipient)
+    : (!staffToClient && sms.length === 0 && (includeSms || clientToStaff(sender, recipient))) ? smsSkipReason(recipient) || "no mobile number"
+    : null;
+  return { sms, passAlong, clientSms, invite, hold, replyRoute, skipReason };
 }

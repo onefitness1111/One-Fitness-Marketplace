@@ -21,10 +21,21 @@
 // trainer_id is a different coach. A client's message still texts staff.
 // Coach assignment is not checked. The app thread is unaffected.
 // The staff push is claimed per message so client-notify does not push twice.
+//
+// Nov 27, 2026 changes:
+// - A coach whose "Text clients" switch is off never texts a client from
+//   here, even if the row says sms (the database trigger also strips it).
+// - The owner tagging @CoachName in any client thread copies the message
+//   into that coach's thread (in-app only, so the client is not texted
+//   twice), alerts the coach, and opens a 6-hour window in which the
+//   client's text replies go to that coach (sms_reply_routes).
+// - The outcome names the reason a text was not sent ("skipped: replied
+//   STOP", "skipped: no mobile number", ...). The sender sees it under the
+//   message in the app.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { clientToStaff, planTextsForSavedMessage, smsRecipientId } from "../_shared/chatRouting.mjs";
+import { WINDOW_MS, clientToStaff, planTextsForSavedMessage, smsRecipientId, tagNoticeText } from "../_shared/chatRouting.mjs";
 import { lineType, loadCoaches, loadParty, toE164 } from "../_shared/chatPeople.ts";
 import {
   claimInviteSend,
@@ -32,7 +43,8 @@ import {
   markMessageSmsPending,
   rollbackInviteSend,
 } from "../_shared/inviteSms.ts";
-import { sendSms } from "../_shared/sendSms.ts";
+import { sendSms, sendSmsDetailed } from "../_shared/sendSms.ts";
+import { sendPush } from "../_shared/sendPush.ts";
 import { INVITE_SMS_BODY, smsInviteEnabledFlag } from "../_shared/smsInvite.mjs";
 import { pushStaffForClientMessage } from "../_shared/staffAlert.ts";
 
@@ -40,6 +52,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+/** Words for a text sendSms refused, as the sender sees them. */
+function refusedReason(skipped: string | undefined): string {
+  if (skipped === "opted out") return "replied STOP";
+  if (skipped === "invalid number" || skipped === "undeliverable") return "number can't get texts";
+  if (skipped === "not configured") return "twilio not configured";
+  return "text not accepted";
 }
 
 function channelHasSms(channel: string | null): boolean {
@@ -98,7 +118,7 @@ serve(async (req) => {
 
     const { data: msg, error } = await admin
       .from("messages")
-      .select("id, client_id, trainer_id, sender_id, who, body, channel, origin_channel, routed_to, group_name")
+      .select("id, client_id, trainer_id, sender_id, who, body, channel, origin_channel, routed_to, group_name, copied_from")
       .eq("id", messageId)
       .maybeSingle();
     if (error) throw error;
@@ -124,7 +144,15 @@ serve(async (req) => {
 
     const coaches = sender.role === "owner" ? await loadCoaches(admin) : [];
     const relayToStaff = clientToStaff(sender, recipient);
-    const includeSms = relayToStaff || channelHasSms(msg.channel as string | null);
+    let includeSms = relayToStaff || channelHasSms(msg.channel as string | null);
+    let coachTextingOff = false;
+    if (includeSms && sender.role === "coach" && recipient?.role === "client") {
+      const { data: allowed } = await admin.rpc("has_coach_permission", { p_uid: sender.id, p_perm: "send_texts" });
+      if (allowed !== true) {
+        includeSms = false;
+        coachTextingOff = true;
+      }
+    }
     const inviteEnabled = await loadSmsInviteEnabled(admin);
     const plan = planTextsForSavedMessage({
       sender,
@@ -136,19 +164,50 @@ serve(async (req) => {
       includeSms,
       groupName: msg.group_name,
       inviteEnabled,
+      trainerId: msg.trainer_id as string | null,
     });
 
-    for (const copy of plan.passAlong) {
+    // A copy made below is not a new tag. It never copies or alerts again.
+    const isCopy = msg.copied_from != null;
+    for (const copy of isCopy ? [] : plan.passAlong) {
       const { error: copyErr } = await admin.from("messages").insert({
         client_id: copy.clientId,
         trainer_id: copy.coachId,
         sender_id: sender.id,
         who: "trainer",
         body: copy.body,
-        channel: msg.channel,
+        // In-app only: the client already got the original.
+        channel: "inapp",
+        copied_from: messageId,
         read_by_coach: true,
       });
       if (copyErr) console.warn(`chat-auto-reply-sms: pass-along not saved: ${copyErr.message}`);
+    }
+
+    if (plan.replyRoute && !isCopy) {
+      const openedAt = new Date();
+      const { error: routeErr } = await admin.from("sms_reply_routes").upsert({
+        client_id: plan.replyRoute.clientId,
+        coach_id: plan.replyRoute.coachId,
+        message_id: messageId,
+        opened_at: openedAt.toISOString(),
+        expires_at: new Date(openedAt.getTime() + WINDOW_MS).toISOString(),
+      }, { onConflict: "client_id" });
+      if (routeErr) console.warn(`chat-auto-reply-sms: reply route not saved: ${routeErr.message}`);
+
+      // Tell the tagged coach. Push always; a text when the owner chose SMS.
+      const coach = await loadParty(admin, plan.replyRoute.coachId);
+      const clientName = recipient?.displayName ?? "";
+      const notice = tagNoticeText(String(msg.body || ""), clientName);
+      const { data: rows } = await admin.from("device_tokens").select("token").eq("profile_id", plan.replyRoute.coachId);
+      await sendPush((rows || []).map((r: { token: string }) => r.token), `You were tagged about ${clientName || "a client"}`, notice.slice(0, 500), {
+        type: "chat",
+        clientId: plan.replyRoute.clientId,
+      });
+      if (includeSms && coach && coach.phone && coach.optedOut !== true) {
+        const to = toE164(coach.phone);
+        if (to) await sendSms(to, notice);
+      }
     }
 
     if (relayToStaff && recipient) {
@@ -160,6 +219,7 @@ serve(async (req) => {
       });
     }
 
+    if (coachTextingOff) return await record("skipped: texting is off for this coach");
     if (!includeSms) return await record("skipped: sms not chosen");
 
     if (plan.clientSms === "disabled" || (plan.clientSms === "invite" && inviteEnabled !== true)) {
@@ -192,7 +252,7 @@ serve(async (req) => {
       return await record("invite sent");
     }
 
-    if (plan.sms.length === 0) return await record("skipped: recipient cannot be texted");
+    if (plan.sms.length === 0) return await record(`skipped: ${plan.skipReason ?? "recipient cannot be texted"}`);
 
     const sid = Deno.env.get("TWILIO_ACCOUNT_SID");
     const token = Deno.env.get("TWILIO_AUTH_TOKEN");
@@ -210,6 +270,7 @@ serve(async (req) => {
     }
 
     let sent = 0;
+    let refused = "no mobile number";
     for (const item of plan.sms) {
       const party = item.toId === recipient?.id ? recipient : await loadParty(admin, item.toId);
       const to = party ? toE164(party.phone) : null;
@@ -217,12 +278,14 @@ serve(async (req) => {
       const type = await lineType(sid, token, to);
       if (type === "landline" || type === "fixedVoip") {
         console.log(`chat-auto-reply-sms: skipped landline for ${item.toId}`);
+        refused = "number can't get texts";
         continue;
       }
-      const ok = await sendSms(to, item.body);
-      if (ok) sent += 1;
+      const result = await sendSmsDetailed(to, item.body, { kind: "chat" });
+      if (result.ok) sent += 1;
+      else refused = refusedReason(result.skipped);
     }
-    return await record(sent > 0 ? `sent ${sent}` : "skipped: no mobile number");
+    return await record(sent > 0 ? `sent ${sent}` : `skipped: ${refused}`);
   } catch (e) {
     console.error("chat-auto-reply-sms failed:", e instanceof Error ? e.message : String(e));
     return json({ error: "failed" }, 500);

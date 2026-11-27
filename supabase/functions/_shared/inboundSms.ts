@@ -2,8 +2,14 @@
 //
 // STOP, UNSUBSCRIBE and HELP are handled here. A normal text is routed by
 // chatRouting.mjs: a client tags @CoachName; a coach tags @ClientName;
-// no tag stays with the conversation still inside 6 hours (for a coach,
-// the client they last texted); otherwise Business Chat.
+// an owner @CoachName tag in the client's thread sends that client's
+// replies to the tagged coach for 6 hours (sms_reply_routes); no tag stays
+// with the conversation still inside 6 hours (for a coach, the client they
+// last texted); otherwise Business Chat.
+//
+// STOP also arrives as Twilio's OptOutType=STOP (Advanced Opt-Out), even
+// when the words differ; both mark the profile opted out. START reverses.
+// A coach whose "Text clients" switch is off is never relayed to a client.
 //
 // Deploy WITHOUT jwt verification. Twilio sends no JWT. The request is
 // checked with Twilio's signature instead.
@@ -178,6 +184,30 @@ export async function handleInbound(req: Request): Promise<Response> {
 
     const book = new ThreadBook([...people.values()]);
 
+    // Coaches with "Text clients" off. Their texts never reach a client.
+    for (const person of people.values()) {
+      if (person.role !== "coach") continue;
+      const { data: allowed } = await admin.rpc("has_coach_permission", { p_uid: person.id, p_perm: "send_texts" });
+      if (allowed !== true) book.textingOff.add(person.id);
+    }
+
+    const { data: config } = await admin
+      .from("app_config")
+      .select("app_store_url, play_store_url")
+      .eq("id", "mobile")
+      .maybeSingle();
+    book.storeLinks = { appStoreUrl: config?.app_store_url ?? null, playStoreUrl: config?.play_store_url ?? null };
+
+    const { data: routeRows } = await admin
+      .from("sms_reply_routes")
+      .select("client_id, coach_id, opened_at, expires_at")
+      .gt("expires_at", new Date().toISOString());
+    const replyRoutes = (routeRows ?? []).map((row: { client_id: string; coach_id: string; opened_at: string }) => ({
+      clientId: row.client_id,
+      coachId: row.coach_id,
+      openedAt: Date.parse(row.opened_at),
+    }));
+
     const { data: convos } = await admin.from("conversations").select("id, participant_a, participant_b, last_activity_at");
     const ownerIds = new Set([...people.values()].filter((p) => p.role === "owner").map((p) => p.id));
     const keyByConversation = new Map<string, string>();
@@ -217,25 +247,39 @@ export async function handleInbound(req: Request): Promise<Response> {
         routedTo: (msg.routed_to as string) || "conversation",
       });
     }
-    book.seed({ conversations: seededConvos, messages: seededMessages });
+    book.seed({ conversations: seededConvos, messages: seededMessages, replyRoutes });
 
     const beforeMessages = book.messages.length;
     const beforeLikes = book.likes.length;
-    const result = book.receiveSms({
-      fromId: (fromId as string | null) || null,
-      text,
-      now: Date.now(),
-      phone: from,
-    });
+    // Twilio's own opt-out keywords (Advanced Opt-Out) win over our parsing.
+    const optOutType = String(params["OptOutType"] ?? "").trim().toUpperCase();
+    // deno-lint-ignore no-explicit-any
+    let result: any;
+    if (optOutType === "STOP") {
+      result = { kind: "stop", twiml: null, sms: [] };
+    } else if (optOutType === "START") {
+      result = { kind: "start", twiml: null, sms: [] };
+    } else {
+      result = book.receiveSms({
+        fromId: (fromId as string | null) || null,
+        text,
+        now: Date.now(),
+        phone: from,
+      });
+    }
 
-    if (result.kind === "stop" && fromId) await markOptOut(admin, fromId as string);
+    // Every profile on this number, so a shared number can't keep texting.
+    if (result.kind === "stop") {
+      if (fromId) await markOptOut(admin, fromId as string);
+      await admin.rpc("sms_mark_phone", { raw_phone: from, p_kind: "stop" });
+    }
     if (result.kind === "start" && fromId) await markOptIn(admin, fromId as string);
     if (result.kind === "invite-yes" && fromId) {
       const person = people.get(fromId as string);
       const claimed = await recordInviteYes(admin, fromId as string, person?.inviteText ?? null);
       if (claimed && person) {
         const phone = person.phone || from;
-        if (result.confirmation) await sendSms(toE164(phone) || "", result.confirmation);
+        if (result.confirmation) await sendSms(toE164(phone) || "", String(result.confirmation));
         await deliverHeldStaffSms(admin, fromId as string, phone, async (senderId) => {
           const known = people.get(senderId);
           if (!known) return null;
