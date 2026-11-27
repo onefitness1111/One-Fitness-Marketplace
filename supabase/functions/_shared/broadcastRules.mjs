@@ -73,7 +73,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
   let sms = 0;
   let skippedNoPhone = 0;
   let skippedOptOut = 0;
-  let skippedQuietHours = 0;
+  let smsLater = 0;
   let email = 0;
   let skippedNoEmail = 0;
   const quiet = smsQuietHours(now);
@@ -84,7 +84,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
     if (smsOn) {
       if (!String(person.phone || "").trim()) skippedNoPhone += 1;
       else if (person.smsOptIn !== true || person.smsOptedOut === true) skippedOptOut += 1;
-      else if (quiet) skippedQuietHours += 1;
+      else if (quiet) smsLater += 1;
       else sms += 1;
     }
     if (emailOn) {
@@ -99,7 +99,7 @@ export function previewBroadcast({ ways, recipients, now, refused = 0 }) {
     email,
     skippedNoPhone,
     skippedOptOut,
-    skippedQuietHours,
+    smsLater,
     skippedNoEmail,
     refused,
   };

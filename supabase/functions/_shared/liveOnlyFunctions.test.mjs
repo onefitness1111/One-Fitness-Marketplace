@@ -54,20 +54,20 @@ test("TCPA: nothing texts a client without an explicit opt-in", () => {
     ...LIVE_ONLY.map((s) => `${s}/index.ts`),
   ];
   for (const f of files) assert.doesNotMatch(code(f), /sms_opt_in\s*!==\s*false/, f);
-  const offers = code("_shared/waitlistOffers.ts");
-  assert.match(offers, /smsClientIfOptedIn\(/);
-  assert.doesNotMatch(offers, /sendSms\(/);
-  // notifySms hands off to sendAutoSms, whose rule needs an explicit
-  // opt-in and no STOP (autoSmsRules.mjs).
+  // Every automatic text goes through sendAutoSms, whose rule needs an
+  // explicit opt-in and no STOP (autoSmsRules.mjs).
   const rules = code("_shared/autoSmsRules.mjs");
   assert.match(rules, /smsOptIn !== true\) return "skip: not opted in"/);
   assert.match(rules, /optedOut === true\) return "skip: replied STOP"/);
   const auto = code("_shared/autoSms.ts");
   assert.match(auto, /sms_opt_in === true/);
   assert.match(auto, /sms_opted_out === true/);
+  const offers = code("_shared/waitlistOffers.ts");
+  assert.match(offers, /sendAutoSms\(/);
+  assert.doesNotMatch(offers, /sendSms\(/);
   assert.match(code("_shared/notifySms.ts"), /sendAutoSms\(/);
   assert.match(code("notify-waitlist-joined/index.ts"), /sms_opt_in === true && profile\?\.sms_opted_out !== true/);
-  assert.match(code("send-scheduled-reminders/index.ts"), /sms_opted_out === true\) return/);
+  assert.match(code("notify-waitlist-joined/index.ts"), /sendAutoSms\(/);
 });
 
 test("redeem-points: one redemption is 40..100 points", () => {

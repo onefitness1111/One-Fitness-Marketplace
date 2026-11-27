@@ -276,7 +276,7 @@ class _Review extends StatelessWidget {
         if (preview.skippedNoPhone == 0 && preview.sms == 0)
           "Texts use the number on file. The number is not shown here.",
         if (preview.skippedOptOut > 0) "Skipped, no text permission: ${preview.skippedOptOut}",
-        if (preview.skippedQuietHours > 0) "Skipped, quiet hours: ${preview.skippedQuietHours}",
+        if (preview.smsLater > 0) "Texted at 8:00am (quiet hours): ${preview.smsLater}",
       ],
       if (ways.email) ...[
         "Email: ${preview.email}",

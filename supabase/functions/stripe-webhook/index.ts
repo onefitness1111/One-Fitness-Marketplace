@@ -16,7 +16,7 @@ import { sendEmail } from "../_shared/sendEmail.ts";
 import { swapMembershipEnrollment, clientBySubscription, nextSlotHolder } from "../_shared/planEnrollments.ts";
 import { endFreeze, loadFreezeClient } from "../_shared/freezeOps.ts";
 import { pacificToday } from "../_shared/membershipFreeze.mjs";
-import { sendSms } from "../_shared/sendSms.ts";
+import { sendAutoSms } from "../_shared/autoSms.ts";
 import { sendPush } from "../_shared/sendPush.ts";
 import {
   backfillSubscriptionLink,
@@ -25,7 +25,7 @@ import {
   subscriptionIdFromInvoice,
   subscriptionMetadataFromInvoice,
 } from "../_shared/stripeSubscriptionRef.mjs";
-import { EMAIL_SIGNOFF, SMS_PREFIX } from "../_shared/businessName.mjs";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2024-06-20",
@@ -796,16 +796,18 @@ serve(async (req) => {
 
           console.log(`stripe-webhook: payment failed for ${clientRow.profile_id}, invoice ${invoice.id}`);
 
-          // Notifications spec — "Failed payment" (SMS). Requires the
-          // client's own opt-in (clients.sms_opt_in) AND Twilio secrets to
-          // actually be set — sendSms no-ops quietly otherwise, so this is
-          // safe to leave deployed before either exists.
+          // Notifications spec — "Failed payment" (SMS). Same consent rules as
+          // every automatic text (autoSms.ts): opted in, no STOP, texts not
+          // turned off in the app. Quiet hours (9pm-8am Pacific): it waits
+          // for 8:00am. One text per invoice.
           if (clientRow.sms_opt_in && profile?.phone) {
             try {
-              await sendSms(
-                profile.phone,
-                `${SMS_PREFIX}Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
-              );
+              await sendAutoSms(admin, {
+                profileId: clientRow.profile_id as string,
+                text: `Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
+                kind: "payment-failed",
+                ref: String(invoice.id),
+              });
             } catch (smsErr) {
               console.error("stripe-webhook: failed-payment SMS failed:", smsErr instanceof Error ? smsErr.message : String(smsErr));
             }

@@ -13,8 +13,8 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendPush } from "../_shared/sendPush.ts";
 import { sendEmail } from "../_shared/sendEmail.ts";
-import { sendSms } from "../_shared/sendSms.ts";
-import { EMAIL_SIGNOFF, SMS_PREFIX } from "../_shared/businessName.mjs";
+import { sendAutoSms } from "../_shared/autoSms.ts";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -101,12 +101,14 @@ serve(async (req) => {
     // SMS — only with a number on file AND an explicit opt-in (TCPA). A
     // client who never answered (sms_opt_in null) or replied STOP is not
     // texted. Phone is optional at signup, so "no number" is normal.
+    // Quiet hours (9pm-8am Pacific): the text waits for 8:00am.
     try {
       const phone = String(profile?.phone ?? "").trim();
       const optedIn = prefs?.sms_opt_in === true && profile?.sms_opted_out !== true;
       if (phone && optedIn) {
-        await sendSms(phone, `${SMS_PREFIX}${body}`);
-        sent.push("sms");
+        const outcome = await sendAutoSms(admin, { profileId: user.id, text: body, kind: "waitlist-joined" });
+        if (outcome === "sent") sent.push("sms");
+        else if (outcome === "deferred") sent.push("sms-8am");
       }
     } catch (e) {
       console.error("waitlist join sms failed:", e);

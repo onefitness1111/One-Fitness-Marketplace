@@ -118,7 +118,8 @@ BroadcastScope scopeBroadcast({
   return BroadcastScope(allowed: allowed, refused: refused);
 }
 
-/// Texts are quiet before 8:00am and from 9:00pm Pacific.
+/// Texts are quiet before 8:00am and from 9:00pm Pacific. A text sent then
+/// waits and goes out at 8:00am; it is not dropped.
 bool smsQuietHours(DateTime nowUtc) {
   final pacific = _pacific(nowUtc.toUtc());
   return pacific.hour < 8 || pacific.hour >= 21;
@@ -132,7 +133,7 @@ class BroadcastPreview {
     required this.email,
     required this.skippedNoPhone,
     required this.skippedOptOut,
-    required this.skippedQuietHours,
+    required this.smsLater,
     required this.skippedNoEmail,
     required this.refused,
   });
@@ -143,7 +144,8 @@ class BroadcastPreview {
   final int email;
   final int skippedNoPhone;
   final int skippedOptOut;
-  final int skippedQuietHours;
+  /// Opted-in clients whose text waits for 8:00am (quiet hours).
+  final int smsLater;
   final int skippedNoEmail;
   final int refused;
 }
@@ -189,7 +191,7 @@ BroadcastPreview previewBroadcast({
     email: email,
     skippedNoPhone: noPhone,
     skippedOptOut: optedOut,
-    skippedQuietHours: quiet,
+    smsLater: quiet,
     skippedNoEmail: noEmail,
     refused: refused,
   );
