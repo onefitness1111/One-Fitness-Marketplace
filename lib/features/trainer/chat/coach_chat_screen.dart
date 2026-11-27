@@ -370,21 +370,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// into it (including a remembered thread reopened via SharedPreferences)
   /// — mirrors the old _CoachCompose.initState's read-receipt behavior.
   void _markThreadRead(String clientId) {
+    // Per-person read marks (thread_reads): opening a thread clears it for
+    // this staff member only, never for the owner or another coach.
     SupabaseService.markChatRead(clientId);
     ref.read(unreadChatKeysProvider.notifier).clear(clientId);
-    final trainerAuth = ref.read(trainerAuthProvider);
-    final record = ref.read(trainerClientRecordsProvider)[clientId];
-    if (record == null) return;
-    // Same scope as the conversation list's bold/dot (and the thread itself):
-    // the owner sees every coach's messages, so opening the thread has to mark
-    // all of them read, not only the ones addressed to "owner".
-    final isOwner = trainerAuth == "owner";
-    bool isUnread(CommMessage m) =>
-        m.who == "client" && !m.readByCoach && staffSeesMessage(m, isOwner: isOwner, trainerAuth: trainerAuth);
-    if (!record.comms.any(isUnread)) return;
-    final updated = record.comms.map((m) => isUnread(m) ? m.copyWith(readByCoach: true) : m).toList();
-    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
-    SupabaseService.markMessagesRead(clientId).catchError((Object _) {});
   }
 
   /// The owner opened one thread. Other threads with that client stay unread.
@@ -392,16 +381,6 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final key = ownerUnreadKey(clientId, coachKey);
     SupabaseService.markChatRead(key);
     ref.read(unreadChatKeysProvider.notifier).clear(key);
-    final record = ref.read(trainerClientRecordsProvider)[clientId];
-    if (record == null) return;
-    final ownerIds = _ownerIds();
-    bool unreadInThread(CommMessage m) =>
-        ownerThreadCoachKey(m, ownerIds) == coachKey && m.who == "client" && !m.readByCoach;
-    if (!record.comms.any(unreadInThread)) return;
-    final ids = [for (final m in record.comms) if (unreadInThread(m)) m.id];
-    final updated = record.comms.map((m) => unreadInThread(m) ? m.copyWith(readByCoach: true) : m).toList();
-    ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
-    SupabaseService.markMessageIdsRead(ids).catchError((Object _) {});
   }
 
   void _scrollToBottom({bool animate = true}) {
@@ -559,9 +538,8 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
         preview: last.text,
         at: last.sentAt,
         outgoing: last.who == "trainer",
-        // Unread means the client wrote something the coach hasn't opened
-        // yet — the same flag the thread clears on open.
-        unread: unreadKeys.contains(c.id) || mine.any((m) => m.who == "client" && !m.readByCoach),
+        // Unread comes from this coach's own read marks (thread_reads).
+        unread: unreadKeys.contains(c.id),
       ));
     }
     out.sort((a, b) => b.at.compareTo(a.at));

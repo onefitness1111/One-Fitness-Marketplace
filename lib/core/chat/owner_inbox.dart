@@ -136,9 +136,10 @@ List<OwnerInboxRow> ownerClientThreads({
       final messages = entry.value..sort((a, b) => b.sentAt.compareTo(a.sentAt));
       final last = messages.first;
       final business = entry.key == kOwnerBusinessKey;
+      // Each staff member has their own read marks (thread_reads, via
+      // my_unread_chat_keys). The shared read_by_coach flag is not used.
       final unread = unreadKeys.contains(ownerUnreadKey(client.id, entry.key)) ||
-          (business && unreadKeys.contains(client.id)) ||
-          messages.any((m) => m.who == "client" && !m.readByCoach);
+          (business && unreadKeys.contains(client.id));
       rows.add(OwnerInboxRow(
         id: ownerThreadId(client.id, entry.key),
         clientId: client.id,

@@ -3320,23 +3320,6 @@ class SupabaseService {
     return (rows as List).map((r) => r["blocked_id"] as String).toSet();
   }
 
-  /// Marks the messages in one thread read, without clearing the other
-  /// threads that client has with other coaches.
-  static Future<void> markMessageIdsRead(List<String> ids) async {
-    if (ids.isEmpty) return;
-    await client.from("messages").update({"read_by_coach": true}).inFilter("id", ids);
-  }
-
-  /// Read receipts for the coach viewing a thread.
-  static Future<void> markMessagesRead(String clientId) async {
-    await client
-        .from("messages")
-        .update({"read_by_coach": true})
-        .eq("client_id", clientId)
-        .eq("who", "client")
-        .eq("read_by_coach", false);
-  }
-
   static Map<String, dynamic> _trainerNoteToJson(TrainerNote n) => {
     "id": n.id,
     "flag": n.flag,
