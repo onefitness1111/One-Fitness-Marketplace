@@ -105,7 +105,7 @@ class _BroadcastScreenState extends ConsumerState<BroadcastScreen> {
     final mine = _mine(ref.watch(trainerRosterProvider), isOwner, senderId);
     final sender = ref.watch(trainersProvider).where((t) => t.id == trainerAuth);
     final from = isOwner
-        ? "ONE Fitness Marketplace"
+        ? kMarketplaceName
         : (sender.isNotEmpty ? sender.first.displayTitle : coachPublicName());
     final scope = _scope(mine, isOwner, senderId);
     final ways = _ways;

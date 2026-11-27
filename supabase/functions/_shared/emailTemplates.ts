@@ -15,7 +15,9 @@ export type Template = { key: string; enabled: boolean; subject: string; body: s
 const GOLD = "#D4AF37";
 const INK = "#0B0B0B";
 
-export const BUSINESS_NAME_FALLBACK = "ONE Fitness Marketplace";
+import { OWNER_DISPLAY_NAME } from "./businessName.mjs";
+
+export const BUSINESS_NAME_FALLBACK = OWNER_DISPLAY_NAME;
 
 const esc = (s: unknown) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

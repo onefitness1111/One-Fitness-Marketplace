@@ -23,6 +23,7 @@ import {
 } from "../_shared/messagingGuard.ts";
 import { broadcastSummaryChannel, broadcastWays, sanitizeGroupName, smsQuietHours } from "../_shared/broadcastRules.mjs";
 import { publicCoachName } from "../_shared/coachName.ts";
+import { OWNER_DISPLAY_NAME } from "../_shared/businessName.mjs";
 
 const BATCH = 20;
 
@@ -186,7 +187,7 @@ async function remainingBudget(admin: any, senderId: string): Promise<number> {
 
 // deno-lint-ignore no-explicit-any
 async function senderLabel(admin: any, userId: string, role: string): Promise<string> {
-  if (role === "owner") return "ONE Fitness Marketplace";
+  if (role === "owner") return OWNER_DISPLAY_NAME;
   return publicCoachName(admin, userId);
 }
 

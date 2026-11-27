@@ -8,13 +8,15 @@
 // An invite is not sent unless every gate below is true. The server flag
 // defaults to off, so a missing row is not a yes.
 
-export const INVITE_SMS_BODY =
-  "ONE Fitness: Your coach sent you a message in the ONE Fitness app. Reply YES to receive it. Reply STOP to opt out.";
+import { SMS_PREFIX } from "./businessName.mjs";
 
-export const INVITE_SMS_VERSION = "2026-11-21";
+export const INVITE_SMS_BODY =
+  `${SMS_PREFIX}Your coach sent you a message in the ONE Fitness app. Reply YES to receive it. Reply STOP to opt out.`;
+
+export const INVITE_SMS_VERSION = "2026-11-27";
 
 export const INVITE_YES_CONFIRMATION =
-  "ONE Fitness: You're opted in. We'll text you the messages from your coach. Reply STOP to opt out.";
+  `${SMS_PREFIX}You're opted in. We'll text you the messages from your coach. Reply STOP to opt out.`;
 
 /** What is stored on the client and the profile when they reply YES. */
 export function inviteConsentRecord(inviteText = INVITE_SMS_BODY) {

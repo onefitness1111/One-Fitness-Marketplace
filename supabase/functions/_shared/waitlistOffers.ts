@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendPush } from "./sendPush.ts";
 import { sendEmail } from "./sendEmail.ts";
 import { smsClientIfOptedIn } from "./notifySms.ts";
+import { EMAIL_SIGNOFF } from "./businessName.mjs";
 
 /// How long each person has to answer.
 export const OFFER_WINDOW_MINUTES = 240;
@@ -37,7 +38,7 @@ async function notifyClient(clientId: string, title: string, body: string, email
   // who never answered (null) or replied STOP (which clears sms_opt_in and
   // sets profiles.sms_opted_out) gets push and email only.
   await smsClientIfOptedIn(admin, clientId, body);
-  if (profile?.email) await sendEmail(profile.email, title, emailBody ?? `Hi ${profile.name ?? ""},\n\n${body}\n\n— ONE Fitness`);
+  if (profile?.email) await sendEmail(profile.email, title, emailBody ?? `Hi ${profile.name ?? ""},\n\n${body}\n\n${EMAIL_SIGNOFF}`);
 }
 
 /// Expires stale offers for one slot, then — if it's time — offers the next
@@ -100,7 +101,7 @@ export async function offerSlot(trainerId: string, date: string, slot: number): 
     next.client_id as string,
     title,
     body,
-    `Hi ${next.client_name ?? ""},\n\n${body}\n\nIf you don't claim it in time it passes to the next person waiting.\n\n— ONE Fitness`,
+    `Hi ${next.client_name ?? ""},\n\n${body}\n\nIf you don't claim it in time it passes to the next person waiting.\n\n${EMAIL_SIGNOFF}`,
   );
 
   console.log(`offer-waitlist-slot: offered ${trainerId} ${date} ${slot} to ${next.client_id}`);

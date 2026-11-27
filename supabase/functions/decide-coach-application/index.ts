@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendEmail } from "../_shared/sendEmail.ts";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -51,7 +52,7 @@ serve(async (req) => {
       await sendEmail(
         app.email,
         "Your ONE Fitness coach application",
-        `Hi ${name},\n\nThank you for applying. We won't be moving ahead with the application right now.\n\n— ONE Fitness`,
+        `Hi ${name},\n\nThank you for applying. We won't be moving ahead with the application right now.\n\n${EMAIL_SIGNOFF}`,
       );
       return json({ ok: true, codeSent: false });
     }
@@ -72,7 +73,7 @@ serve(async (req) => {
     await sendEmail(
       app.email,
       "You're approved to coach at ONE Fitness",
-      `Hi ${name},\n\nYour application is approved.\n\n${extra}\n\n— ONE Fitness`,
+      `Hi ${name},\n\nYour application is approved.\n\n${extra}\n\n${EMAIL_SIGNOFF}`,
     );
 
     return json({ ok: true, codeSent });

@@ -5,21 +5,21 @@ import "package:onefitness/core/chat/owner_thread_name.dart";
 
 void main() {
   group("Client view of a direct thread with the owner", () {
-    test("the name is exactly ONE Fitness Market", () {
-      expect(kOwnerThreadNameForClients, "ONE Fitness Market");
+    test("the name is exactly ONE Fitness Marketplace", () {
+      expect(kOwnerThreadNameForClients, "ONE Fitness Marketplace");
     });
 
-    test("the owner's real name in a sender prefix becomes ONE Fitness Market", () {
+    test("the owner's real name in a sender prefix becomes ONE Fitness Marketplace", () {
       expect(
         ownerThreadTextForClient("Chris McCarthy: See you at 6", ownerNames: const ["Chris McCarthy"]),
-        "ONE Fitness Market: See you at 6",
+        "ONE Fitness Marketplace: See you at 6",
       );
     });
 
-    test("business labels become ONE Fitness Market too, longest match first", () {
-      expect(ownerThreadTextForClient("ONE Fitness Marketplace: Hi"), "ONE Fitness Market: Hi");
-      expect(ownerThreadTextForClient("ONE Fitness: Hi"), "ONE Fitness Market: Hi");
-      expect(ownerThreadTextForClient("ONE Fitness Market: Hi"), "ONE Fitness Market: Hi");
+    test("business labels become ONE Fitness Marketplace too, longest match first", () {
+      expect(ownerThreadTextForClient("ONE Fitness Marketplace: Hi"), "ONE Fitness Marketplace: Hi");
+      expect(ownerThreadTextForClient("ONE Fitness: Hi"), "ONE Fitness Marketplace: Hi");
+      expect(ownerThreadTextForClient("ONE Fitness Market: Hi"), "ONE Fitness Marketplace: Hi");
     });
 
     test("other text and coach messages are left alone", () {
@@ -28,7 +28,7 @@ void main() {
       expect(ownerThreadTextForClient("Hi", ownerNames: const [""]), "Hi");
     });
 
-    test("the client chat names the owner thread ONE Fitness Market and never uses owner.name", () {
+    test("the client chat names the owner thread ONE Fitness Marketplace and never uses owner.name", () {
       final src = File("lib/features/client/chat/chat_screen.dart").readAsStringSync();
       expect(src, contains("name: kOwnerThreadNameForClients,"));
       expect(src, contains("coachName: kOwnerThreadNameForClients,"));

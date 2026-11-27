@@ -25,6 +25,7 @@ import {
   subscriptionIdFromInvoice,
   subscriptionMetadataFromInvoice,
 } from "../_shared/stripeSubscriptionRef.mjs";
+import { EMAIL_SIGNOFF, SMS_PREFIX } from "../_shared/businessName.mjs";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2024-06-20",
@@ -57,7 +58,7 @@ async function sendReferralEmail(toEmail: string, name: string) {
   await sendEmail(
     toEmail,
     "You just earned 3 rewards points!",
-    `Hi ${name},\n\nSomeone you referred just completed their first purchase — you've been credited 3 rewards points. Check the Rewards tab in the app to see your balance.\n\n— ONE Fitness`,
+    `Hi ${name},\n\nSomeone you referred just completed their first purchase — you've been credited 3 rewards points. Check the Rewards tab in the app to see your balance.\n\n${EMAIL_SIGNOFF}`,
   );
 }
 
@@ -557,7 +558,7 @@ serve(async (req) => {
               `Hi ${profile.name || "there"},\n\n` +
                 `Your payment of $${(subtotalCents / 100).toFixed(2)} for ${plan?.name || "your plan"} was successful.` +
                 `${isSubscription ? " Your membership is now active." : " Your package has been added to your account."}` +
-                `\n\n— ONE Fitness`,
+                `\n\n${EMAIL_SIGNOFF}`,
             );
           } catch (emailErr) {
             console.error("stripe-webhook: payment receipt email failed:", emailErr instanceof Error ? emailErr.message : String(emailErr));
@@ -803,7 +804,7 @@ serve(async (req) => {
             try {
               await sendSms(
                 profile.phone,
-                `ONE Fitness: Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
+                `${SMS_PREFIX}Your payment of $${(amountDue / 100).toFixed(2)} for ${plan?.name || "your membership"} failed. Please update your payment method in the app to avoid a lapse.`,
               );
             } catch (smsErr) {
               console.error("stripe-webhook: failed-payment SMS failed:", smsErr instanceof Error ? smsErr.message : String(smsErr));
@@ -833,7 +834,7 @@ serve(async (req) => {
                 `Hi ${profile.name || "there"},\n\n` +
                   `A new invoice for $${((invoice.amount_due ?? 0) / 100).toFixed(2)} has been generated${dueDate ? `, due ${dueDate}` : ""}.` +
                   `${invoice.hosted_invoice_url ? `\n\nView it here: ${invoice.hosted_invoice_url}` : ""}` +
-                  `\n\n— ONE Fitness`,
+                  `\n\n${EMAIL_SIGNOFF}`,
               );
             } catch (emailErr) {
               console.error("stripe-webhook: invoice-generated email failed:", emailErr instanceof Error ? emailErr.message : String(emailErr));

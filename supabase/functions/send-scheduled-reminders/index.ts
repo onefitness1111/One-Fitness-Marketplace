@@ -31,6 +31,7 @@ import { sendEmail } from "../_shared/sendEmail.ts";
 import { sendPush } from "../_shared/sendPush.ts";
 import { sendSms } from "../_shared/sendSms.ts";
 import { offerSlot } from "../_shared/waitlistOffers.ts";
+import { EMAIL_SIGNOFF, SMS_PREFIX } from "../_shared/businessName.mjs";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2024-06-20",
@@ -89,7 +90,7 @@ serve(async (req) => {
       // STOP is final even if sms_opt_in was somehow left on.
       if (profileById.get(profileId)?.sms_opted_out === true) return;
       const phone = String(profileById.get(profileId)?.phone ?? "").trim();
-      if (phone) await sendSms(phone, `ONE Fitness: ${text}`);
+      if (phone) await sendSms(phone, `${SMS_PREFIX}${text}`);
     }
 
     let activeChallenges: any[] | null = null;
@@ -133,7 +134,7 @@ serve(async (req) => {
       const hasHabits = ((record.habits as string[] | undefined)?.length ?? 0) > 0 || ((record.customHabits as any[] | undefined)?.length ?? 0) > 0;
       const loggedToday = !!(record.habitLogByDate || {})[todayIso];
       if (hasHabits && !loggedToday) {
-        if (profile.email) await sendEmail(profile.email, "Don't forget your habits today", `Hi ${profile.name || "there"},\n\nJust a reminder to log today's habits in the ONE Fitness app.\n\n— ONE Fitness`);
+        if (profile.email) await sendEmail(profile.email, "Don't forget your habits today", `Hi ${profile.name || "there"},\n\nJust a reminder to log today's habits in the ONE Fitness app.\n\n${EMAIL_SIGNOFF}`);
         await pushToProfile(c.profile_id, "Habit reminder", "Don't forget to log today's habits.");
         sent.habit++;
       }
@@ -147,7 +148,7 @@ serve(async (req) => {
             await sendEmail(
               profile.email,
               `Reminder: "${ch.name}" is still going`,
-              `Hi ${profile.name || "there"},\n\nJust a reminder you're enrolled in the "${ch.name}" challenge — keep up your progress! It runs through ${ch.end_date}.\n\n— ONE Fitness`,
+              `Hi ${profile.name || "there"},\n\nJust a reminder you're enrolled in the "${ch.name}" challenge — keep up your progress! It runs through ${ch.end_date}.\n\n${EMAIL_SIGNOFF}`,
             );
           }
           await pushToProfile(c.profile_id, "Challenge reminder", `"${ch.name}" is still going — keep it up!`);
@@ -168,7 +169,7 @@ serve(async (req) => {
                 await sendEmail(
                   profile.email,
                   "Your card on file is expiring soon",
-                  `Hi ${profile.name || "there"},\n\nThe card ending in ${pm.card.last4} on your ONE Fitness account expires ${pm.card.exp_month}/${pm.card.exp_year}. Please update your payment method in the app to avoid any interruption.\n\n— ONE Fitness`,
+                  `Hi ${profile.name || "there"},\n\nThe card ending in ${pm.card.last4} on your ONE Fitness account expires ${pm.card.exp_month}/${pm.card.exp_year}. Please update your payment method in the app to avoid any interruption.\n\n${EMAIL_SIGNOFF}`,
                 );
                 await textClient(c.profile_id, `The card ending in ${pm.card.last4} on your account expires ${pm.card.exp_month}/${pm.card.exp_year}. Please update it in the app.`);
                 sent.cardExpiring++;
@@ -185,7 +186,7 @@ serve(async (req) => {
           await sendEmail(
             profile.email,
             "Time for your monthly progress review",
-            `Hi ${profile.name || "there"},\n\nIt's a new month — a great time to check in with your coach on your progress and set goals for the weeks ahead.\n\n— ONE Fitness`,
+            `Hi ${profile.name || "there"},\n\nIt's a new month — a great time to check in with your coach on your progress and set goals for the weeks ahead.\n\n${EMAIL_SIGNOFF}`,
           );
           await textClient(c.profile_id, "It's a new month, a great time to check in with your coach on your progress.");
           sent.monthlyReview++;

@@ -10,6 +10,7 @@ import Stripe from "https://esm.sh/stripe@17.4.0?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
 import { sendEmail } from "../_shared/sendEmail.ts";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -98,7 +99,7 @@ serve(async (req) => {
       await sendEmail(
         email,
         "Your ONE Fitness renewal is confirmed",
-        `Hi ${first},\n\nYour ${planName} renewal went through. ${money(amount)} was charged to the card on file. Your sessions will show in the app once the payment finishes processing.\n\n— ONE Fitness`,
+        `Hi ${first},\n\nYour ${planName} renewal went through. ${money(amount)} was charged to the card on file. Your sessions will show in the app once the payment finishes processing.\n\n${EMAIL_SIGNOFF}`,
       );
     }
 

@@ -14,6 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendPush } from "../_shared/sendPush.ts";
 import { sendEmail } from "../_shared/sendEmail.ts";
 import { sendSms } from "../_shared/sendSms.ts";
+import { EMAIL_SIGNOFF, SMS_PREFIX } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -104,7 +105,7 @@ serve(async (req) => {
       const phone = String(profile?.phone ?? "").trim();
       const optedIn = prefs?.sms_opt_in === true && profile?.sms_opted_out !== true;
       if (phone && optedIn) {
-        await sendSms(phone, `ONE Fitness: ${body}`);
+        await sendSms(phone, `${SMS_PREFIX}${body}`);
         sent.push("sms");
       }
     } catch (e) {
@@ -116,7 +117,7 @@ serve(async (req) => {
         await sendEmail(
           profile.email,
           title,
-          `Hi ${profile.name ?? ""},\n\n${body}\n\n— ONE Fitness`,
+          `Hi ${profile.name ?? ""},\n\n${body}\n\n${EMAIL_SIGNOFF}`,
         );
         sent.push("email");
       }

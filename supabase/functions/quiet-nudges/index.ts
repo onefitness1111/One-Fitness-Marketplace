@@ -12,6 +12,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
 import { sendSms } from "../_shared/sendSms.ts";
+import { SMS_PREFIX } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -128,7 +129,7 @@ serve(async (req) => {
           ? `Hey ${who}, it's been 3 days since your last meal or workout log. Open the app when you can.`
           : "It's been 3 days since your last meal or workout log. Open the app when you can.";
         try {
-          await sendSms(String(row.phone), `One Fitness Marketplace: ${line}`);
+          await sendSms(String(row.phone), `${SMS_PREFIX}${line}`);
           texted += 1;
         } catch (e) {
           console.error("quiet nudge text failed:", e instanceof Error ? e.message : String(e));

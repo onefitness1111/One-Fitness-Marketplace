@@ -14,6 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyProfile } from "../_shared/requestNotify.ts";
 import { sendEmail } from "../_shared/sendEmail.ts";
 import { bodyChanges, num, sessionsDone, strengthGains } from "../_shared/progressSummary.ts";
+import { EMAIL_SIGNOFF } from "../_shared/businessName.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -168,7 +169,7 @@ serve(async (req) => {
         lines.push("", "Progress photos (these links last 7 days; the photos stay in the app):");
         photoUrls.forEach((link, i) => lines.push(`Photo ${i + 1}: ${link}`));
       }
-      lines.push("", "— ONE Fitness");
+      lines.push("", EMAIL_SIGNOFF);
       const text = lines.join("\n");
 
       const htmlBits = [

@@ -5,6 +5,7 @@
 // Keep the wording of the business name identical to the app:
 // "ONE Fitness Marketplace" (the prefix already stored on messages).
 
+import { OWNER_DISPLAY_NAME, SMS_PREFIX } from "./businessName.mjs";
 import {
   INVITE_SMS_BODY,
   INVITE_YES_CONFIRMATION,
@@ -26,7 +27,7 @@ export {
 
 export const WINDOW_MS = 6 * 60 * 60 * 1000;
 
-export const BUSINESS_NAME = "ONE Fitness Marketplace";
+export const BUSINESS_NAME = OWNER_DISPLAY_NAME;
 
 // This gym's own App Store page is not a link we can verify. A public
 // "One Fitness" app belongs to a different company, so it is not used here.
@@ -35,7 +36,7 @@ export const APP_STORE_URL = "APP_STORE_LINK";
 export const PLAY_STORE_URL = "GOOGLE_PLAY_LINK";
 
 export const HELP_TEXT =
-  "ONE Fitness: for help call (818) 223-7001 or email info@onefitnessworkout.com. " +
+  `${SMS_PREFIX}for help call (818) 223-7001 or email info@onefitnessworkout.com. ` +
   "Reply STOP to unsubscribe. Msg & data rates may apply.";
 
 const OPT_OUT = new Set(["STOP", "STOPALL", "CANCEL", "END", "QUIT", "UNSUBSCRIBE", "REVOKE", "OPTOUT"]);

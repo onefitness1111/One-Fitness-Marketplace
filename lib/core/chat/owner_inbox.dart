@@ -2,6 +2,7 @@ import "../../data/models/client_info.dart";
 import "../../data/models/comm_message.dart";
 import "../../data/models/trainer.dart";
 import "../utils/coach_names.dart";
+import "../utils/chat_channels.dart";
 
 /// Filter value for every coach plus the business threads.
 const kOwnerFilterAll = "all";
@@ -10,10 +11,10 @@ const kOwnerFilterAll = "all";
 const kOwnerBusinessKey = "business";
 
 /// The name on a business row. Clients still only see coach names.
-const kOneFitnessLabel = "ONE Fitness";
+const kOneFitnessLabel = kMarketplaceName;
 
 /// The business choice in the coach filter.
-const kOneFitnessBusinessLabel = "ONE Fitness (business)";
+const kOneFitnessBusinessLabel = "$kMarketplaceName (business)";
 
 /// Staff-to-staff threads, when any exist. Also the name of the filter that
 /// shows only those threads (U3: Coach Chats is a filter inside Chat, not a

@@ -46,6 +46,7 @@ import "live_workouts_card.dart";
 import "../beep/coach_beep_alerts.dart";
 import "../../../core/widgets/session_timer.dart";
 import "../shell/trainer_shell_state.dart";
+import "../../../core/utils/chat_channels.dart";
 
 /// Mirrors TrainerHome.jsx — the coach/owner dashboard: greeting header,
 /// owner-only stat row, "Needs Attention" list, a collapsible day calendar,
@@ -602,7 +603,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                               key: ValueKey("${_run?.id ?? slot}|$id"),
                               client: clientRecords[id]!,
                               loggedBy: "coach",
-                              loggedByName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
+                              loggedByName: isOwner ? kMarketplaceName : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
                               sessionId: _run?.id ?? "${_viewDate}|$slot|${group.isEmpty ? (trainerAuth ?? "") : group.first.trainerId}",
                               initialFocusIndex: LiveLogStore.instance.exerciseIndexByClient[id] ?? 0,
                               onFocusIndex: (index) => LiveLogStore.instance.rememberPlace(
@@ -611,7 +612,7 @@ class _TrainerHomeScreenState extends ConsumerState<TrainerHomeScreen> {
                                 exerciseClientId: id,
                                 exerciseIndex: index,
                               ),
-                              authorName: isOwner ? "ONE Fitness Marketplace" : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
+                              authorName: isOwner ? kMarketplaceName : (me.isNotEmpty ? me.first.displayTitle : "Coach"),
                               authorRole: isOwner ? "owner" : "coach",
                               emptyProgramText:
                                   "This client doesn't have an active workout program yet.",
