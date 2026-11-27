@@ -3320,6 +3320,22 @@ class SupabaseService {
     return (rows as List).map((r) => r["blocked_id"] as String).toSet();
   }
 
+  /// Text outcomes for messages the signed-in person sent (the owner sees
+  /// all). Message id -> chat_auto_reply_sms.outcome. Empty on any error.
+  static Future<Map<String, String>> loadSmsOutcomes(List<String> messageIds) async {
+    final ids = messageIds.where(_looksLikeUuid).toList();
+    if (ids.isEmpty) return {};
+    try {
+      final rows = await client.from("chat_auto_reply_sms").select("message_id, outcome").inFilter("message_id", ids);
+      return {
+        for (final r in (rows as List).cast<Map<String, dynamic>>())
+          if (r["message_id"] is String && r["outcome"] is String) r["message_id"] as String: r["outcome"] as String,
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
   static Map<String, dynamic> _trainerNoteToJson(TrainerNote n) => {
     "id": n.id,
     "flag": n.flag,

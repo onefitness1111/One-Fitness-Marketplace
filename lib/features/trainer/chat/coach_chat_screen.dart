@@ -13,6 +13,7 @@ import "../../../core/chat/coach_thread_scope.dart";
 import "../../../core/chat/owner_inbox.dart";
 import "../../../core/widgets/owner_chat_list.dart";
 import "../../../core/utils/chat_channels.dart";
+import "../../../core/utils/sms_outcome.dart";
 import "../../../data/providers/coach_permissions_provider.dart";
 import "../../../core/widgets/chat_gate.dart";
 import "../../../core/widgets/message_reactions.dart";
@@ -87,6 +88,11 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
   /// picker is only reached deliberately via "New message".
   _ChatView _view = _ChatView.list;
   final Set<String> _pendingIds = {};
+
+  /// Text outcomes for messages staff chose to also text (message id ->
+  /// outcome), so the sender sees when and why a text was skipped.
+  final Map<String, String> _smsOutcomes = {};
+  final Set<String> _smsOutcomesAsked = {};
 
   /// Owner list: which coach's threads are showing, and the open thread.
   String _ownerFilter = kOwnerFilterAll;
@@ -474,6 +480,10 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
             client.id,
             (r) => r.copyWith(comms: r.comms.map((c) => c.id == tempId ? saved : c).toList()),
           );
+      if (deliver.contains(ChatChannel.sms)) {
+        // The text is decided a moment later on the server; look again then.
+        Future<void>.delayed(const Duration(seconds: 4), () => _refreshSmsOutcomes([saved.id], force: true));
+      }
       // The push is what In app means in practice — the message is in the
       // thread either way. `sms: false` because SMS is a channel of its
       // own here; letting the push text them too would double-send to a
@@ -856,7 +866,28 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     }
   }
 
+  Future<void> _refreshSmsOutcomes(List<String> ids, {bool force = false}) async {
+    final ask = force ? ids : ids.where((id) => !_smsOutcomesAsked.contains(id)).toList();
+    if (ask.isEmpty) return;
+    _smsOutcomesAsked.addAll(ask);
+    final found = await SupabaseService.loadSmsOutcomes(ask);
+    if (!mounted || found.isEmpty) return;
+    setState(() => _smsOutcomes.addAll(found));
+  }
+
   List<Widget> _buildBubbleList(List<CommMessage> thread, String clientId) {
+    final texted = [
+      for (final c in thread)
+        if (c.who == "trainer" &&
+            !_pendingIds.contains(c.id) &&
+            c.channel != null &&
+            decodeChannels(c.channel!).contains(ChatChannel.sms) &&
+            !_smsOutcomesAsked.contains(c.id))
+          c.id,
+    ];
+    if (texted.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refreshSmsOutcomes(texted));
+    }
     final items = <Widget>[];
     DateTime? lastDay;
     for (final c in thread) {
@@ -868,6 +899,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
       items.add(_Bubble(
         message: c,
         isPending: _pendingIds.contains(c.id),
+        smsNotice: c.who == "trainer" ? smsOutcomeNotice(_smsOutcomes[c.id]) : null,
         onReact: _pendingIds.contains(c.id)
             ? null
             : (reaction) => _react(clientId: clientId, message: c, reaction: reaction),
@@ -1218,9 +1250,13 @@ class _DaySeparator extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.isPending, this.onReact});
+  const _Bubble({required this.message, required this.isPending, this.onReact, this.smsNotice});
   final CommMessage message;
   final bool isPending;
+
+  /// "Not texted: they replied STOP" and the like, under the sender's own
+  /// message. Null when the text went (or wasn't asked for).
+  final String? smsNotice;
   final void Function(String reaction)? onReact;
 
   @override
@@ -1275,6 +1311,11 @@ class _Bubble extends StatelessWidget {
                     ],
                   ],
                 ),
+          if (!isPending && smsNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(smsNotice!, style: TextStyle(fontSize: 10.5, color: AppColors.mute, fontStyle: FontStyle.italic)),
+            ),
         ],
       ),
     );
