@@ -9,6 +9,7 @@ import "../../../core/navigation/local_back_stack.dart";
 import "../../../core/supabase/supabase_service.dart";
 import "../../../core/theme/app_colors.dart";
 import "../../../core/chat/chat_entry.dart";
+import "../../../core/chat/coach_thread_scope.dart";
 import "../../../core/chat/owner_inbox.dart";
 import "../../../core/widgets/owner_chat_list.dart";
 import "../../../core/utils/chat_channels.dart";
@@ -379,7 +380,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     // all of them read, not only the ones addressed to "owner".
     final isOwner = trainerAuth == "owner";
     bool isUnread(CommMessage m) =>
-        m.who == "client" && !m.readByCoach && (isOwner || m.trainerId == null || m.trainerId == trainerAuth);
+        m.who == "client" && !m.readByCoach && staffSeesMessage(m, isOwner: isOwner, trainerAuth: trainerAuth);
     if (!record.comms.any(isUnread)) return;
     final updated = record.comms.map((m) => isUnread(m) ? m.copyWith(readByCoach: true) : m).toList();
     ref.read(trainerClientRecordsProvider.notifier).update(clientId, (r) => r.copyWith(comms: updated));
@@ -547,7 +548,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final out = <ChatConversation>[];
     for (final c in roster) {
       final comms = records[c.id]?.comms ?? const <CommMessage>[];
-      final mine = comms.where((m) => isOwner || m.trainerId == null || m.trainerId == trainerAuth).toList();
+      final mine = comms.where((m) => staffSeesMessage(m, isOwner: isOwner, trainerAuth: trainerAuth)).toList();
       if (mine.isEmpty) continue;
       mine.sort((a, b) => b.sentAt.compareTo(a.sentAt));
       final last = mine.first;
@@ -802,7 +803,7 @@ class _CoachChatScreenState extends ConsumerState<CoachChatScreen> {
     final ownerKey = _ownerCoachKey ?? kOwnerBusinessKey;
     final thread = isOwner
         ? messagesForOwnerThread(comms, coachKey: ownerKey, ownerIds: _ownerIds())
-        : (comms.where((m) => m.trainerId == null || m.trainerId == trainerAuth).toList()
+        : (comms.where((m) => staffSeesMessage(m, isOwner: false, trainerAuth: trainerAuth)).toList()
           ..sort((a, b) => a.sentAt.compareTo(b.sentAt)));
 
     return LocalBackScope(
