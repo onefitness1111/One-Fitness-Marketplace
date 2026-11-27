@@ -44,3 +44,6 @@ verify_jwt = false
 # X-Twilio-Signature. Only called once TWILIO_STATUS_CALLBACK_URL is set.
 [functions.twilio-status]
 verify_jwt = false
+
+[functions.notify-moderation]
+verify_jwt = true
